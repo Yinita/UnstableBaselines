@@ -181,3 +181,6 @@ TorchTrainer*
 checkpoint*
 data*
 checkpoint*
+
+*.zip
+checkpoint*

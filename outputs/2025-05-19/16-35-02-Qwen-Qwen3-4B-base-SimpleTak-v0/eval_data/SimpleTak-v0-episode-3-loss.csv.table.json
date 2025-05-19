@@ -1,0 +1,76 @@
+{
+  "columns": [
+    {
+      "field": "pid",
+      "title": "pid",
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "number",
+      "headerSort": true,
+      "width": 76
+    },
+    {
+      "field": "model_name",
+      "title": "model_name",
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "string",
+      "headerSort": true,
+      "width": 138
+    },
+    {
+      "field": "observation",
+      "title": "observation",
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "string",
+      "headerSort": true,
+      "width": 4168
+    },
+    {
+      "field": "full_action",
+      "title": "full_action",
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "string",
+      "headerSort": true,
+      "width": 177
+    },
+    {
+      "field": "submitted_action",
+      "title": "submitted_action",
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "string",
+      "headerSort": true,
+      "width": 177
+    },
+    {
+      "field": "done",
+      "title": "done",
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "string",
+      "headerSort": true,
+      "width": 88
+    },
+    {
+      "field": "info",
+      "title": "info",
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "string",
+      "headerSort": true,
+      "width": 576
+    },
+    {
+      "field": "step",
+      "title": "step",
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "number",
+      "headerSort": true,
+      "width": 83
+    }
+  ]
+}

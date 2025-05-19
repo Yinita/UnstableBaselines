@@ -1,0 +1,40 @@
+{
+  "columns": [
+    {
+      "field": "pid",
+      "title": "pid",
+      "width": 76,
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "number",
+      "headerSort": true
+    },
+    {
+      "field": "obs",
+      "title": "obs",
+      "width": 5632,
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "string",
+      "headerSort": true
+    },
+    {
+      "field": "act",
+      "title": "act",
+      "width": 68856,
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "string",
+      "headerSort": true
+    },
+    {
+      "field": "reward",
+      "title": "reward",
+      "width": 152,
+      "minWidth": 40,
+      "resizable": true,
+      "sorter": "number",
+      "headerSort": true
+    }
+  ]
+}

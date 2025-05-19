@@ -29,7 +29,8 @@ def initialize_local_folder_structure(args):
     os.makedirs(args.output_dir_checkpoints, exist_ok=True)
 
     # set absolute paths where necessary
-    args.initial_lora_path = os.path.abspath(args.initial_lora_path)
+
+    # args.initial_lora_path = os.path.abspath(args.initial_lora_path)
 
     return args
 

@@ -13,6 +13,13 @@ def format_trace(observation, reasoning, action):
     full_trace = f"{reasoning}\n\\boxed{{{action}}}"
     return full_observation, full_trace
 
+
+
+
+
+
+
+
 class ObservationActionDataset(Dataset):
     def __init__(self, path, tokenizer, max_len=4096):
         raw_samples = [json.loads(l) for l in open(path, "r", encoding="utf-8")]
