@@ -20,7 +20,7 @@ from utils.resources import validate_requested_gpus, reserve_resources_for_learn
 from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
 from utils.local_files import initialize_local_folder_structure
 from utils.local_textarena_modules import FirstLastObservationWrapper
-from utils.misc import truncate_after_boxed
+# from utils.misc import truncate_after_boxed
 
 # import utils
 from utils.arguments import get_args
@@ -76,7 +76,7 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
         # print(f"ACTION: {action}")
-        action = truncate_after_boxed(action) # extract trunc act
+        # action = truncate_after_boxed(action) # extract trunc act
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
         done, _ = env.step(action=extracted_action)
         
@@ -172,78 +172,11 @@ def parse_eval_env_id(arg): # If passed as a comma-separated string, split it
     return arg
 
 def main():
-    # base args
-    # ap = argparse.ArgumentParser()
-    # ap.add_argument("--model_name", default="Qwen/Qwen3-0.6B")
-    # ap.add_argument("--batch_size", type=int, default=512)
-    # ap.add_argument("--clip", type=float, default=0.2)
-    # ap.add_argument("--lr", type=float, default=5e-6)
-
-    # # general configs
-    # ap.add_argument("--gradient_accumulation_steps", type=int, default=64)
-    # ap.add_argument("--gradient_checkpointing", action="store_true") 
-    # ap.add_argument("--bf16_training", action="store_true") 
-    # ap.add_argument("--gradient_clip", type=float, default=1.0)
-
-    # # reward design
-    # ap.add_argument("--format_reward_think", type=float, default=0.25)
-    # ap.add_argument("--format_reward_valid_move", type=float, default=1.0)
-    # ap.add_argument("--format_penalty_invalid_move", type=float, default=-1.0)
-
-    # # faster running vars
-    # ap.add_argument("--num_actors", type=int, default=3)
-    # ap.add_argument("--num_learners", type=int, default=1)
-    # ap.add_argument("--num_collection_workers", type=int, default=384)
-    # ap.add_argument("--num_evaluation_workers", type=int, default=4)
-    # ap.add_argument("--max_vllm_seq", type=int, default=384)
-
-    # # collection params
-    # # ap.add_argument("--train_env_id", default="TicTacToe-v0")
-    # # ap.add_argument("--train_env_id", default="TicTacToe-v0")
-    # ap.add_argument("--train_env_id", type=parse_eval_env_id, default="TicTacToe-v0", help="Single env as string or multiple envs as comma-separated string")
-    # ap.add_argument("--max_env_steps", type=int, default=32)
-    # ap.add_argument("--temperature", type=float, default=0.7)
-    # ap.add_argument("--top_p", type=float, default=0.95)
-    # ap.add_argument("--max_tokens", type=int, default=2048)
-    # ap.add_argument("--observation_format_template", type=str, default="default")
-    # ap.add_argument("--action_extraction_template", type=str, default="default")
-    # ap.add_argument("--self_play_opponent_lag", type=int, default=7)
-    # ap.add_argument("--use_all_data", type=bool, default=False, help="Whether to use traces from both players or only the current player")
-
-    # # eval params
-    # ap.add_argument("--eval_env_id", type=parse_eval_env_id, default="TicTacToe-v0", help="Single env as string or multiple envs as comma-separated string")
-    # # ap.add_argument("--eval_env_id", default="TicTacToe-v0")
-    # ap.add_argument("--max_env_steps_eval", type=int, default=64)
-    # ap.add_argument("--eval_model_name", type=str, default="google/gemini-2.0-flash-lite-001")
-
-    # # directory and local logging args 
-    # ap.add_argument("--output_dir", type=str, default="outputs/")
-    # ap.add_argument("--save_strategy", type=str, default="best", choices=["steps"])
-    # ap.add_argument("--save_every_n_update_steps", type=int, default=50)
-    # ap.add_argument("--log_training_data", type=bool, default=True)
-
-    # # wandb & tracking params
-    # ap.add_argument("--wandb", action="store_true") 
-    # ap.add_argument("--wandb_project_name", type=str, default="UnstableBaselines")
-    # # ap.add_argument("--ema_tau", type=float, default=0.01)
-    # ap.add_argument("--ma_range", type=int, default=100)
-
-
-    # # lora
-    # ap.add_argument("--lora_rank", type=int, default=32)
-    # ap.add_argument("--lora_alpha", type=int, default=32)
-    # ap.add_argument("--lora_dropout", type=int, default=0.0)
-    # ap.add_argument("--initial_lora_path", type=str, default=None)
-    # ap.add_argument("--vllm_max_loras", type=int, default=4)
-
-
-    # args = ap.parse_args() 
-    # args.max_buffer_size = args.batch_size*3 # default TODO maybe move at some point
-    # args = initialize_local_folder_structure(args=args)
-
     args = get_args()
     args = initialize_local_folder_structure(args=args)
     assert_args(args=args) # assert everything
+
+
 
     # build the reward transformations to be used
     final_reward_transformation = retra.ComposeFinalRewardTransforms([
@@ -258,9 +191,7 @@ def main():
         retra.NormalizeRewards() # normalize the sampled batch
     ])
 
-    # check whether the gpu counts are correct
-    total_gpus, _ = validate_requested_gpus(args=args)
-    ray.init(num_gpus=total_gpus)
+    ray.init(num_gpus=args.num_actors+args.num_learners)
 
     buffer = StepBuffer.remote(
         args=args,
