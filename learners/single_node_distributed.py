@@ -7,7 +7,7 @@ from learners.lora_utils import build_lora_model, load_lora_state
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 # local imports
-from algorithms import Reinforce, PPO
+from algorithms import Reinforce, Reinforce_KL, PPO
 
 
 
@@ -32,7 +32,7 @@ def train_loop_per_worker(cfg):
 
     # load base + LoRA
     base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
-    peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
+    peft_model = build_lora_model(model=base, args=args).to(device) #r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
 
     # load initial weights if provided
     if args.initial_lora_path and args.initial_lora_path.lower() != "none":

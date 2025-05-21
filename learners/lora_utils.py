@@ -2,9 +2,9 @@ import torch, pathlib
 from safetensors.torch import load_file as safe_load
 from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
 
-def build_lora_model(model, r=8, alpha=32, dropout=0.05):
+def build_lora_model(model, args): #r=8, alpha=32, dropout=0.05):
     target = ["q_proj", "k_proj", "v_proj", "o_proj"]
-    cfg = LoraConfig(r=r, lora_alpha=alpha, lora_dropout=dropout, bias="none", target_modules=target, task_type="CAUSAL_LM")
+    cfg = LoraConfig(r=args.lora_rank, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout, bias="none", target_modules=target, task_type="CAUSAL_LM")
     return get_peft_model(model, cfg)
 
 

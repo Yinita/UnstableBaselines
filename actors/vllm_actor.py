@@ -44,7 +44,6 @@ class VLLMActor:
                 lora_req = LoRARequest(lora_name=path, lora_path=path, lora_int_id=abs(hash(path))) if path is not None else None
                 print(f"[Actor {os.getpid()}] submitting req {req_id} with {lora_req}")
                 self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
-
             # Step the engine and only resolve once finish_reason is non-None
             for out in self.engine.step():
                 token = out.outputs[-1] # take the last token in this partial output
@@ -53,4 +52,3 @@ class VLLMActor:
                 fut = self._futures.pop(out.request_id, None) # now it’s done—fulfil the future
                 if fut:
                     fut.set_result(token.text)
-
