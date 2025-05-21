@@ -1,7 +1,7 @@
 python3 unstable.py \
-    --model_name "Qwen/Qwen3-1.7B-base" \
-    --train_env_id "SimpleTak-v0" \
-    --eval_env_id "SimpleTak-v0,TicTacToe-v0"\
+    --model_name "Qwen/Qwen3-0.6B-base" \
+    --train_env_id "SimpleTak-v0-raw:2,TicTacToe-v0-raw:2" \
+    --eval_env_id "SimpleTak-v0-raw:2,TicTacToe-v0:2"\
     --wandb \
     --num_actors 3 \
     --num_learners 1 \

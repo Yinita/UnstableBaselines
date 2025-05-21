@@ -1,4 +1,4 @@
-import os, time, random, argparse, threading
+import os, time, random, argparse, threading, traceback
 import numpy as np
 from typing import List, Dict
 
@@ -13,7 +13,9 @@ import textarena as ta
 from actors import VLLMActor
 import reward_transformations as retra
 from learners.single_node_distributed import train_loop_per_worker
-from trajectory_buffer import Trajectory, Step, StepBuffer, WandBTracker
+from core import Trajectory, Step
+from wandb_tracker import WandBTracker
+from trajectory_buffer import StepBuffer
 
 # import utils
 from utils.arguments import get_args
@@ -23,37 +25,11 @@ from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION #, truncat
 
 
 
-
-
 @ray.remote(num_gpus=1)
 class RayActor(VLLMActor):
     def __init__(self, args):
         super().__init__(args)
 
-# @ray.remote
-# class Collector:
-#     def __init__(self, args): 
-#         self.args = args
-#         self.actor_group: List[ray.actor.ActorHandle] = []
-#         self.lora_paths: List[Optional[str]] = [args.initial_lora_path]
-
-#     def initialize(self, num_actors: int):
-#         self.actor_group = [RayActor.remote(self.args) for _ in range(num_actors)]
-
-#     def get_actor(self):
-#         return random.choice(self.actor_group)
-
-#     def get_current_lora(self):
-#         return self.lora_paths[-1]
-    
-#     def get_previous_lora(self):
-#         return self.lora_paths[-self.args.self_play_opponent_lag] if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
-
-#     def get_random_lora(self): # get random lora weights from within the opponent delay window
-#         return random.choice(self.lora_paths[:-self.args.self_play_opponent_lag]) if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
-
-#     def add_new_lora_paths(self, new_path: str):
-#         self.lora_paths.append(new_path)
 
 @ray.remote
 class Collector:
@@ -74,7 +50,7 @@ class Collector:
     def get_previous_lora(self):
         return self.lora_paths[-self.args.self_play_opponent_lag_lower] if len(self.lora_paths) > self.args.self_play_opponent_lag_lower else self.lora_paths[0]
 
-    def get_random_lora(self): # get random lora weights from within the opponent delay window
+    def sample_prev_lora(self): # get random lora weights from within the opponent delay window
         lower=self.args.self_play_opponent_lag_lower; upper=self.args.self_play_opponent_lag_upper
         return random.choice(self.lora_paths[-min(upper, len(self.lora_paths)):-lower]) if len(self.lora_paths) > lower else self.lora_paths[0] 
 
@@ -82,91 +58,121 @@ class Collector:
         self.lora_paths.append(new_path)
 
 
-def make_env(env_id: str):
-    env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
-    env.reset(num_players=2); env.state.error_allowance = 0
-    return env, env.env_id
+# def make_env(env_id: str):
+#     env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
+#     env.reset(num_players=2); env.state.error_allowance = 0
+#     return env, env.env_id
+
+def make_env(env_id: str, num_players: int):
+    env = ta.make(env_id)
+    env = ta.wrappers.GameMessageObservationWrapper(env) # TODO should be adjustable by environment
+    env.reset(num_players=num_players)
+    # ; env.state.error_allowance = 0
+    return env
 
 @ray.remote(num_cpus=0.1)
-def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector):
-    env, env_id = make_env(env_id=args.train_env_id)
+def collect_episode_once(args, player_id: int, env_id: str, num_players: int, buffer, tracker, actor, collector):
+    env = make_env(env_id=env_id, num_players=num_players)
     traj = Trajectory()
-    done, steps = False, 0
-    lora_paths = {player_id: collector.get_current_lora, 1-player_id: collector.get_random_lora}
-    fixed_opponent = ta.agents.OpenRouterAgent(model_name=args.eval_model_name)
-    while not done and steps < args.max_env_steps:
+    done, turns = False, 0
+
+    while not done:
         pid, obs = env.get_observation()
-        formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
-        lora_path = ray.get(lora_paths[pid].remote())
-        action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-        # print("ACTION", action)
-        
-        extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
-        # print("EXTRACTED_ACTION", extracted_action)
-        done, info = env.step(action=extracted_action)
-        
-        traj.pid.append(pid); traj.obs.append(formatted_prompt)
-        traj.actions.append(action); traj.format_feedbacks.append(format_feedback)
-        steps += 1
-        print("STEP_NR", steps)
 
-    traj.final_rewards = env.close() if done else {0: 0, 1: 0}
-    # add an invlid move format reward
-    if list(traj.final_rewards.values()) in [[0,-1], [-1,0]]:
-        for i in range(len(traj.pid)):
-            if i == len(traj.pid)-1:
-                traj.format_feedbacks[i]["invalid_move"] = 1
+        if pid == player_id: # current model moves
+            lora_path = ray.get(collector.get_current_lora.remote()) # get current lora path
+            formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
+            action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
+            extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+
+            done, info = env.step(action=extracted_action) # step in the environment
+
+            # add to trajectory
+            traj.pid.append(pid)
+            traj.obs.append(formatted_prompt)
+            traj.actions.append(action)
+            format_feedback["invalid_move"] = 0 # change to 1 for final move if invalid
+            traj.format_feedbacks.append(format_feedback)
+
+        else: # sample opponent action based on what is specified
+            if args.opponent_type == "self_play": # sample from previous checkpoints
+                lora_path = ray.get(collector.sample_prev_lora.remote()) # get current lora path
+                formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
+                action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
+                action, _ = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+
+            elif args.opponent_type == "fixed": # sample from fixed opponent
+                fixed_opponent_agent = ta.agents.OpenRouterAgent(model_name=random.choice(args.fixed_opponents)) # TODO check if this is expensive (compute wise)
+                # TODO - given this is running a thread, we need to make sure we are actually sampling opponents, might always be the same. Maybe pass seed into thread
+                action = fixed_opponent_agent(obs)
+
             else:
-                traj.format_feedbacks[i]["invalid_move"] = 0
-    else:
-        for i in range(len(traj.pid)):
-            traj.format_feedbacks[i]["invalid_move"] = 0
+                raise NotImplementedError
 
-    traj.num_turns = steps
-    print(f"GAME FINISHED< ADDING TO BUFFER. num steps: {steps}")
-    ray.get(buffer.add_trajectory.remote(traj, current_checkpoint_pid=player_id))
-    ray.get(tracker.add_trajectory.remote(traj, current_checkpoint_pid=player_id, env_id=env_id))
+            done, info = env.step(action=action) # step in the env
+        turns += 1 # increment turn counter
+    
+    traj.final_rewards = env.close() # get final game rewards
+    if info["end_by_invalid"] and pid==player_id:  traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
+    traj.num_turns = turns
+    print(f"GAME FINISHED< ADDING TO BUFFER. num turns: {turns} [steps by our model: {len(traj.pid)}]")
+    ray.get(buffer.add_trajectory.remote(traj, player_id=player_id, env_id=env_id))
+    ray.get(tracker.add_trajectory.remote(traj, player_id=player_id, env_id=env_id))
 
 
 @ray.remote(num_cpus=0.1)
-def run_eval_episode(args, player_id: int, tracker, actor, collector):
-    env, env_id = make_env(env_id=args.eval_env_id)
+def run_eval_episode(args, player_id: int, env_id: str, num_players:int, tracker, actor, collector):
+    env = make_env(env_id=env_id, num_players=num_players)
 
     episode_info = []
-    done, steps = False, 0
-    models = {player_id: actor, 1-player_id: ta.agents.OpenRouterAgent(model_name=args.eval_model_name)}
+    done, turns = False, 0
 
-    while not done and steps < args.max_env_steps_eval:
+    opponent_agent = ta.agents.OpenRouterAgent(model_name=args.eval_model_name)
+
+    while not done:
         pid, obs = env.get_observation()
-        
-        # check which agent to use
-        agent = models[pid]
-        if isinstance(agent, ta.agents.OpenRouterAgent):
-            action = agent(obs)
-            raw_action = action
-            model_name = args.eval_model_name
-        else:
+
+        if pid == player_id: # our model moves
             model_name = "current_ckpt"
-            formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
-            lora_path = ray.get(collector.get_current_lora.remote())
-            raw_action = ray.get(agent.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-            action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=raw_action)
-        
-        done, info = env.step(action=action) # submit to env
+            lora_path = ray.get(collector.get_current_lora.remote()) # get current lora path
+            formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
+            full_action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
+            action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=full_action) # extract environment action
+
+        else: # get action from fixed opponent
+            model_name = args.eval_model_name
+            action = opponent_agent(obs)
+            full_action = action
+
+        # step the env
+        done, info = env.step(action=action)
         step_info = {
-            "pid": pid, "model_name": model_name, "observation": obs, "full_action": raw_action, 
-            "submitted_action": action, "done": done, "info": info, "step": steps
+            "pid": pid, "model_name": model_name, "observation": obs, "full_action": full_action, 
+            "submitted_action": action, "done": done, "info": info, "step": turns
         }
         episode_info.append(step_info)
-        steps += 1
-    # store the full episode in a csv file
-    ray.get(tracker.add_eval_episode.remote(episode_info=episode_info, final_reward=env.close() if done else {0:0, 1:0}, current_ckpt_pid=player_id, env_id=env_id))
+        turns += 1
 
-# todo add logging for the number of train env eval currently running
+    # store the full episode in a csv file
+    ray.get(tracker.add_eval_episode.remote(episode_info=episode_info, final_reward=env.close(), current_ckpt_pid=player_id, env_id=env_id))
+
+
+# TODO (maybe) add logging for the number of train env eval currently running
 def start_actor_loop(args, collector, buffer, tracker):
     def clean_futures(futures):
         ready, not_ready = ray.wait(futures, timeout=0, num_returns=len(futures))
+        for obj_ref in ready:
+            try:
+                ray.get(obj_ref)
+            except Exception as e:
+                print(f"[FUTURE ERROR]: {e}")
+                print(traceback.format_exc())
         return list(not_ready)
+
+    def get_next_env_id(args, _type="train"):
+        env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.train_env_id)
+        player_id = np.random.randint(num_players)
+        return env_id, num_players, player_id
 
     def loop():
         collection_outstanding = []
@@ -179,15 +185,15 @@ def start_actor_loop(args, collector, buffer, tracker):
             # Replenish collection
             if len(collection_outstanding) < args.num_collection_workers:
                 actor = ray.get(collector.get_actor.remote())
-                player_id = int(np.random.uniform()<0.5)
-                future = collect_episode_once.remote(args=args, player_id=player_id, buffer=buffer, tracker=tracker, actor=actor, collector=collector)
+                env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
+                future = collect_episode_once.remote(args=args, player_id=player_id, env_id=env_id, num_players=num_players, buffer=buffer, tracker=tracker, actor=actor, collector=collector)
                 collection_outstanding.append(future)
 
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers:
                 actor = ray.get(collector.get_actor.remote())
-                player_id = int(np.random.uniform()<0.5)
-                future = run_eval_episode.remote(args=args, player_id=player_id, tracker=tracker, actor=actor, collector=collector)
+                env_id, num_players, player_id = get_next_env_id(args=args, _type="eval")
+                future = run_eval_episode.remote(args=args, player_id=player_id, env_id=env_id, num_players=num_players, tracker=tracker, actor=actor, collector=collector)
                 evaluation_outstanding.append(future)
 
             time.sleep(0.05)
@@ -202,15 +208,15 @@ def main():
 
     # build the reward transformations to be used
     final_reward_transformation = retra.ComposeFinalRewardTransforms([
-        retra.WinDrawLossFormatter(), # turn the rewards into (1,-1), (-1,1), (0,0) # TODO can be removed with TextArena v0.6.9
-        retra.RoleAdvantageFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
+        # retra.WinDrawLossFormatter(), # turn the rewards into (1,-1), (-1,1), (0,0) # TODO can be removed with TextArena v0.6.9
+        retra.RoleAdvantageByEnvFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
     ])
     step_reward_transformation = retra.ComposeStepRewardTransforms([
         retra.RewardForThinkTags(reward=args.format_reward_think), # +0.25 for correct <think></think> tags
         retra.PenaltyForInvalidMove(reward=args.format_reward_valid_move, penalty=args.format_penalty_invalid_move), 
     ])
     sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
-        retra.NormalizeRewards() # normalize the sampled batch
+        retra.NormalizeRewardsByEnv() # normalize the sampled batch
     ])
 
     ray.init(num_gpus=args.num_actors+args.num_learners)

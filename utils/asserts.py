@@ -56,9 +56,14 @@ def _model_and_lora_asserts(args):
     except Exception as e:
         raise AssertionError(f"Unable to fetch model config for '{args.model_name}'. Make sure the model name is correct and that you're online or it's available locally.\nDetails: {e}")
 
+def _assert_textarena_version():
+    import textarena 
+    assert textarena.__version__ == "0.6.9", f"You need to use TextArena version 0.6.9 (build from source). You are using: {textarena.__version__}"
+
 
 def assert_args(args):
     _validate_requested_gpus(args=args)
     _validate_batch_sizes(args=args)
     _misc_asserts(args=args)
     _model_and_lora_asserts(args)
+    _assert_textarena_version()
