@@ -7,6 +7,7 @@ It makes sense to start from the game-tuned checkpoint (three epochs of sft on 7
 The checkpoint is zipped `lora_ckpt.zip`. You have to unzip it. The `run.sh` script will use this as the initial set of lora weights by default. 
 Afterward you can just run `bash run.sh`. Depending on how many GPUs you have, you can set the `--num_actors` and `--num_learners`. Keep in mind that collection is much much much more expensive than lora-training (so 7-1 is prob a good ratio).
 
+(`bash run_24gb.sh` should work well for machine with 4x24gb (vRam) gpus)
 
 
 # TODOs
@@ -17,6 +18,8 @@ Afterward you can just run `bash run.sh`. Depending on how many GPUs you have, y
 
 - store specific checkpoints
 
+- simplify wandb naming
+- unify wandb tracking between learner and actor (just pass the wandb object to the learner)
 
 
 
