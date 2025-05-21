@@ -1,13 +1,13 @@
 python3 unstable.py \
-    --model_name "Qwen/Qwen3-4B-base" \
+    --model_name "Qwen/Qwen3-0.6B-base" \
     --train_env_id "SimpleTak-v0" \
     --eval_env_id "SimpleTak-v0,TicTacToe-v0"\
     --wandb \
-    --num_actors 2 \
+    --num_actors 3 \
     --num_learners 1 \
-    --lr 2e-5 \
-    --batch_size 256 \
-    --gradient_accumulation_steps 256 \
+    --lr 1e-4 \
+    --batch_size 384 \
+    --gradient_accumulation_steps 384 \
     --max_tokens 3500 \
     --gradient_checkpointing \
     --bf16_training \
@@ -16,16 +16,8 @@ python3 unstable.py \
     --lora_rank 32 \
     --lora_alpha 32 \
     --lora_dropout 0 \
-    --self_play_opponent_lag 5 \
+    --self_play_opponent_lag 1 \
     --format_reward_think 1.5 \
     --format_reward_valid_move 1.0 \
     --format_penalty_invalid_move -1.0\
     --observation_format_template "qwen3"
-
-
-    # --batch_size 512 \
-    # --gradient_accumulation_steps 512 \
-    # --num_collection_workers 512 \
-    # --num_evaluation_workers 32 \
-
-    # --initial_lora_path "checkpoint-3" \
