@@ -12,8 +12,9 @@ from algorithms import Reinforce, Reinforce_KL, PPO
 
 
 def train_loop_per_worker(cfg):
-    args = cfg["args"]; buffer = cfg["buffer"]; collector = cfg["collector"]
-    wandb.init(project=args.wandb_project_name, name=f"{args.wandb_name} (learner)", config=args) # init wandb
+    args = cfg["args"]; buffer = cfg["buffer"]; collector = cfg["collector"]; tracker = cfg["tracker"]
+    assert args.num_learners==1, "Multi-gpu learning is still buggy. Please use args.num_learners=1"
+    # wandb.init(project=args.wandb_project_name, name=f"{args.wandb_name} (learner)", config=args) # init wandb
 
     root_dir = os.getcwd()
     root_checkpoint_dir = os.path.join(root_dir, args.output_dir_checkpoints)
@@ -72,7 +73,8 @@ def train_loop_per_worker(cfg):
             avg_metrics["learner/iteration"] = iteration
             avg_metrics["learner/grad_norm"] = sum(p.grad.data.norm(2).item()**2 for p in model.parameters() if p.grad is not None) ** 0.5
             avg_metrics["learner/lr"] = optimizer.param_groups[0]["lr"]
-            wandb.log(avg_metrics)
+            ray.get(tracker.log_learner.remote(wandb_dict=avg_metrics))
+            # wandb.log(avg_metrics)
 
         if rank == 0:
             checkpoint_folder_path = os.path.join(root_checkpoint_dir, f"iteration-{iteration}")

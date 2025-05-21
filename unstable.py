@@ -230,7 +230,7 @@ def main():
     trainer = TorchTrainer(
         train_loop_per_worker=train_loop_per_worker, 
         scaling_config=ScalingConfig(num_workers=args.num_learners, use_gpu=True, resources_per_worker={"CPU": 2}), 
-        train_loop_config={"args": args, "buffer": buffer, "collector": collector}, 
+        train_loop_config={"args": args, "buffer": buffer, "collector": collector, "tracker": tracker}, 
         run_config=RunConfig(storage_path=os.path.join(os.getcwd(), args.output_dir_checkpoints))
     )
     

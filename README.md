@@ -21,7 +21,7 @@ Afterward you can just run `bash run.sh`. Depending on how many GPUs you have, y
 - make it easy to specify a list of eval (and training) opponents
 - make single-player game collection easy
 - simplify wandb naming
-- unify wandb tracking between learner and actor (just pass the wandb object to the learner)
+
 - simplify the algorithm vs leaner split to make it more modular (i.e. move the optimizer step into the algorithm to allow for PPO etc. training; (also rename learner to something else))
 - It probably makes sense to empower the TrajectoryBuffer to actually manage the env for each step. That way it'll be easier to add GRPO with dynamic branching later on.
 
@@ -45,3 +45,9 @@ KIV:
 - increase sample weight based on SD of reward 
 - somehow account for stochacisity in environment rewards (maybe somehow include reward certainty)
 - dynamic GRPO rollouts (either by window or by least return confidence)
+
+
+
+
+# Confirm is working:
+- unify wandb tracking between learner and actor (just pass the wandb object to the learner)

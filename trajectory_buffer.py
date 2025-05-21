@@ -150,7 +150,11 @@ class WandBTracker:
         self.num_trajectories["all"] += 1
         self.log_metrics("collection")
 
-        
+
+    def log_learner(self, wandb_dict):
+        wandb.log(wandb_dict)
+
+
 
 # @ray.remote
 # class WandBTracker:
