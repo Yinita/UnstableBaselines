@@ -18,22 +18,9 @@ def qwen3_template(observation: str) -> str:
     )
 
 
-# def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
-#     # Find the first instance of \boxed{...} and extract its contents
-#     match = re.search(r"\\boxed\{(.*?)\}", raw_action)
-#     if match:
-#         action = match.group(1)
-#         if "[" not in action:
-#             action = f"[{action}]"
-#         has_think = 1
-#     else:
-#         action = raw_action
-#         has_think = 0
-#     format_feedback = {"has_think": has_think, "has_answer": False, "order_correct": False}
-#     return action, format_feedback
+
 
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
-    # Find all instances of \boxed{...}
     matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
     
     if matches:
@@ -45,11 +32,7 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
         action = raw_action
         has_think = 0
 
-    format_feedback = {
-        "has_think": bool(has_think),
-        "has_answer": False,
-        "order_correct": False
-    }
+    format_feedback = {"has_think": bool(has_think), "has_answer": False, "order_correct": False}
     return action, format_feedback
     
 

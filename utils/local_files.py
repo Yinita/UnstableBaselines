@@ -14,7 +14,7 @@ def initialize_local_folder_structure(args):
     os.makedirs(args.output_dir, exist_ok=True)
 
     # create run folder
-    run_folder_name = f"{datetime.datetime.now().strftime('%H-%M-%S')}-{args.model_name.replace('/', '-')}-{args.train_env_id}"
+    run_folder_name = f"{datetime.datetime.now().strftime('%H-%M-%S')}-{args.model_name.replace('/', '-')}"
     args.run_folder = os.path.join(args.output_dir, date_folder, run_folder_name)
     os.makedirs(args.run_folder, exist_ok=True)
 
@@ -29,8 +29,8 @@ def initialize_local_folder_structure(args):
     os.makedirs(args.output_dir_checkpoints, exist_ok=True)
 
     # set absolute paths where necessary
-
-    # args.initial_lora_path = os.path.abspath(args.initial_lora_path)
+    if args.initial_lora_path is not None and args.initial_lora_path.lower() != "none":
+        args.initial_lora_path = os.path.abspath(args.initial_lora_path)
 
     return args
 

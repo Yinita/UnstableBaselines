@@ -1,5 +1,5 @@
 python3 unstable.py \
-    --model_name "Qwen/Qwen3-0.6B-base" \
+    --model_name "Qwen/Qwen3-1.7B-base" \
     --train_env_id "SimpleTak-v0" \
     --eval_env_id "SimpleTak-v0,TicTacToe-v0"\
     --wandb \
@@ -12,11 +12,12 @@ python3 unstable.py \
     --gradient_checkpointing \
     --bf16_training \
     --num_collection_workers 384 \
-    --num_evaluation_workers 64 \
+    --num_evaluation_workers 32 \
     --lora_rank 32 \
     --lora_alpha 32 \
     --lora_dropout 0 \
-    --self_play_opponent_lag 1 \
+    --self_play_opponent_lag_lower 1 \
+    --self_play_opponent_lag_upper 5 \
     --format_reward_think 1.5 \
     --format_reward_valid_move 1.0 \
     --format_penalty_invalid_move -1.0\

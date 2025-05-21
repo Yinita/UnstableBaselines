@@ -16,15 +16,13 @@ from learners.single_node_distributed import train_loop_per_worker
 from trajectory_buffer import Trajectory, Step, StepBuffer, WandBTracker
 
 # import utils
-from utils.resources import validate_requested_gpus, reserve_resources_for_learners
-from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
-from utils.local_files import initialize_local_folder_structure
-from utils.local_textarena_modules import FirstLastObservationWrapper
-# from utils.misc import truncate_after_boxed
-
-# import utils
 from utils.arguments import get_args
 from utils.asserts import assert_args
+from utils.local_files import initialize_local_folder_structure
+from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION #, truncate_after_boxed
+
+
+
 
 
 @ray.remote(num_gpus=1)
@@ -32,12 +30,37 @@ class RayActor(VLLMActor):
     def __init__(self, args):
         super().__init__(args)
 
+# @ray.remote
+# class Collector:
+#     def __init__(self, args): 
+#         self.args = args
+#         self.actor_group: List[ray.actor.ActorHandle] = []
+#         self.lora_paths: List[Optional[str]] = [args.initial_lora_path]
+
+#     def initialize(self, num_actors: int):
+#         self.actor_group = [RayActor.remote(self.args) for _ in range(num_actors)]
+
+#     def get_actor(self):
+#         return random.choice(self.actor_group)
+
+#     def get_current_lora(self):
+#         return self.lora_paths[-1]
+    
+#     def get_previous_lora(self):
+#         return self.lora_paths[-self.args.self_play_opponent_lag] if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
+
+#     def get_random_lora(self): # get random lora weights from within the opponent delay window
+#         return random.choice(self.lora_paths[:-self.args.self_play_opponent_lag]) if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
+
+#     def add_new_lora_paths(self, new_path: str):
+#         self.lora_paths.append(new_path)
+
 @ray.remote
 class Collector:
     def __init__(self, args): 
         self.args = args
         self.actor_group: List[ray.actor.ActorHandle] = []
-        self.lora_paths: List[Optional[str]] = [args.initial_lora_path]
+        self.lora_paths: List[Optional[str]] = [None if (args.initial_lora_path is None or args.initial_lora_path.lower()=="none") else args.initial_lora_path]
 
     def initialize(self, num_actors: int):
         self.actor_group = [RayActor.remote(self.args) for _ in range(num_actors)]
@@ -49,17 +72,18 @@ class Collector:
         return self.lora_paths[-1]
     
     def get_previous_lora(self):
-        return self.lora_paths[-self.args.self_play_opponent_lag] if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
+        return self.lora_paths[-self.args.self_play_opponent_lag_lower] if len(self.lora_paths) > self.args.self_play_opponent_lag_lower else self.lora_paths[0]
 
     def get_random_lora(self): # get random lora weights from within the opponent delay window
-        return random.choice(self.lora_paths[:-self.args.self_play_opponent_lag]) if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
+        lower=self.args.self_play_opponent_lag_lower; upper=self.args.self_play_opponent_lag_upper
+        return random.choice(self.lora_paths[-min(upper, len(self.lora_paths)):-lower]) if len(self.lora_paths) > lower else self.lora_paths[0] 
 
     def add_new_lora_paths(self, new_path: str):
         self.lora_paths.append(new_path)
 
 
 def make_env(env_id: str):
-    env = ta.make(env_id); env = FirstLastObservationWrapper(env)
+    env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
     env.reset(num_players=2); env.state.error_allowance = 0
     return env, env.env_id
 
@@ -68,21 +92,23 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
     env, env_id = make_env(env_id=args.train_env_id)
     traj = Trajectory()
     done, steps = False, 0
-    lora_paths = {player_id: collector.get_current_lora, 1-player_id: collector.get_previous_lora}
+    lora_paths = {player_id: collector.get_current_lora, 1-player_id: collector.get_random_lora}
     fixed_opponent = ta.agents.OpenRouterAgent(model_name=args.eval_model_name)
     while not done and steps < args.max_env_steps:
         pid, obs = env.get_observation()
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-        # print(f"ACTION: {action}")
-        # action = truncate_after_boxed(action) # extract trunc act
+        print("ACTION", action)
+        
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
-        done, _ = env.step(action=extracted_action)
+        print("EXTRACTED_ACTION", extracted_action)
+        done, info = env.step(action=extracted_action)
         
         traj.pid.append(pid); traj.obs.append(formatted_prompt)
         traj.actions.append(action); traj.format_feedbacks.append(format_feedback)
         steps += 1
+        print("STEP_NR", steps)
 
     traj.final_rewards = env.close() if done else {0: 0, 1: 0}
     # add an invlid move format reward
@@ -92,6 +118,10 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
                 traj.format_feedbacks[i]["invalid_move"] = 1
             else:
                 traj.format_feedbacks[i]["invalid_move"] = 0
+    else:
+        for i in range(len(traj.pid)):
+            traj.format_feedbacks[i]["invalid_move"] = 0
+
 
     traj.num_turns = steps
     print(f"GAME FINISHED< ADDING TO BUFFER. num steps: {steps}")
@@ -166,21 +196,14 @@ def start_actor_loop(args, collector, buffer, tracker):
     thread.start()
 
 
-def parse_eval_env_id(arg): # If passed as a comma-separated string, split it
-    if ',' in arg:
-        return arg.split(',')
-    return arg
-
 def main():
     args = get_args()
     args = initialize_local_folder_structure(args=args)
     assert_args(args=args) # assert everything
 
-
-
     # build the reward transformations to be used
     final_reward_transformation = retra.ComposeFinalRewardTransforms([
-        retra.WinDrawLossFormatter(), # turn the rewards into (1,-1), (-1,1), (0,0)
+        retra.WinDrawLossFormatter(), # turn the rewards into (1,-1), (-1,1), (0,0) # TODO can be removed with TextArena v0.6.9
         retra.RoleAdvantageFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
     ])
     step_reward_transformation = retra.ComposeStepRewardTransforms([

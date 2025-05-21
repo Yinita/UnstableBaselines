@@ -1,45 +1,30 @@
-# unstable-baselines
+# unstable-baselines (WIP)
 (it's calles `unstable-baselines` becuase the maintained OpenAI baselines package is called `stable-baselines`)
 
 
+# Getting Started
+It makes sense to start from the game-tuned checkpoint (three epochs of sft on 750 observation-actions pairs generated via R1 self-play on TicTacToe-v0). 
+The checkpoint is zipped `lora_ckpt.zip`. You have to unzip it. The `run.sh` script will use this as the initial set of lora weights by default. 
+Afterward you can just run `bash run.sh`. Depending on how many GPUs you have, you can set the `--num_actors` and `--num_learners`. Keep in mind that collection is much much much more expensive than lora-training (so 7-1 is prob a good ratio).
 
-`bash run_24gb.sh` should work on 4090s (default is 2gpus for collection 1 for training) 
+
 
 # TODOs
+- track action diversity and log it to wandb (only really possible in fixed move games like TicTacToe, etc. but probably super interesting and valuable)
+- multi-gpu TorchTrainer
+- seperate the logs for everything (and actually log to files) for easier debugging
+- Organize .sh scripts
 
-<!-- - make num train gpus more flexible (i.e. 1-n) -->
-<!-- - create warning if not all gpus are used -->
-<!-- - track invalid move rate -->
-<!-- - better default name for wandb run -->
-<!-- - keep track of win-rate by pid -->
-<!-- - make sure to only submit the final action (i.e. add action extraction logic) -->
-<!-- - add format reward -->
-<!-- - add standard formatting options -->
-<!-- - add eval metrics to wandb -->
-<!-- - store sample CoTs -->
-<!-- - add a moving-average tracker and add tau/ma for both the wandb tracking -->
-<!-- - dynamically collect eval episodes in parallel -->
-<!-- - randomly subsample when  hitting max buffer size -->
-<!-- - add training metrics to wandb (the actual training metrics) 
-        -> pass the tracker into the training loop?
-        -> maybe get the algo to return a dict of stuff worth tracking -->
-<!-- - maybe allow for uneven number of actor gpus -->
-<!-- - training and vllm inf with hot-swapped LoRA weights (https://docs.vllm.ai/en/stable/features/lora.html -> doesn't seem hard and given the recent papers on this super worth doing) -->
-
-
-- maybe dynamically adjust the number of gpus used for training/collection
 - store specific checkpoints
-- track reward sd (echo trap)
-- fix multi-gpu training
-- split output dir by date, then time
-- fix where the lora weights end up
+
+
 
 
 KIV:
 - track time per complete episode
 - track time per turn
 - track time per generated char
-- optionally allocate an evaluate GPU
+- maybe dynamically adjust the number of gpus used for training/collection
 
 
 ## General TODOs:
@@ -48,9 +33,7 @@ KIV:
 - multi-node training
 
 
-
 # Ideas:
 - increase sample weight based on SD of reward 
 - somehow account for stochacisity in environment rewards (maybe somehow include reward certainty)
-- allow for uneven numbers of actors (maybe have the extra one focus on evals)
 - dynamic GRPO rollouts (either by window or by least return confidence)
