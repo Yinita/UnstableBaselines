@@ -99,10 +99,10 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-        print("ACTION", action)
+        # print("ACTION", action)
         
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
-        print("EXTRACTED_ACTION", extracted_action)
+        # print("EXTRACTED_ACTION", extracted_action)
         done, info = env.step(action=extracted_action)
         
         traj.pid.append(pid); traj.obs.append(formatted_prompt)
@@ -121,7 +121,6 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
     else:
         for i in range(len(traj.pid)):
             traj.format_feedbacks[i]["invalid_move"] = 0
-
 
     traj.num_turns = steps
     print(f"GAME FINISHED< ADDING TO BUFFER. num steps: {steps}")
