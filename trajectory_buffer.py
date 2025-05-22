@@ -29,7 +29,7 @@ class StepBuffer:
             self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward, env_id=env_id))
         print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 
-        excess_num_samples = len(self.steps) - self.args.max_buffer_size
+        excess_num_samples = int(len(self.steps) - self.args.max_buffer_size)
         if excess_num_samples > 0:
             randm_sampled = random.sample(self.steps, excess_num_samples)
             for b in randm_sampled:
