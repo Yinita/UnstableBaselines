@@ -48,16 +48,14 @@ class Collector:
     def get_current_lora(self):
         return self.lora_paths[-1]
     
-    def get_previous_lora(self):
-        return self.lora_paths[-self.args.self_play_opponent_lag_lower] if len(self.lora_paths) > self.args.self_play_opponent_lag_lower else self.lora_paths[0]
-
     def sample_prev_lora(self): # get random lora weights from within the opponent delay window
         lower=self.args.self_play_opponent_lag_lower; upper=self.args.self_play_opponent_lag_upper
         return random.choice(self.lora_paths[-min(upper, len(self.lora_paths)):-lower]) if len(self.lora_paths) > lower else self.lora_paths[0] 
 
     def add_new_lora_paths(self, new_path: str, iteration: int):
         self.lora_paths.append(new_path) # add to collection checkpoitns
-        self.checkpoints_to_evaluate.append((new_path, iteration, {})) # add to evaluation checkpoints
+        if iteration % self.args.evaluate_every_n_checkpoints==0:
+            self.checkpoints_to_evaluate.append((new_path, iteration, {})) # add to evaluation checkpoints
 
     def get_checkpoint_to_evaluate(self, env_id: str):
         # check if for this env id we already ran all games for that checkpoint
@@ -71,17 +69,12 @@ class Collector:
         return False, None, None # None were found
 
 
-
-# def make_env(env_id: str):
-#     env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
-#     env.reset(num_players=2); env.state.error_allowance = 0
-#     return env, env.env_id
-
 def make_env(env_id: str, num_players: int):
     env = ta.make(env_id)
-    env = ta.wrappers.GameMessageObservationWrapper(env) # TODO should be adjustable by environment
+    # env = ta.wrappers.GameMessageObservationWrapper(env) # TODO should be adjustable by environment
+    env = ta.wrappers.FirstLastObservationWrapper(env) # TODO should be adjustable by environment
     env.reset(num_players=num_players)
-    # ; env.state.error_allowance = 0
+    env.state.error_allowance = 0
     return env
 
 
@@ -183,7 +176,7 @@ def start_actor_loop(args, collector, buffer, tracker):
         return list(not_ready)
 
     def get_next_env_id(args, _type="train"):
-        env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.train_env_id)
+        env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
         player_id = np.random.randint(num_players)
         return env_id, num_players, player_id
 

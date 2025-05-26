@@ -42,6 +42,7 @@ def get_args():
     ap.add_argument("--num_evaluation_workers", type=int, default=4)
     ap.add_argument("--max_vllm_seq", type=int, default=384)
     ap.add_argument("--eval_games_per_update_step", type=int, default=32)
+    ap.add_argument("--evaluate_every_n_checkpoints", type=int, default=5)
 
     # collection params
     ap.add_argument("--train_env_id", type=parse_env_list, default=[("TicTacToe-v0", 2)], help="Comma-separated list of env_id:num_players pairs, e.g. 'TicTacToe-v0:2,Snake-v0:4'")
@@ -50,8 +51,8 @@ def get_args():
     ap.add_argument("--max_tokens", type=int, default=2048)
     ap.add_argument("--observation_format_template", type=str, default="default")
     ap.add_argument("--action_extraction_template", type=str, default="default")
-    ap.add_argument("--self_play_opponent_lag_lower", type=int, default=7)
-    ap.add_argument("--self_play_opponent_lag_upper", type=int, default=11)
+    ap.add_argument("--self_play_opponent_lag_lower", type=int, default=1)
+    ap.add_argument("--self_play_opponent_lag_upper", type=int, default=5)
     ap.add_argument("--opponent_type", type=str, default="self_play", choices=["self_play", "fixed"])
     ap.add_argument("--fixed_opponents", type=lambda s: [x.strip() for x in s.split(',')], default=["google/gemini-2.0-flash-lite-001"], help="Comma-separated list of model names (OpenRouter) for fixed opponents, e.g. 'gpt-3.5-turbo,gemini-1.5'")
 

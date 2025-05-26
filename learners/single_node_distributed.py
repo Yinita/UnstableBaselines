@@ -46,7 +46,7 @@ def train_loop_per_worker(cfg):
     algo = Reinforce(args, model, tokenizer, device)
 
     gpu_batch_size = args.batch_size // world_size
-    iteration = 0
+    iteration = 1
     while True:
         while ray.get(buffer.size.remote()) < args.batch_size*2: # wait until buffer has enough + stability buffer
             time.sleep(0.2)

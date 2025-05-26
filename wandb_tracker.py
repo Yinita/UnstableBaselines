@@ -80,7 +80,7 @@ class WandBTracker:
 
         # check if we should log the iteration based results
         if len(self.eval_iter_metrics[ckpt_iteration][env_id]["Game Length"]) >= self.args.eval_games_per_update_step: # log it
-            wandb_dict = {f"Eval '{env_id}'/{name}": np.mean(self.eval_iter_metrics[ckpt_iteration][env_id]) for name in self.eval_iter_metrics[ckpt_iteration][env_id]}
+            wandb_dict = {f"Eval '{env_id}'/{name}": np.mean(self.eval_iter_metrics[ckpt_iteration][env_id][name]) for name in self.eval_iter_metrics[ckpt_iteration][env_id]}
             wandb_dict[f"Eval '{env_id}'/ckpt-iteration"] = ckpt_iteration
             wandb.log(wandb_dict)
 
