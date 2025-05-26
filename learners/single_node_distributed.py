@@ -81,7 +81,7 @@ def train_loop_per_worker(cfg):
             os.makedirs(checkpoint_folder_path, exist_ok=True)
             peft_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
             peft_model.save_pretrained(checkpoint_folder_path)
-            ray.get(collector.add_new_lora_paths.remote(checkpoint_folder_path))
+            ray.get(collector.add_new_lora_paths.remote(checkpoint_folder_path, iteration))
             session.report({"iteration": iteration})
         iteration += 1
 

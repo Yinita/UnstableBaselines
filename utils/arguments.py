@@ -41,9 +41,9 @@ def get_args():
     ap.add_argument("--num_collection_workers", type=int, default=384)
     ap.add_argument("--num_evaluation_workers", type=int, default=4)
     ap.add_argument("--max_vllm_seq", type=int, default=384)
+    ap.add_argument("--eval_games_per_update_step", type=int, default=32)
 
     # collection params
-    # ap.add_argument("--train_env_id", type=lambda arg: arg.split(',') if ',' in arg else arg, default="TicTacToe-v0", help="Single env as string or multiple envs as comma-separated string")
     ap.add_argument("--train_env_id", type=parse_env_list, default=[("TicTacToe-v0", 2)], help="Comma-separated list of env_id:num_players pairs, e.g. 'TicTacToe-v0:2,Snake-v0:4'")
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top_p", type=float, default=0.95)

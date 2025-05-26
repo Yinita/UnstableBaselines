@@ -38,6 +38,8 @@ class Collector:
         self.actor_group: List[ray.actor.ActorHandle] = []
         self.lora_paths: List[Optional[str]] = [None if (args.initial_lora_path is None or args.initial_lora_path.lower()=="none") else args.initial_lora_path]
 
+        self.checkpoints_to_evaluate: List[Tuple[Optional[str], int, Dict[str, int]]] = [(self.lora_paths, 0, {})]
+
     def initialize(self, num_actors: int):
         self.actor_group = [RayActor.remote(self.args) for _ in range(num_actors)]
 
@@ -54,8 +56,21 @@ class Collector:
         lower=self.args.self_play_opponent_lag_lower; upper=self.args.self_play_opponent_lag_upper
         return random.choice(self.lora_paths[-min(upper, len(self.lora_paths)):-lower]) if len(self.lora_paths) > lower else self.lora_paths[0] 
 
-    def add_new_lora_paths(self, new_path: str):
-        self.lora_paths.append(new_path)
+    def add_new_lora_paths(self, new_path: str, iteration: int):
+        self.lora_paths.append(new_path) # add to collection checkpoitns
+        self.checkpoints_to_evaluate.append((new_path, iteration, {})) # add to evaluation checkpoints
+
+    def get_checkpoint_to_evaluate(self, env_id: str):
+        # check if for this env id we already ran all games for that checkpoint
+        for i in range(len(self.checkpoints_to_evaluate)):
+            # check if viable
+            num_evals_run = self.checkpoints_to_evaluate[i][2].get(env_id, 0)
+            if num_evals_run < args.eval_games_per_update_step:
+                # increment and return
+                self.checkpoints_to_evaluate[i][2].get(env_id, 0) += 1
+                return True, self.checkpoints_to_evaluate[i][0], self.checkpoints_to_evaluate[i][1]
+        return False, None, None # None were found
+
 
 
 # def make_env(env_id: str):
@@ -70,6 +85,13 @@ def make_env(env_id: str, num_players: int):
     # ; env.state.error_allowance = 0
     return env
 
+
+def get_checkpoint_action(args, observation: str, lora_path: str):
+    formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
+    action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
+    extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+    return action, extracted_action, format_feedback, formatted_prompt
+
 @ray.remote(num_cpus=0.1)
 def collect_episode_once(args, player_id: int, env_id: str, num_players: int, buffer, tracker, actor, collector):
     env = make_env(env_id=env_id, num_players=num_players)
@@ -80,10 +102,10 @@ def collect_episode_once(args, player_id: int, env_id: str, num_players: int, bu
         pid, obs = env.get_observation()
 
         if pid == player_id: # current model moves
-            lora_path = ray.get(collector.get_current_lora.remote()) # get current lora path
-            formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
-            action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
-            extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+            # lora_path = ray.get(collector.get_current_lora.remote()) # get current lora path
+            action, extracted_action, format_feedback, formatted_prompt = get_checkpoint_action(
+                args=args, observation=obs, lora_path=ray.get(collector.get_current_lora.remote()) # get current lora path
+            )
 
             done, info = env.step(action=extracted_action) # step in the environment
 
@@ -96,15 +118,19 @@ def collect_episode_once(args, player_id: int, env_id: str, num_players: int, bu
 
         else: # sample opponent action based on what is specified
             if args.opponent_type == "self_play": # sample from previous checkpoints
-                lora_path = ray.get(collector.sample_prev_lora.remote()) # get current lora path
-                formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
-                action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
-                action, _ = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+                # lora_path = ray.get(collector.sample_prev_lora.remote()) # get current lora path
+                # formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
+                # action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
+                # action, _ = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+                _, action, _, _ = get_checkpoint_action(args=args, observation=obs, lora_path=ray.get(collector.sample_prev_lora.remote()))  # get action from prev lora path
+
+
+
 
             elif args.opponent_type == "fixed": # sample from fixed opponent
-                fixed_opponent_agent = ta.agents.OpenRouterAgent(model_name=random.choice(args.fixed_opponents)) # TODO check if this is expensive (compute wise)
+                # fixed_opponent_agent = ta.agents.OpenRouterAgent(model_name=random.choice(args.fixed_opponents)) # TODO check if this is expensive (compute wise)
                 # TODO - given this is running a thread, we need to make sure we are actually sampling opponents, might always be the same. Maybe pass seed into thread
-                action = fixed_opponent_agent(obs)
+                action = ta.agents.OpenRouterAgent(model_name=random.choice(args.fixed_opponents))(obs) # TODO check if this is expensive (compute wise)
 
             else:
                 raise NotImplementedError
@@ -121,7 +147,7 @@ def collect_episode_once(args, player_id: int, env_id: str, num_players: int, bu
 
 
 @ray.remote(num_cpus=0.1)
-def run_eval_episode(args, player_id: int, env_id: str, num_players:int, tracker, actor, collector):
+def run_eval_episode(args, player_id: int, env_id: str, num_players:int, tracker, actor, collector, lora_path: str, ckpt_iteration: int):
     env = make_env(env_id=env_id, num_players=num_players)
 
     episode_info = []
@@ -134,10 +160,11 @@ def run_eval_episode(args, player_id: int, env_id: str, num_players:int, tracker
 
         if pid == player_id: # our model moves
             model_name = "current_ckpt"
-            lora_path = ray.get(collector.get_current_lora.remote()) # get current lora path
-            formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
-            full_action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
-            action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=full_action) # extract environment action
+            # formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
+            # full_action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
+            # action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=full_action) # extract environment action
+            full_action, action, _, _ = get_checkpoint_action(args=args, observation=obs, lora_path=lora_path)
+
 
         else: # get action from fixed opponent
             model_name = args.eval_model_name
@@ -154,7 +181,7 @@ def run_eval_episode(args, player_id: int, env_id: str, num_players:int, tracker
         turns += 1
 
     # store the full episode in a csv file
-    ray.get(tracker.add_eval_episode.remote(episode_info=episode_info, final_reward=env.close(), current_ckpt_pid=player_id, env_id=env_id))
+    ray.get(tracker.add_eval_episode.remote(episode_info=episode_info, final_reward=env.close(), current_ckpt_pid=player_id, env_id=env_id, ckpt_iteration=ckpt_iteration))
 
 
 # TODO (maybe) add logging for the number of train env eval currently running
@@ -190,15 +217,19 @@ def start_actor_loop(args, collector, buffer, tracker):
                 collection_outstanding.append(future)
 
             # Replenish evaluation
-            if len(evaluation_outstanding) < args.num_evaluation_workers:
-                actor = ray.get(collector.get_actor.remote())
+            if len(evaluation_outstanding) < args.num_evaluation_workers: # check for available eval workers
+                # check if we should run a new eval episode
                 env_id, num_players, player_id = get_next_env_id(args=args, _type="eval")
-                future = run_eval_episode.remote(args=args, player_id=player_id, env_id=env_id, num_players=num_players, tracker=tracker, actor=actor, collector=collector)
-                evaluation_outstanding.append(future)
+                run_eval, lora_path, ckpt_iteration = collector.get_checkpoint_to_evaluate(env_id=env_id)
+                if run_eval:
+                    actor = ray.get(collector.get_actor.remote())
+                    future = run_eval_episode.remote(args=args, player_id=player_id, env_id=env_id, num_players=num_players, tracker=tracker, actor=actor, ckpt_iteration=ckpt_iteration)
+                    evaluation_outstanding.append(future)
 
             time.sleep(0.05)
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
+
 
 
 def main():

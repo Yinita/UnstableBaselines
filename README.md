@@ -24,12 +24,12 @@ Also, this is currently using the new version of textarena (wich is on the `v0.6
 - single player envs 
 - fixed opponent (sampling) multi player envs (done - randomly sampling now, but might be worth chaning in the future)
 - make single-player game collection easy
+- fixed number of eval games after each update step (done)
 
 
 ### TODOs for Tim:
 - track action/state diversity and log it to wandb (only really possible in fixed move games like TicTacToe, etc. but probably super interesting and valuable)
 - store specific checkpoints
-- fixed number of eval games after each update step
 
 
 ### TODOs for Bobby:

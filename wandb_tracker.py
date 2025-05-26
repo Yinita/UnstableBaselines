@@ -17,6 +17,7 @@ class WandBTracker:
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
         self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}} # Metric containers
+        self.eval_iter_metrics = {} # use iteration as key, when full, log and clear to save space
         self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0} # Core counters
         self.std_metrics = ["Player Rewards", "Game Length", "Response Length (avg char)", "Observation Length (avg char)"]
 
@@ -31,6 +32,12 @@ class WandBTracker:
             self.metrics[prefix]["all"][name] = deque(maxlen=self.ma_range)
         self.metrics[prefix]["all"][name].append(value)
 
+    def update_iteration_eval_metric(self, name, value, env_id, ckpt_iteration):
+        if ckpt_iteration not in self.eval_iter_metrics: self.eval_iter_metrics[ckpt_iteration] = {}
+        if env_id not in self.eval_iter_metrics[ckpt_iteration]: self.eval_iter_metrics[ckpt_iteration][env_id] = {}
+        if name not in self.eval_iter_metrics[ckpt_iteration][env_id]: self.eval_iter_metrics[ckpt_iteration][env_id][name] = []
+        self.eval_iter_metrics[ckpt_iteration][env_id][name].append(value)
+
     def log_metrics(self, prefix):
         for env_id in self.metrics[prefix]:
             ma_tag  = f"{prefix} '{env_id}' (MA - range={self.ma_range})"
@@ -41,7 +48,7 @@ class WandBTracker:
                     if name in self.std_metrics: wandb_dict[f"{ma_tag}/{name} (std)"] = np.std(self.metrics[prefix][env_id][name])
             wandb.log(wandb_dict)
 
-    def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int, env_id: str):
+    def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int, env_id: str, ckpt_iteration: int): # TODO rewrite to average by iter 
         if env_id not in self.eval_ep_count: self.eval_ep_count[env_id] = 0
         reward_current = final_reward[current_ckpt_pid]
         reward_other = final_reward[1-current_ckpt_pid]
@@ -56,7 +63,9 @@ class WandBTracker:
         # Update outcome metrics
         for metric in ["Win Rate", "Loss Rate", "Draw Rate"]:
             self.update_metric(metric, int(metric == outcome_metric), "evaluation", env_id)
+            self.update_iteration_eval_metric(metric, int(metric==outcome_metric), env_id, ckpt_iteration)
         self.update_metric("Game Length", len(episode_info), "evaluation", env_id) # Turn count
+        self.update_iteration_eval_metric("Game Length",  len(episode_info), env_id, ckpt_iteration)  # Turn count
 
         # Save CSV
         self.log_metrics("evaluation")
@@ -68,6 +77,12 @@ class WandBTracker:
             wandb.save(filename)
         self.eval_ep_count[env_id] += 1
         self.eval_ep_count["all"] += 1
+
+        # check if we should log the iteration based results
+        if len(self.eval_iter_metrics[ckpt_iteration][env_id]["Game Length"]) >= self.args.eval_games_per_update_step: # log it
+            wandb_dict = {f"Eval '{env_id}'/{name}": np.mean(self.eval_iter_metrics[ckpt_iteration][env_id]) for name in self.eval_iter_metrics[ckpt_iteration][env_id]}
+            wandb_dict[f"Eval '{env_id}'/ckpt-iteration"] = ckpt_iteration
+            wandb.log(wandb_dict)
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str):
         if env_id not in self.num_trajectories: self.num_trajectories[env_id] = 0
