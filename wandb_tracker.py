@@ -48,7 +48,7 @@ class WandBTracker:
                     if name in self.std_metrics: wandb_dict[f"{ma_tag}/{name} (std)"] = np.std(self.metrics[prefix][env_id][name])
             wandb.log(wandb_dict)
 
-    def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int, env_id: str, ckpt_iteration: int): # TODO rewrite to average by iter 
+    def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int, env_id: str, ckpt_iteration: int):
         if env_id not in self.eval_ep_count: self.eval_ep_count[env_id] = 0
         reward_current = final_reward[current_ckpt_pid]
         reward_other = final_reward[1-current_ckpt_pid]

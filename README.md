@@ -25,6 +25,8 @@ Also, this is currently using the new version of textarena (wich is on the `v0.6
 - fixed opponent (sampling) multi player envs (done - randomly sampling now, but might be worth chaning in the future)
 - make single-player game collection easy
 - fixed number of eval games after each update step (done)
+- pass the iterated seed into each worker
+
 
 
 ### TODOs for Tim:

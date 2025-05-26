@@ -72,7 +72,7 @@ class Collector:
 def make_env(env_id: str, num_players: int):
     env = ta.make(env_id)
     # env = ta.wrappers.GameMessageObservationWrapper(env) # TODO should be adjustable by environment
-    env = ta.wrappers.FirstLastObservationWrapper(env) # TODO should be adjustable by environment
+    # env = ta.wrappers.FirstLastObservationWrapper(env) # TODO should be adjustable by environment
     env.reset(num_players=num_players)
     env.state.error_allowance = 0
     return env
@@ -88,7 +88,7 @@ def get_checkpoint_action(args, actor, observation: str, lora_path: str):
 def collect_episode_once(args, player_id: int, env_id: str, num_players: int, buffer, tracker, actor, collector):
     env = make_env(env_id=env_id, num_players=num_players)
     traj = Trajectory()
-    done, turns = False, 0
+    done = False
 
     while not done:
         pid, obs = env.get_observation()
@@ -120,12 +120,13 @@ def collect_episode_once(args, player_id: int, env_id: str, num_players: int, bu
                 raise NotImplementedError
 
             done, info = env.step(action=action) # step in the env
-        turns += 1 # increment turn counter
+        # turns += 1 # increment turn counter
     
     traj.final_rewards = env.close() # get final game rewards
     if info["end_by_invalid"] and pid==player_id:  traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
-    traj.num_turns = turns
-    print(f"GAME FINISHED< ADDING TO BUFFER. num turns: {turns} [steps by our model: {len(traj.pid)}]")
+    # traj.num_turns = turns
+    traj.num_turns = info["turn_count"]
+    print(f"GAME FINISHED< ADDING TO BUFFER. num turns: {traj.num_turns} [steps by our model: {len(traj.pid)}]")
     ray.get(buffer.add_trajectory.remote(traj, player_id=player_id, env_id=env_id))
     ray.get(tracker.add_trajectory.remote(traj, player_id=player_id, env_id=env_id))
 
