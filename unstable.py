@@ -78,14 +78,23 @@ def make_env(env_id: str, num_players: int):
     return env
 
 
+def get_next_env_id(args, _type="train"):
+    env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
+    player_id = np.random.randint(num_players)
+    return env_id, num_players, player_id
+
+
 def get_checkpoint_action(args, actor, observation: str, lora_path: str):
     formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=observation) # format observation
     action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
     extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
     return action, extracted_action, format_feedback, formatted_prompt
 
+
 @ray.remote(num_cpus=0.1)
-def collect_episode_once(args, player_id: int, env_id: str, num_players: int, buffer, tracker, actor, collector):
+def collect_episode_once(args, buffer, tracker, actor, collector, seed: int):
+    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed) # set seed
+    env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
     env = make_env(env_id=env_id, num_players=num_players)
     traj = Trajectory()
     done = False
@@ -132,9 +141,10 @@ def collect_episode_once(args, player_id: int, env_id: str, num_players: int, bu
 
 
 @ray.remote(num_cpus=0.1)
-def run_eval_episode(args, player_id: int, env_id: str, num_players:int, tracker, actor, lora_path: str, ckpt_iteration: int):
+def run_eval_episode(args, tracker, actor, lora_path: str, ckpt_iteration: int, seed: int):
+    random.seed(seed); np.random.seed(seed); torch.manual_seed(seed) # set seed
+    env_id, num_players, player_id = get_next_env_id(args=args, _type="eval")
     env = make_env(env_id=env_id, num_players=num_players)
-
     episode_info = []
     done, turns = False, 0
 
@@ -176,12 +186,8 @@ def start_actor_loop(args, collector, buffer, tracker):
                 print(traceback.format_exc())
         return list(not_ready)
 
-    def get_next_env_id(args, _type="train"):
-        env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
-        player_id = np.random.randint(num_players)
-        return env_id, num_players, player_id
-
     def loop():
+        iter_seed = 0
         collection_outstanding = []
         evaluation_outstanding = []
         while True:
@@ -192,19 +198,25 @@ def start_actor_loop(args, collector, buffer, tracker):
             # Replenish collection
             if len(collection_outstanding) < args.num_collection_workers:
                 actor = ray.get(collector.get_actor.remote())
-                env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
-                future = collect_episode_once.remote(args=args, player_id=player_id, env_id=env_id, num_players=num_players, buffer=buffer, tracker=tracker, actor=actor, collector=collector)
+                # env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
+                future = collect_episode_once.remote(
+                    args=args, buffer=buffer, tracker=tracker, actor=actor, collector=collector, seed=iter_seed
+                )
                 collection_outstanding.append(future)
+                iter_seed += 1
 
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers: # check for available eval workers
                 # check if we should run a new eval episode
-                env_id, num_players, player_id = get_next_env_id(args=args, _type="eval")
+                # env_id, num_players, player_id = get_next_env_id(args=args, _type="eval")
                 run_eval, lora_path, ckpt_iteration = ray.get(collector.get_checkpoint_to_evaluate.remote(env_id=env_id))
                 if run_eval:
                     actor = ray.get(collector.get_actor.remote())
-                    future = run_eval_episode.remote(args=args, player_id=player_id, env_id=env_id, num_players=num_players, tracker=tracker, actor=actor, lora_path=lora_path, ckpt_iteration=ckpt_iteration)
+                    future = run_eval_episode.remote(
+                        args=args, tracker=tracker, actor=actor, lora_path=lora_path, ckpt_iteration=ckpt_iteration, seed=iter_seed
+                    )
                     evaluation_outstanding.append(future)
+                iter_seed += 1
 
             time.sleep(0.05)
     thread = threading.Thread(target=loop, daemon=True)
