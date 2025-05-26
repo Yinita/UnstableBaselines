@@ -78,8 +78,12 @@ def make_env(env_id: str, num_players: int):
     return env
 
 
-def get_next_env_id(args, _type="train"):
-    env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
+def get_next_env_id(args, _type="train", seed=None):
+    if seed:
+        random.seed(seed)
+        env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
+    else:
+        env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
     player_id = np.random.randint(num_players)
     return env_id, num_players, player_id
 
@@ -141,9 +145,8 @@ def collect_episode_once(args, buffer, tracker, actor, collector, seed: int):
 
 
 @ray.remote(num_cpus=0.1)
-def run_eval_episode(args, tracker, actor, lora_path: str, ckpt_iteration: int, seed: int):
+def run_eval_episode(args, collector, tracker, actor, lora_path: str, player_id: int, env_id: str, num_players: int, ckpt_iteration: int, seed: int):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed) # set seed
-    env_id, num_players, player_id = get_next_env_id(args=args, _type="eval")
     env = make_env(env_id=env_id, num_players=num_players)
     episode_info = []
     done, turns = False, 0
@@ -199,22 +202,19 @@ def start_actor_loop(args, collector, buffer, tracker):
             if len(collection_outstanding) < args.num_collection_workers:
                 actor = ray.get(collector.get_actor.remote())
                 # env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
-                future = collect_episode_once.remote(
-                    args=args, buffer=buffer, tracker=tracker, actor=actor, collector=collector, seed=iter_seed
-                )
+                future = collect_episode_once.remote(args=args, buffer=buffer, tracker=tracker, actor=actor, collector=collector, seed=iter_seed)
                 collection_outstanding.append(future)
                 iter_seed += 1
 
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers: # check for available eval workers
                 # check if we should run a new eval episode
-                # env_id, num_players, player_id = get_next_env_id(args=args, _type="eval")
+                env_id, num_players, player_id = get_next_env_id(args=args, _type="eval", seed=iter_seed)
                 run_eval, lora_path, ckpt_iteration = ray.get(collector.get_checkpoint_to_evaluate.remote(env_id=env_id))
                 if run_eval:
                     actor = ray.get(collector.get_actor.remote())
-                    future = run_eval_episode.remote(
-                        args=args, tracker=tracker, actor=actor, lora_path=lora_path, ckpt_iteration=ckpt_iteration, seed=iter_seed
-                    )
+                    future = run_eval_episode.remote(args=args, collector=collector, tracker=tracker, actor=actor, lora_path=lora_path,
+                    player_id=player_id, env_id=env_id, num_players=num_players, ckpt_iteration=ckpt_iteration, seed=iter_seed)
                     evaluation_outstanding.append(future)
                 iter_seed += 1
 

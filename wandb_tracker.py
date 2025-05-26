@@ -86,8 +86,13 @@ class WandBTracker:
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str):
         if env_id not in self.num_trajectories: self.num_trajectories[env_id] = 0
-        raw_current = trajectory.final_rewards[player_id]
-        raw_prev = trajectory.final_rewards[1-player_id]
+
+        if len(trajectory.final_rewards) == 1:
+            raw_current = 1 #trajectory.final_rewards[player_id]
+            raw_prev = 1 #trajectory.final_rewards[1-player_id]
+        else:
+            raw_current = trajectory.final_rewards[player_id]
+            raw_prev = trajectory.final_rewards[1-player_id]
 
         self.update_metric("Win Rate",  int(raw_current > raw_prev), "collection", env_id)
         self.update_metric("Loss Rate", int(raw_current < raw_prev), "collection", env_id)

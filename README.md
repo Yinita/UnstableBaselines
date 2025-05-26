@@ -26,7 +26,7 @@ Also, this is currently using the new version of textarena (wich is on the `v0.6
 - make single-player game collection easy
 - fixed number of eval games after each update step (done)
 - pass the iterated seed into each worker
-
+- fix single player evals
 
 
 ### TODOs for Tim:
