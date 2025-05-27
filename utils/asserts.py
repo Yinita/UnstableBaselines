@@ -60,7 +60,6 @@ def _assert_textarena_version():
     import textarena 
     assert textarena.__version__ == "0.6.9", f"You need to use TextArena version 0.6.9 (build from source). You are using: {textarena.__version__}"
 
-
 def assert_args(args):
     _validate_requested_gpus(args=args)
     _validate_batch_sizes(args=args)
