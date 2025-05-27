@@ -54,9 +54,9 @@ class WandBTracker:
             self.update_iteration_eval_metric("Reward", final_reward[0], env_id, ckpt_iteration)
             self.update_iteration_eval_metric("Game Length", len(episode_info), env_id, ckpt_iteration)
             if len(self.eval_iter_metrics[ckpt_iteration][env_id]["Reward"]) >= self.args.eval_games_per_update_step: # log it
-            wandb_dict = {f"Eval '{env_id}'/{name}": np.mean(self.eval_iter_metrics[ckpt_iteration][env_id][name]) for name in self.eval_iter_metrics[ckpt_iteration][env_id]}
-            wandb_dict[f"Eval '{env_id}'/ckpt-iteration"] = ckpt_iteration
-            wandb.log(wandb_dict)
+                wandb_dict = {f"Eval '{env_id}'/{name}": np.mean(self.eval_iter_metrics[ckpt_iteration][env_id][name]) for name in self.eval_iter_metrics[ckpt_iteration][env_id]}
+                wandb_dict[f"Eval '{env_id}'/ckpt-iteration"] = ckpt_iteration
+                wandb.log(wandb_dict)
             return
 
         if env_id not in self.eval_ep_count: self.eval_ep_count[env_id] = 0
