@@ -151,7 +151,7 @@ def collect_episode_once(args, buffer, tracker, actor, collector, seed: int):
 
 
 @ray.remote(num_cpus=0.1)
-def run_eval_episode(args, collector, tracker, actor, lora_path: str, player_id: int, env_id: str, num_players: int, ckpt_iteration: int, seed: int):
+def run_eval_episode(args, collector, tracker, actor, lora_path: str, player_id: int, env_id: str, num_players: int, ckpt_iteration: int, prompt_template: str, seed: int):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed) # set seed
     env = make_env(env_id=env_id, num_players=num_players)
     episode_info = []
@@ -222,8 +222,10 @@ def start_actor_loop(args, collector, buffer, tracker):
                 run_eval, lora_path, ckpt_iteration = ray.get(collector.get_checkpoint_to_evaluate.remote(env_id=env_id))
                 if run_eval:
                     actor = ray.get(collector.get_actor.remote())
-                    future = run_eval_episode.remote(args=args, collector=collector, tracker=tracker, actor=actor, lora_path=lora_path,
-                    player_id=player_id, env_id=env_id, num_players=num_players, ckpt_iteration=ckpt_iteration, seed=iter_seed)
+                    future = run_eval_episode.remote(
+                        args=args, collector=collector, tracker=tracker, actor=actor, lora_path=lora_path, player_id=player_id, 
+                        env_id=env_id, num_players=num_players, ckpt_iteration=ckpt_iteration, prompt_template=prompt_template, seed=iter_seed
+                    )
                     evaluation_outstanding.append(future)
                 iter_seed += 1
 
