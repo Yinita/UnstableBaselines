@@ -38,6 +38,10 @@ class Collector:
         self.actor_group: List[ray.actor.ActorHandle] = []
         self.lora_paths: List[Optional[str]] = [None if (args.initial_lora_path is None or args.initial_lora_path.lower()=="none") else args.initial_lora_path]
         self.checkpoints_to_evaluate: List[Tuple[Optional[str], int, Dict[str, int]]] = [(self.lora_paths[0], 0, {})]
+        self._done = False 
+
+    def mark_done(self): self._done = True 
+    def is_done(self): return self._done
 
     def initialize(self, num_actors: int):
         self.actor_group = [RayActor.remote(self.args) for _ in range(num_actors)]
@@ -195,12 +199,15 @@ def start_actor_loop(args, collector, buffer, tracker):
         collection_outstanding = []
         evaluation_outstanding = []
         while True:
+            # Check if we are done with everything
+            if ray.get(collector.is_done.remote()): print("[ACTOR LOOP] Training is done. Exiting actor loop."); break
+
             # Clean up finished futures
             collection_outstanding = clean_futures(collection_outstanding)
             evaluation_outstanding = clean_futures(evaluation_outstanding)
 
             # Replenish collection
-            if len(collection_outstanding) < args.num_collection_workers:
+            while len(collection_outstanding) < args.num_collection_workers:
                 actor = ray.get(collector.get_actor.remote())
                 # env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
                 future = collect_episode_once.remote(args=args, buffer=buffer, tracker=tracker, actor=actor, collector=collector, seed=iter_seed)
@@ -220,6 +227,7 @@ def start_actor_loop(args, collector, buffer, tracker):
                 iter_seed += 1
 
             time.sleep(0.05)
+            
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
 
@@ -276,12 +284,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-
-# TODO add a single gpu debugging mode frfr
-# TODO asserts
-
-
-# TODO optimize by grouping same lora paths to same gpus
-# TODO add better reward stats (optimally somehow log the transformed rewards to wandb as well)
-# TODO seperate the logs for everything (and actually log to files) for easier debuggin

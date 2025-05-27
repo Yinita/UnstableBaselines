@@ -47,7 +47,7 @@ def train_loop_per_worker(cfg):
 
     gpu_batch_size = args.batch_size // world_size
     iteration = 1
-    while True:
+    while iteration < args.iterations:
         while ray.get(buffer.size.remote()) < args.batch_size*2: # wait until buffer has enough + stability buffer
             time.sleep(0.2)
 
@@ -85,6 +85,7 @@ def train_loop_per_worker(cfg):
             session.report({"iteration": iteration})
         iteration += 1
 
-
+    # let the collector know that we are done 
+    if rank == 0: ray.get(collector.mark_done.remote())
 
     

@@ -72,3 +72,11 @@ Also, this is currently using the new version of textarena (wich is on the `v0.6
 - somehow account for stochacisity in environment rewards (maybe somehow include reward certainty)
 - dynamic GRPO rollouts (either by window or by least return confidence)
 
+
+
+
+### Legacy TODOs:
+- TODO add a single gpu debugging mode frfr
+- TODO optimize by grouping same lora paths to same gpus
+- TODO add better reward stats (optimally somehow log the transformed rewards to wandb as well)
+- TODO seperate the logs for everything (and actually log to files) for easier debuggin

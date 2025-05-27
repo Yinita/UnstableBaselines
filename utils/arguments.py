@@ -22,7 +22,8 @@ def get_args():
     ap.add_argument("--clip", type=float, default=0.2)
     ap.add_argument("--lr", type=float, default=5e-6)
     ap.add_argument("--debugging", type=bool, default=False)
-    ap.add_argument("--max_buffer_size_multiple", type=float, default=3.0)
+    ap.add_argument("--max_buffer_size_multiple", type=float, default=2.5)
+    ap.add_argument("--iterations", type=int, default=1_000)
 
     # general configs
     ap.add_argument("--gradient_accumulation_steps", type=int, default=64)
