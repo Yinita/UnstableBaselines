@@ -8,7 +8,7 @@ def parse_env_list(arg: str) -> List[tuple[str, int]]:
     for item in arg.split(','):
         try:
             env_id, num_players, prompt_template = item.split(':')
-            result.append((env_id.strip(), int(num_players.strip())), prompt_template.strip())
+            result.append((env_id.strip(), int(num_players.strip()), prompt_template.strip()))
         except ValueError:
             raise argparse.ArgumentTypeError(f"Invalid format for env: '{item}', expected format 'env_id:num_players'")
     return result

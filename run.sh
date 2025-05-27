@@ -21,6 +21,5 @@ python3 unstable.py \
     --format_reward_think 1.5 \
     --format_reward_valid_move 1.0 \
     --format_penalty_invalid_move -1.0\
-    --observation_format_template "qwen3"\
     --eval_games_per_update_step 64\
     --gradient_clip 0.05
