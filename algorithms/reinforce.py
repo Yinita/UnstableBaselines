@@ -8,7 +8,7 @@ class Reinforce(BaseAlgo):
         enc = self.tokenizer([o + a for o, a in zip(obs, acts)], return_tensors="pt", padding=True).to(self.device)
         return enc, advs, obs
 
-    def update(self, steps):
+    def update(self, steps, mini_batch_scaling: float = 1.0):
         enc, advs, obs = self.prepare_batch(steps=steps) # unpack
         out = self.model(**enc) # forward
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
@@ -20,7 +20,7 @@ class Reinforce(BaseAlgo):
             mask[i, :L] = False
         mask = mask[:, 1:]
         seq_logp = (tok_logp * mask).sum(1) / mask.sum(1).clamp(min=1)
-        loss = -(advs * seq_logp).mean()
+        loss = -(advs * seq_logp).mean() / mini_batch_scaling
         loss.backward()
         return {"loss": loss.item(), "logp_mean": seq_logp.mean().item(), "logp_std": seq_logp.std().item(), "num_steps": len(steps)}
 

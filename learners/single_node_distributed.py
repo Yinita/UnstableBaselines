@@ -59,7 +59,7 @@ def train_loop_per_worker(cfg):
         for i in range(args.gradient_accumulation_steps):
             start, end = i*mini_batch_size, (i+1)*mini_batch_size
             mini_batch = batch[start:end] 
-            update_info = algo.update(mini_batch)
+            update_info = algo.update(mini_batch, mini_batch_scaling=args.gradient_accumulation_steps)
             for k in update_info:
                 metrics[k] = metrics.get(k, 0.0) + update_info[k]
         

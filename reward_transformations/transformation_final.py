@@ -57,7 +57,7 @@ class RoleAdvantageFormatter(FinalRewardTransform):
 
 
 class RoleAdvantageByEnvFormatter(FinalRewardTransform):
-    def __init__(self, role_advantage: Dict[int, float]={0:0.0, 1:0.0}, tau: float=0.01):
+    def __init__(self, role_advantage: Dict[int, float]={0:0.0, 1:0.0}, tau: float=0.001):
         self.default_role_advantage = role_advantage
         self.role_advantage_dict = {}
         self.tau = tau

@@ -73,6 +73,7 @@ def make_env(env_id: str, num_players: int):
     env = ta.make(env_id)
     # env = ta.wrappers.GameMessageObservationWrapper(env) # TODO should be adjustable by environment
     # env = ta.wrappers.FirstLastObservationWrapper(env) # TODO should be adjustable by environment
+    env = ta.wrappers.GameBoardObservationWrapper(env)
     env.reset(num_players=num_players)
     env.state.error_allowance = 0
     return env
