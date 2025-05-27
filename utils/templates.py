@@ -17,7 +17,12 @@ def qwen3_template(observation: str) -> str:
         "<|im_start|>assistant\n"
     )
 
-
+def qwen3_template_reasoning(observation: str) -> str:
+    return (
+        "<|im_start|>user\nPlease reason step by step, and put your final answer within \\boxed{}.\n"
+        f"Question: {observation}<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
 
 
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
@@ -40,6 +45,8 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
 OBSERVATION_FORMATTING = {
     "default": apply_default_template,
     "qwen3": qwen3_template
+    "qwen3-game": qwen3_template,
+    "qwen3-reasoning": qwen3_template_reasoning,
 }
 
 ACTION_EXTRACTION = {

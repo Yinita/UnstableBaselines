@@ -86,15 +86,16 @@ def make_env(env_id: str, num_players: int):
 def get_next_env_id(args, _type="train", seed=None):
     if seed:
         random.seed(seed)
-        env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
+        env_id, num_players, prompt_template = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
     else:
-        env_id, num_players = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
+        env_id, num_players, prompt_template = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
     player_id = np.random.randint(num_players)
-    return env_id, num_players, player_id
+    return env_id, num_players, player_id, prompt_template
 
 
-def get_checkpoint_action(args, actor, observation: str, lora_path: str):
-    formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=observation) # format observation
+def get_checkpoint_action(args, actor, observation: str, lora_path: str, prompt_template: str):
+    # formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=observation) # format observation
+    formatted_prompt = OBSERVATION_FORMATTING[prompt_template](observation=observation) # format observation
     action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
     extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
     return action, extracted_action, format_feedback, formatted_prompt
@@ -103,7 +104,7 @@ def get_checkpoint_action(args, actor, observation: str, lora_path: str):
 @ray.remote(num_cpus=0.1)
 def collect_episode_once(args, buffer, tracker, actor, collector, seed: int):
     random.seed(seed); np.random.seed(seed); torch.manual_seed(seed) # set seed
-    env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
+    env_id, num_players, player_id, prompt_template = get_next_env_id(args=args, _type="train")
     env = make_env(env_id=env_id, num_players=num_players)
     traj = Trajectory()
     done = False
@@ -114,7 +115,7 @@ def collect_episode_once(args, buffer, tracker, actor, collector, seed: int):
         if pid == player_id: # current model moves
             # lora_path = ray.get(collector.get_current_lora.remote()) # get current lora path
             action, extracted_action, format_feedback, formatted_prompt = get_checkpoint_action(
-                args=args, actor=actor, observation=obs, lora_path=ray.get(collector.get_current_lora.remote()) # get current lora path
+                args=args, actor=actor, observation=obs, lora_path=ray.get(collector.get_current_lora.remote()), prompt_template=prompt_template # get current lora path
             )
 
             done, info = env.step(action=extracted_action) # step in the environment
@@ -217,7 +218,7 @@ def start_actor_loop(args, collector, buffer, tracker):
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers: # check for available eval workers
                 # check if we should run a new eval episode
-                env_id, num_players, player_id = get_next_env_id(args=args, _type="eval", seed=iter_seed)
+                env_id, num_players, player_id, prompt_template = get_next_env_id(args=args, _type="eval", seed=iter_seed)
                 run_eval, lora_path, ckpt_iteration = ray.get(collector.get_checkpoint_to_evaluate.remote(env_id=env_id))
                 if run_eval:
                     actor = ray.get(collector.get_actor.remote())
@@ -227,7 +228,7 @@ def start_actor_loop(args, collector, buffer, tracker):
                 iter_seed += 1
 
             time.sleep(0.05)
-            
+
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
 
