@@ -1,11 +1,11 @@
 python3 unstable.py \
     --model_name "Qwen/Qwen3-4B-base" \
-    --train_env_id "SimpleTak-v0-raw:2" \
-    --eval_env_id "SimpleTak-v0-raw:2"\
+    --train_env_id "SimpleTak-v0-train:2:qwen3-game" \
+    --eval_env_id "SimpleTak-v0-train:2:qwen3-game,Dataset-AIME24-v0-all:1:qwen3-reasoning "\
     --wandb \
-    --num_actors 2 \
+    --num_actors 7 \
     --num_learners 1 \
-    --lr 1e-4 \
+    --lr 5e-5 \
     --batch_size 384 \
     --gradient_accumulation_steps 384 \
     --max_tokens 4096 \
