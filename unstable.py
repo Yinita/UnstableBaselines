@@ -129,7 +129,7 @@ def collect_episode_once(args, buffer, tracker, actor, collector, seed: int):
 
         else: # sample opponent action based on what is specified
             if args.opponent_type == "self_play": # sample from previous checkpoints
-                _, action, _, _ = get_checkpoint_action(args=args, actor=actor, observation=obs, lora_path=ray.get(collector.sample_prev_lora.remote()))  # get action from prev lora path
+                _, action, _, _ = get_checkpoint_action(args=args, actor=actor, observation=obs, lora_path=ray.get(collector.sample_prev_lora.remote()), prompt_template=prompt_template)  # get action from prev lora path
 
             elif args.opponent_type == "fixed": # sample from fixed opponent
                 # TODO - given this is running a thread, we need to make sure we are actually sampling opponents, might always be the same. Maybe pass seed into thread
@@ -164,7 +164,7 @@ def run_eval_episode(args, collector, tracker, actor, lora_path: str, player_id:
 
         if pid == player_id: # our model moves
             model_name = "current_ckpt"
-            full_action, action, _, _ = get_checkpoint_action(args=args, actor=actor, observation=obs, lora_path=lora_path)
+            full_action, action, _, _ = get_checkpoint_action(args=args, actor=actor, observation=obs, lora_path=lora_path, prompt_template=prompt_template)
 
         else: # get action from fixed opponent
             model_name = args.eval_model_name
