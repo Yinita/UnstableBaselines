@@ -8,7 +8,7 @@ python3 unstable.py \
     --lr 1e-5 \
     --batch_size 384 \
     --gradient_accumulation_steps 384 \
-    --max_tokens 4096 \
+    --max_tokens 3500 \
     --gradient_checkpointing \
     --bf16_training \
     --num_collection_workers 384 \
