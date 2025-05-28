@@ -1,7 +1,6 @@
 # unstable-baselines
 
 [![Status](https://img.shields.io/badge/status-WIP-orange?style=for-the-badge&label=Project%20Status)](#)
-[![Async RL](https://img.shields.io/badge/Async%20RL-Enabled-9cf?style=for-the-badge&label=Training%20Mode&logo=thunderstorm&logoColor=white)](#)
 [![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/LeonGuertler/TextArena)
 [![PlasticLabs](https://img.shields.io/badge/PlasticLabs-AI-6e40c9?style=for-the-badge&logo=apachenetbeanside&logoColor=white)](https://plasticlabs.ai/)
 [![Discord](https://img.shields.io/discord/1257951838322561075?color=7289DA&label=TextArena%20Discord&logo=discord&logoColor=white&style=for-the-badge)](https://discord.gg/KPacHzK23e)
