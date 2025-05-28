@@ -4,7 +4,7 @@
 [![Async Online RL](https://img.shields.io/badge/async-online%20RL-blue?style=for-the-badge)](#)
 [![TextArena v0.6.9](https://img.shields.io/badge/TextArena-0.6.9-blue?style=for-the-badge\&logo=github)](https://github.com/LeonGuertler/TextArena)
 [![PlasticLabs](https://img.shields.io/badge/PlasticLabs-ai-purple?style=for-the-badge)](https://plasticlabs.ai/)
-[![Join Discord](https://img.shields.io/discord/1224601690640842823?label=Discord\&logo=discord\&style=for-the-badge)](https://discord.gg/KPacHzK23e)
+[![Discord](https://img.shields.io/discord/1257951838322561075?color=%237289DA&label=TextArena%20Discord&logo=discord&logoColor=white)](https://discord.gg/KPacHzK23e)
 [![MIT License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
 
 > **unstable‑baselines** is an **experimental, asynchronous, online reinforcement‑learning framework**
