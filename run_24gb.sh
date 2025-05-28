@@ -1,38 +1,14 @@
-# python3 unstable.py \
-#     --model_name "Qwen/Qwen3-1.7B-base" \
-#     --train_env_id "TowerOfHanoi-v0-train:1" \
-#     --eval_env_id "SimpleTak-v0-train:2,TowerOfHanoi-v0-train:1"\
-#     --wandb \
-#     --num_actors 3 \
-#     --num_learners 1 \
-#     --lr 1e-4 \
-#     --batch_size 384 \
-#     --gradient_accumulation_steps 384 \
-#     --max_tokens 3000 \
-#     --gradient_checkpointing \
-#     --bf16_training \
-#     --num_collection_workers 128 \
-#     --num_evaluation_workers 0 \
-#     --lora_rank 32 \
-#     --lora_alpha 32 \
-#     --lora_dropout 0 \
-#     --self_play_opponent_lag_lower 1 \
-#     --self_play_opponent_lag_upper 5 \
-#     --format_reward_think 1.5 \
-#     --format_reward_valid_move 1.0 \
-#     --format_penalty_invalid_move -1.0\
-#     --observation_format_template "qwen3"
 python3 unstable.py \
     --model_name "Qwen/Qwen3-1.7B-base" \
-    --train_env_id "SimpleTak-v0-train:2,Nim-v0-train:2" \
-    --eval_env_id "SimpleTak-v0-train:2,TicTacToe-v0-train:2,Nim-v0-train:2"\
+    --train_env_id "SimpleTak-v0-train:2:qwen3-game" \
+    --eval_env_id "SimpleTak-v0-train:2:qwen3-game,Dataset-AIME24-v0:1:qwen3-reasoning "\
     --wandb \
-    --num_actors 3 \
+    --num_actors 2 \
     --num_learners 1 \
-    --lr 5e-5 \
+    --lr 1e-5 \
     --batch_size 384 \
     --gradient_accumulation_steps 384 \
-    --max_tokens 3000 \
+    --max_tokens 3500 \
     --gradient_checkpointing \
     --bf16_training \
     --num_collection_workers 384 \
@@ -45,4 +21,6 @@ python3 unstable.py \
     --format_reward_think 1.5 \
     --format_reward_valid_move 1.0 \
     --format_penalty_invalid_move -1.0\
-    --observation_format_template "qwen3"
+    --eval_games_per_update_step 64\
+    --gradient_clip 0.5\
+    --opponent_type "fixed"
