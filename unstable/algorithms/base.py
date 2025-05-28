@@ -1,8 +1,7 @@
 import torch 
 
 class BaseAlgo:
-    def __init__(self, args, model, tokenizer, device):
-        self.args = args
+    def initialize(self, model, tokenizer, device):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device

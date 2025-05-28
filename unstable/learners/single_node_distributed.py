@@ -3,7 +3,7 @@ from ray.train import get_context
 from ray.air import session
 from ray.train import Checkpoint
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from learners.lora_utils import build_lora_model, load_lora_state
+from unstable.utils.lora_utils import build_lora_model, load_lora_state
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 # local imports

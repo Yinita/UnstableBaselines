@@ -3,15 +3,25 @@ import os, ray, random
 from typing import List, Dict, Optional, Tuple, Callable
 
 # local imports
-from core import Trajectory, Step
-from utils.local_files import write_training_data_to_file
+from unstable.core import Trajectory, Step
+from unstable.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
+# from utils.local_files import write_training_data_to_file
 
 
+# TODO doc-string
 
 @ray.remote
 class StepBuffer:
-    def __init__(self, args, final_reward_transformation: Optional[Callable]=None, step_reward_transformation: Optional[Callable]=None, sampling_reward_transformation: Optional[Callable]=None):
-        self.args = args
+    def __init__(
+        self,
+        max_buffer_size: int,
+        buffer_strategy: str = "random", # what happens when the buffer size exceeds 'max_buffer_size' many samples. Options are 'random' and 'sequential'
+        final_reward_transformation: Optional[ComposeFinalRewardTransforms], 
+        step_reward_transformation: Optional[ComposeStepRewardTransforms], 
+        sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms], 
+    ):
+        self.max_buffer_size = max_buffer_size
+        self.buffer_strategy = buffer_strategy 
         self.final_reward_transformation = final_reward_transformation
         self.step_reward_transformation = step_reward_transformation
         self.sampling_reward_transformation = sampling_reward_transformation
@@ -20,7 +30,6 @@ class StepBuffer:
         self.training_steps = 0
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str):
-        
         transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) if self.final_reward_transformation is not None else trajectory.final_rewards
         n = len(trajectory.pid)
         for i in range(n): # these are already just steps by our model

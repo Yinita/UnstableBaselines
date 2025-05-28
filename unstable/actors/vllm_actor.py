@@ -52,3 +52,22 @@ class VLLMActor:
                 fut = self._futures.pop(out.request_id, None) # now it’s done—fulfil the future
                 if fut:
                     fut.set_result(token.text)
+
+class CallableActorWrapper:
+    def __init__(self, actor: VLLMActor, lora_path: str, obs_formatting_fn: Callable, action_extraction_fn: Callable):
+        self.actor = actor 
+        self.lora_path = lora_path
+        self.obs_formatting_fn = obs_formatting_fn
+        self.action_extraction_fn = action_extraction_fn
+
+    def __call__(self, observation: str):
+        formatted_prompt = self.obs_formatting_fn(observation=observation)
+        raw_action = ray.get(self.actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=self.lora_path))
+        extracted_action, format_feedback = self.action_extraction_fn(raw_action=raw_action)
+        return extracted_action #raw_action, extracted_action, format_feedback, formatted_prompt
+
+    def get_full_response(self, observation: str):
+        formatted_prompt = self.obs_formatting_fn(observation=observation)
+        raw_action = ray.get(self.actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=self.lora_path))
+        extracted_action, format_feedback = self.action_extraction_fn(raw_action=raw_action)
+        return raw_action, extracted_action, format_feedback, formatted_prompt

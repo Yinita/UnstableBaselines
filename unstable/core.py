@@ -13,4 +13,4 @@ class Trajectory:
 
 @dataclass
 class Step:
-    pid: int; obs: str; act: str; reward: float; env_id: str # track env_id for normalization at the end
+    pid: int; obs: str; act: str; reward: float; env_id: str 
