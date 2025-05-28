@@ -14,14 +14,3 @@ class Trajectory:
 @dataclass
 class Step:
     pid: int; obs: str; act: str; reward: float; env_id: str 
-
-
-
-@ray.remote
-class PathRegistry:
-    def __init__(self): self._paths = []
-    def add(self, ckpt_path): self._paths.append(ckpt_path)
-    def latest(self): return self._paths[-1]
-    def sample(self, lo=1, hi=5):
-        window = self._paths[max(0, len(self._paths)-hi):-lo or None]
-        return random.choice(window) if window else self.latest()

@@ -1,6 +1,6 @@
 import torch, pathlib
 from safetensors.torch import load_file as safe_load
-from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
+from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
 
 def build_lora_model(model, args): #r=8, alpha=32, dropout=0.05):
     # target = ["q_proj", "k_proj", "v_proj", "o_proj"]

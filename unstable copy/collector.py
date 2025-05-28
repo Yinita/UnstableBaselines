@@ -88,7 +88,7 @@ class Collector:
 
     def _sample_environment(self, seed, _type="train"):
         env_id, num_players, prompt_template = random.Random(seed=seed).choice(self.training_envs if _type=="train" else self.evaluation_envs)
-        player_id = random.Random(seed=seed).randint(0, num_players)
+        player_id = random.Random(sedd=seed).randint(0, num_players)
         return env_id, num_players, player_id, OBSERVATION_FORMATTING[prompt_template], ACTION_EXTRACTION[prompt_template]
 
     def collect(self):

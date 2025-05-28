@@ -29,7 +29,7 @@ class Learner:
         step_buffer: StepBuffer,
         tracker: Tracker,
         collector: Collector,
-        algorithm_class: BaseAlgo,
+        algorithm: BaseAlgo,
         lora_cfg: Optional[Dict[str, Any]] = None,
         initial_lora_path: Optional[str] = None
     ):
@@ -49,7 +49,7 @@ class Learner:
 
         self._build_model(lora_cfg=lora_cfg, initial_lora_path=initial_lora_path) # build the model
         self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=learning_rate) # optimizer over only the adapters
-        self.algorithm = algorithm_class(model=self.model, tokenizer=self.tokenizer, device=self.device) # initialize the algorithm
+        self.algorithm = algorithm_fn(model=self.model, tokenizer=self.tokenizer, device=self.device) # initialize the algorithm
 
         # determine mini-batch size
         ctx = get_context()
@@ -89,7 +89,7 @@ class Learner:
 
             # step
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
-            self.optimizer.step()
+            eslf.optimizer.step()
 
             if rank == 0:
                 # pass to wandb tracker for logging
