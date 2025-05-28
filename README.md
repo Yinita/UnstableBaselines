@@ -1,11 +1,11 @@
 # unstable-baselines
 
-[![Status: WIP](https://img.shields.io/badge/status-WIP-orange?style=for-the-badge)](#)
-[![Async Online RL](https://img.shields.io/badge/async-online%20RL-blue?style=for-the-badge)](#)
-[![TextArena v0.6.9](https://img.shields.io/badge/TextArena-0.6.9-blue?style=for-the-badge\&logo=github)](https://github.com/LeonGuertler/TextArena)
-[![PlasticLabs](https://img.shields.io/badge/PlasticLabs-ai-purple?style=for-the-badge)](https://plasticlabs.ai/)
-[![Discord](https://img.shields.io/discord/1257951838322561075?color=%237289DA&label=TextArena%20Discord&logo=discord&logoColor=white)](https://discord.gg/KPacHzK23e)
-[![MIT License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
+[![Status](https://img.shields.io/badge/status-WIP-orange?style=for-the-badge&logo=progress)](#)
+[![Async RL](https://img.shields.io/badge/Async%20Online%20RL-Enabled-blue?style=for-the-badge&logo=lightning)](#)
+[![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-blue?style=for-the-badge&logo=github)](https://github.com/LeonGuertler/TextArena)
+[![PlasticLabs](https://img.shields.io/badge/PlasticLabs-AI-purple?style=for-the-badge&logo=science)](https://plasticlabs.ai/)
+[![Discord](https://img.shields.io/discord/1257951838322561075?color=%237289DA&label=TextArena%20Discord&logo=discord&logoColor=white&style=for-the-badge)](https://discord.gg/KPacHzK23e)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green?style=for-the-badge&logo=open-source-initiative)](LICENSE)
 
 > **unstable‑baselines** is an **experimental, asynchronous, online reinforcement‑learning framework**
 > for rapid prototyping of *multi‑turn / multi‑agent* algorithms on
