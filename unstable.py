@@ -86,9 +86,7 @@ def make_env(env_id: str, num_players: int):
 def get_next_env_id(args, _type="train", seed=None):
     if seed:
         random.seed(seed)
-        env_id, num_players, prompt_template = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
-    else:
-        env_id, num_players, prompt_template = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
+    env_id, num_players, prompt_template = random.choice(args.train_env_id if _type=="train" else args.eval_env_id)
     player_id = np.random.randint(num_players)
     return env_id, num_players, player_id, prompt_template
 
@@ -208,7 +206,7 @@ def start_actor_loop(args, collector, buffer, tracker):
             evaluation_outstanding = clean_futures(evaluation_outstanding)
 
             # Replenish collection
-            while len(collection_outstanding) < args.num_collection_workers:
+            if len(collection_outstanding) < args.num_collection_workers:
                 actor = ray.get(collector.get_actor.remote())
                 # env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
                 future = collect_episode_once.remote(args=args, buffer=buffer, tracker=tracker, actor=actor, collector=collector, seed=iter_seed)

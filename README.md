@@ -1,82 +1,84 @@
-# unstable-baselines (WIP)
-(it's calles `unstable-baselines` becuase the maintained OpenAI baselines package is called `stable-baselines`)
+# unstable-baselines
+
+[![Status](https://img.shields.io/badge/status-WIP-orange?style=for-the-badge&label=Project%20Status)](#)
+[![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/LeonGuertler/TextArena)
+[![PlasticLabs](https://img.shields.io/badge/PlasticLabs-AI-6e40c9?style=for-the-badge&logo=apachenetbeanside&logoColor=white)](https://plasticlabs.ai/)
+[![Discord](https://img.shields.io/discord/1257951838322561075?color=7289DA&label=TextArena%20Discord&logo=discord&logoColor=white&style=for-the-badge)](https://discord.gg/KPacHzK23e)
+[![MIT License](https://img.shields.io/badge/license-MIT-4caf50?style=for-the-badge&logo=open-source-initiative&logoColor=white)](LICENSE)
 
 
-# Getting Started
-It makes sense to start from the game-tuned checkpoint (three epochs of sft on 750 observation-actions pairs generated via R1 self-play on TicTacToe-v0). 
-The checkpoint is zipped `lora_ckpt.zip`. You have to unzip it. The `run.sh` script will use this as the initial set of lora weights by default. 
-Afterward you can just run `bash run.sh`. Depending on how many GPUs you have, you can set the `--num_actors` and `--num_learners`. Keep in mind that collection is much much much more expensive than lora-training (so 7-1 is prob a good ratio).
+> **unstable‑baselines** is an **experimental, asynchronous, online reinforcement‑learning framework**
+> for rapid prototyping of *multi‑turn / multi‑agent* algorithms on
+> [TextArena](https://github.com/LeonGuertler/TextArena) environments.
+>
+> **Work in progress — interfaces will change.**
 
-(`bash run_24gb.sh` should work well for machine with 4x24gb (vRam) gpus)
+---
 
-Also, this is currently using the new version of textarena (wich is on the `v0.6.9` branch). To run this code, you will have to build textaren locally:
-1. `git clone https://github.com/LeonGuertler/TextArena.git`
-2. `cd TextArena`
-3. `git checkout v0.6.9`
-4. `pip uninstall textarena` (just to make sure)
-5. `python3 setup.py sdist bdist_wheel`
-6. `pip install -e .`
-7. all done, you are now running textarena v0.6.9 
+## Key Features
 
+* **Asynchronous collection & learning** – actors generate data while learners train.
+* **Multi‑agent, multi‑turn** focus with self‑play or fixed opponents.
+* **LoRA‑first** fine‑tuning workflow for fast, lightweight updates.
+* **Composable reward transforms** at step, final, and sampling stages.
+* **One‑command launch** (`bash run.sh`) with built‑in evaluation and W\&B logging.
 
-### TODOs for Leon now:
-- normalize sample rewards by environment (done)
-- single player envs 
-- fixed opponent (sampling) multi player envs (done - randomly sampling now, but might be worth chaning in the future)
-- make single-player game collection easy
-- fixed number of eval games after each update step (done)
-- pass the iterated seed into each worker
-- fix single player evals
+## Collaboration
 
+Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).
 
-### TODOs for Tim:
-- track action/state diversity and log it to wandb (only really possible in fixed move games like TicTacToe, etc. but probably super interesting and valuable)
-- store specific checkpoints
+## Installation
 
+```bash
+# clone the repo
+git clone https://github.com/LeonGuertler/unstable-baselines.git
+cd unstable-baselines
 
-### TODOs for Bobby:
-- 
+# install Python dependencies
+pip install -r requirements.txt
 
+# build TextArena v0.6.9 (until it’s on PyPI)
+git clone https://github.com/LeonGuertler/TextArena.git
+cd TextArena
+git checkout v0.6.9
+pip install -e .
+cd ..
+```
 
-# TODOs
-- multi-gpu TorchTrainer
-- seperate the logs for everything (and actually log to files) for easier debugging
-- Organize .sh scripts
+## Quick Start
 
-- make wandb logging optional (Bobby?)
-- simplify wandb naming (maybe remove company name (i.e. 'Qwen') and add the username of the person running it)
-- make it easy to specify a list of eval (and training) opponents (TODO - are multiple eval opponents actually necessary)
+```bash
+# fine‑tune Qwen3 on SimpleTak with 7 actors and 1 learner
+bash run.sh
+```
 
+Adjust `--num_actors`, `--num_learners`, and the environment lists inside `run.sh` to match your GPU setup.
 
-- simplify the algorithm vs leaner split to make it more modular (i.e. move the optimizer step into the algorithm to allow for PPO etc. training; (also rename learner to something else))
-- It probably makes sense to empower the TrajectoryBuffer to actually manage the env for each step. That way it'll be easier to add GRPO with dynamic branching later on.
+## Project Layout
 
+```text
+unstable-baselines/
+|-- algorithms/
+|   |-- reinforce.py
+|   |-- reinforce_kl.py
+|   |-- ppo.py
+|   `-- ...
+|-- actors/
+|   `-- vllm_actor.py
+|-- learners/
+|   |-- single_node_distributed.py
+|   `-- lora_utils.py
+|-- reward_transformations/
+|-- utils/
+|-- trajectory_buffer.py
+|-- unstable.py   # main entrypoint
+`-- run.sh        # example launch script
+```
 
+## Roadmap
 
-# General TODOs:
-- sharding for both training and collection
-- single-gpu training
-- multi-node training
-
-
-## KIV:
-- track time per complete episode
-- track time per turn
-- track time per generated char
-- maybe dynamically adjust the number of gpus used for training/collection
-
-
-
-# Ideas:
-- increase sample weight based on SD of reward 
-- somehow account for stochacisity in environment rewards (maybe somehow include reward certainty)
-- dynamic GRPO rollouts (either by window or by least return confidence)
-
-
-
-
-### Legacy TODOs:
-- TODO add a single gpu debugging mode frfr
-- TODO optimize by grouping same lora paths to same gpus
-- TODO add better reward stats (optimally somehow log the transformed rewards to wandb as well)
-- TODO seperate the logs for everything (and actually log to files) for easier debuggin
+* [ ] PPO with GAE
+* [ ] GRPO (branching and efficient)
+* [ ] Multi‑Node training
+* [ ] Single‑GPU training
+* [ ] Rich dashboards
