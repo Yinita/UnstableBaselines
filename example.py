@@ -1,5 +1,6 @@
-import ray, unstable
-import time 
+import ray, time
+import unstable
+import unstable.reward_transformations as retra
 
 # set the relevant parameters
 NUM_ACTORS = 2
@@ -7,11 +8,11 @@ NUM_LEARNERS = 1
 
 MODEL_NAME = "Qwen/Qwen3-4B-base"
 
-BATCH_SIZE = 16
-BUFFER_SIZE = 256
-GRADIENT_ACCUMULATION_STEPS = 16
+BATCH_SIZE = 128
+BUFFER_SIZE = BATCH_SIZE*2
+GRADIENT_ACCUMULATION_STEPS = 128
 
-LR = 5e-5
+LR = 1e-4
 GRAD_CLIP = 0.5
 
 
@@ -31,6 +32,10 @@ vllm_config = {
     "lora_config": lora_config
 }
 TRAINING_ENVS = [("SimpleTak-v0-train", 2, "qwen3-zs")]
+EVALUATION_ENVS = [("SimpleTak-v0-train", 2, "qwen3-zs")]
+
+
+# LiarsDice, SimpleTak, Nim, KuhnPoker, SimpleNegotiation
 
 ray.init()
 
@@ -38,21 +43,37 @@ ray.init()
 # initialize the tracker to keep wandb up to date and print as necessary
 tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=f"{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}")
 
+# build the reward transformations to be used
+final_reward_transformation = retra.ComposeFinalRewardTransforms([
+    retra.RoleAdvantageByEnvFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
+])
+step_reward_transformation = retra.ComposeStepRewardTransforms([
+    retra.RewardForThinkTags(reward=1.5), # +0.25 for using the correct format
+    retra.PenaltyForInvalidMove(reward= 1.0, penalty= -1.0), 
+])
+sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
+    retra.NormalizeRewardsByEnv(z_score=True) # normalize the sampled batch
+])
+
 # initialize the StepBuffer (used to hold and sample from collected traces)
 step_buffer = unstable.StepBuffer.remote(
     max_buffer_size = BUFFER_SIZE,
-    final_reward_transformation = None, #final_reward_transformation,
-    step_reward_transformation = None, #step_reward_transformation,
-    sampling_reward_transformation = None, #sampling_reward_transformation,
+    tracker=tracker,
+    final_reward_transformation = final_reward_transformation, #final_reward_transformation,
+    step_reward_transformation = step_reward_transformation, #step_reward_transformation,
+    sampling_reward_transformation = sampling_reward_transformation, #sampling_reward_transformation,
 )
 
 
 # initialize and populate the Opponent pool
-model_pool = unstable.ModelPool.remote(sample_mode="adaptive-trueskill")
+model_pool = unstable.ModelPool.remote(
+    sample_mode="adaptive-trueskill",
+    max_active_lora=6 # how many lora checkpoints to sample from
+)
 ray.get(model_pool.add_checkpoint.remote(path=None, iteration="-1")) # add base checkpoint
 # model_pool.add_checkpoint.remote(path="", iteration="-1") # add previous checkpoint
 ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-lite-001")) # add fixed opponents
-ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-001")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-001")) # add fixed opponents
 
 # build collector
 collector = unstable.Collector.options(name="Collector").remote(
@@ -61,8 +82,11 @@ collector = unstable.Collector.options(name="Collector").remote(
     vllm_config=vllm_config,
     step_buffer=step_buffer,
     model_pool=model_pool,
-    training_envs=TRAINING_ENVS
+    training_envs=TRAINING_ENVS,
+    evaluation_envs=EVALUATION_ENVS,
+    evaluation_opponent="google/gemini-2.0-flash-lite-001"
 )
+
 
 
 # build learner
@@ -84,7 +108,7 @@ learner = unstable.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote
 
 
 try:
-    collector.collect.remote(num_workers=8)
+    collector.collect.remote(num_workers=384, num_eval_workers=16)
     ray.get(learner.train.remote(800))
 finally:
     ray.kill(collector, no_restart=True)
@@ -99,3 +123,8 @@ finally:
 # # TODO log trueskills
 # # TODO log opponent frequency 
 # # TODO add grad_norm back into tracking
+
+# # TODO (long-term) keep pool of learning lora weights for stability
+
+
+# # TODO Rich overview. Top right, elo table with sampling frequency. Bottom right, utilization metrics, Top left maybe buffer size, total games played etc; bottom left ?

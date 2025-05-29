@@ -22,20 +22,21 @@ class Opponent:
     kind: str # {"checkpoint","fixed"}
     path_or_name: str # LoRA dir or OpenRouter model id
     rating: trueskill.Rating # trueskill.Rating(mu, sigma)
+    active: bool = True
 
 @ray.remote
 class ModelPool:
-    def __init__(self, sample_mode, lag_range=(1,7), beta=4.0):
+    def __init__(self, sample_mode, max_active_lora, lag_range=(1,7), beta=4.0):
         self.TS = trueskill.TrueSkill(beta=beta)
         self._models   = {}         # uid -> Opponent dataclass
         self._ckpt_log = []         # ordered list of checkpoint uids
         self.lag_lo, self.lag_hi = lag_range
         self.sample_mode = sample_mode #"self-play", "lagged", "fixed", "adaptive-trueskill"
+        self.max_active_lora = max_active_lora
         self._latest_uid = None
 
     def current_uid(self):
         return self._latest_uid
-
 
     def add_checkpoint(self, path: str, iteration: int):
         uid = f"ckpt-{iteration}"
@@ -79,24 +80,39 @@ class ModelPool:
             return self._sample_trueskill(uid_me, band)
         raise ValueError(self.sample_mode)
 
-    def update_ratings(self, uid_me, uid_opp, final_reward):  # 1 / 0 / 0.5
+
+    def update_ratings(self, uid_me, uid_opp, final_reward):
         if uid_me not in self._models or uid_opp not in self._models:
-            return  # skip if either side unknown
-        if final_reward == 1: outcome = 1
-        elif final_reward == -1: outcome = 0
-        elif final_reward == 0: outcome = 0.5
-        a, b = self._models[uid_me].rating, self._models[uid_opp].rating
-        self._models[uid_me].rating, self._models[uid_opp].rating = self.TS.rate_1vs1(a, b, drawn=(outcome==0.5))
+            return  # skip if either side is unknown
+
+        a = self._models[uid_me].rating
+        b = self._models[uid_opp].rating
+
+        if final_reward == 1:
+            # uid_me wins → order is (a, b)
+            new_a, new_b = self.TS.rate_1vs1(a, b)
+        elif final_reward == -1:
+            # uid_opp wins → order is (b, a)
+            new_b, new_a = self.TS.rate_1vs1(b, a)
+        elif final_reward == 0:
+            # draw
+            new_a, new_b = self.TS.rate_1vs1(a, b, drawn=True)
+        else:
+            return  # unexpected reward value
+
+        self._models[uid_me].rating = new_a
+        self._models[uid_opp].rating = new_b
+        print(f"\nUPDATED TRUESKILL:\n\t{uid_me} -> {self._models[uid_me].rating}\n\t{uid_opp} -> {self._models[uid_opp].rating}")
 
     def _exp_win(self, A, B):
-        denom = (2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5
-        return self.TS.cdf((A.mu - B.mu) / denom)
+        return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
 
     def _sample_trueskill(self, uid_me, win_exp_bounds):
         (l1,h1,l2,h2) = win_exp_bounds
         me = self._models[uid_me].rating
         cand = []
         for uid, m in self._models.items():
+            if not m.active: continue
             if uid == uid_me: continue
             p = self._exp_win(me, m.rating)
             if l1<=p<=h1 or l2<=p<=h2:
@@ -105,3 +121,13 @@ class ModelPool:
             cand = [(uid, abs(0.5-self._exp_win(me,m.rating))) for uid,m in self._models.items() if uid!=uid_me]
         weights = [math.exp(-10*d) for _,d in cand]
         return random.choices([u for u,_ in cand], weights)[0]
+
+
+    def _activate(self, uid): self._models[uid].active = True
+    def _retire(self, uid): self._models[uid].active = False
+    def _maintain_active_pool(self):
+        active_uids = [u for u,m in self._models.items() if m.active and m.kind=="checkpoint"]
+        if len(active_uids) <= MAX_ACTIVE: return
+        # choose who to retire: oldest OR weakest below threshold
+        to_drop = sorted(active_uids, key=lambda u: (self._models[u].rating.mu, self._ckpt_log.index(u)))[:len(active_uids)-MAX_ACTIVE]           # weakest first, then oldest
+        for u in to_drop: self._retire(u)
