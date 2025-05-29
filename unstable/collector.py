@@ -224,7 +224,9 @@ class Collector:
                     raw, act, fb, prompt = model.get_full_response(obs)
                     done, info = env.step(act)
                     traj.pid.append(pid); traj.obs.append(prompt)
-                    traj.actions.append(raw); fb["invalid_move"] = 0
+                    traj.actions.append(raw); fb["invalid_move"] = 0; traj.extracted_actions.append(act)
+                    traj.infos.append(info)
+                    traj.board_states.append(env.state.game_state['board'] if 'board' in env.state.game_state else None)
                     traj.format_feedbacks.append(fb)
                 else:
                     done, info = env.step(opponent(obs))
@@ -235,7 +237,7 @@ class Collector:
             #     traj.format_feedbacks[-1]["invalid_move"] = 1
             traj.final_rewards = env.close()
             traj.num_turns = turn
-             if info["end_by_invalid"] and pid==player_id:  
+            if info["end_by_invalid"] and pid==player_id:  
                 traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
             return traj, player_id, env_id
 
