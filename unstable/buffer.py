@@ -18,7 +18,7 @@ def write_eval_data_to_file(episode_info, filename):
 def write_training_data_to_file(batch, filename: str):
     with open(filename, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['pid', 'obs', 'act', 'reward'])  # header
+        writer.writerow(['pid', 'obs', 'act', 'reward', "env_id", "raw_reward", "transformed_end_of_game_reward", "step_reward"])  # header
         for step in batch:
             writer.writerow([step.pid, step.obs, step.act, step.reward])
 

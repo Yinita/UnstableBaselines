@@ -103,6 +103,7 @@ class Learner:
             batch: List = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
             assert len(batch) == self.batch_size
             self._samples_seen += len(batch)
+            self.optimizer.zero_grad(set_to_none=True)
 
             metrics_acc: Dict[str, float] = {}
             for i in range(self.grad_accum):
@@ -113,13 +114,17 @@ class Learner:
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.optimizer.step()
-            self.optimizer.zero_grad(set_to_none=True)
             self._step += 1
 
             # Logging
             if self.tracker is not None:
                 log = {f"learner/{k}": v / self.grad_accum for k, v in metrics_acc.items()}
-                log.update({"learner/step": self._step, "learner/samples_seen": self._samples_seen, "learner/lr": self.optimizer.param_groups[0]["lr"]})
+                log.update({
+                    "learner/step": self._step, 
+                    "learner/samples_seen": self._samples_seen, 
+                    "learner/lr": self.optimizer.param_groups[0]["lr"], 
+                    "learner/grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5
+                })
                 self.tracker.log_learner.remote(log)
             else:
                 if self._step % 10 == 0:
