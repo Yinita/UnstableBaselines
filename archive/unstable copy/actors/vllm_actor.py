@@ -1,35 +1,25 @@
 import os, time
 import asyncio
 from collections import deque
-from typing import Optional, Dict, Any
+from typing import Optional
 
 import ray, torch, vllm
 from vllm import EngineArgs, LLMEngine, SamplingParams
 from vllm.lora.request import LoRARequest
 
-
-@ray.remote
 class VLLMActor:
-    def __init__(self, vllm_config: Dict[str, Any]):
+    def __init__(self, args):
         gpu_ids = ray.get_gpu_ids() 
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
         torch.cuda.set_device(0)
 
+        self.args = args
         engine_args = EngineArgs(
-            model=vllm_config["model_name"], 
-            enable_lora=True, 
-            max_loras=vllm_config.get("max_loras", 5), 
-            max_lora_rank=vllm_config["lora_config"]["lora_rank"], 
-            max_cpu_loras=vllm_config.get("max_loras", 5), 
-            max_num_seqs=vllm_config["max_parallel_seq"], 
-            task="generate"
+            model=args.model_name, enable_lora=True, max_loras=args.vllm_max_loras, max_lora_rank=args.lora_rank, 
+            max_cpu_loras=args.vllm_max_loras, max_num_seqs=args.max_vllm_seq, task="generate"
         )
         self.engine = LLMEngine.from_engine_args(engine_args)
-        self.sampling_params = SamplingParams(
-            temperature=vllm_config.get("temperature", 0.7), 
-            top_p=vllm_config.get("top_p", 0.95), 
-            max_tokens=vllm_config.get("max_tokens", 4096)
-        )
+        self.sampling_params = SamplingParams(temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
 
         self._queue = deque()
         self._futures = {}
@@ -52,7 +42,7 @@ class VLLMActor:
                 self._next_id += 1
                 self._futures[req_id] = fut
                 lora_req = LoRARequest(lora_name=path, lora_path=path, lora_int_id=abs(hash(path))) if path is not None else None
-                # print(f"[Actor {os.getpid()}] submitting req {req_id} with {lora_req}")
+                print(f"[Actor {os.getpid()}] submitting req {req_id} with {lora_req}")
                 self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
             # Step the engine and only resolve once finish_reason is non-None
             for out in self.engine.step():
@@ -63,3 +53,21 @@ class VLLMActor:
                 if fut:
                     fut.set_result(token.text)
 
+class CallableActorWrapper:
+    def __init__(self, actor: VLLMActor, lora_path: str, obs_formatting_fn: Callable, action_extraction_fn: Callable):
+        self.actor = actor 
+        self.lora_path = lora_path
+        self.obs_formatting_fn = obs_formatting_fn
+        self.action_extraction_fn = action_extraction_fn
+
+    def __call__(self, observation: str):
+        formatted_prompt = self.obs_formatting_fn(observation=observation)
+        raw_action = ray.get(self.actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=self.lora_path))
+        extracted_action, format_feedback = self.action_extraction_fn(raw_action=raw_action)
+        return extracted_action #raw_action, extracted_action, format_feedback, formatted_prompt
+
+    def get_full_response(self, observation: str):
+        formatted_prompt = self.obs_formatting_fn(observation=observation)
+        raw_action = ray.get(self.actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=self.lora_path))
+        extracted_action, format_feedback = self.action_extraction_fn(raw_action=raw_action)
+        return raw_action, extracted_action, format_feedback, formatted_prompt

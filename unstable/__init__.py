@@ -1,6 +1,7 @@
 from unstable.collector import Collector 
-from unstable.buffers import StepBuffer
+from unstable.buffer import StepBuffer
+from unstable.core import ModelPool
 
 __all__ = [
-    "Collector", "StepBuffer"
+    "Collector", "StepBuffer", "ModelPool"
 ]

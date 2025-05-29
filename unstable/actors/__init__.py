@@ -1,1 +1,1 @@
-from actors.vllm_actor import VLLMActor
+from unstable.actors.vllm_actor import VLLMActor

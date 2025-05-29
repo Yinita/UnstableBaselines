@@ -46,11 +46,9 @@ OBSERVATION_FORMATTING = {
     "default": apply_default_template,
     "qwen3": qwen3_template,
     "qwen3-game": qwen3_template,
-    "qwen3-zs": qwen3_template,
     "qwen3-reasoning": qwen3_template_reasoning,
 }
 
 ACTION_EXTRACTION = {
-    "default": extract_action_and_format_feedback,
-    "qwen3-zs": extract_action_and_format_feedback,
+    "default": extract_action_and_format_feedback
 }
