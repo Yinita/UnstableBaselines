@@ -1,5 +1,5 @@
 import torch, copy
-from algorithms import BaseAlgo
+from unstable.algorithms import BaseAlgo
 
 class Reinforce_KL(BaseAlgo):
     def __init__(self, args, model, tokenizer, device):

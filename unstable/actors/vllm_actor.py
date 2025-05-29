@@ -16,20 +16,11 @@ class VLLMActor:
         torch.cuda.set_device(0)
 
         engine_args = EngineArgs(
-            model=vllm_config["model_name"], 
-            enable_lora=True, 
-            max_loras=vllm_config.get("max_loras", 5), 
-            max_lora_rank=vllm_config["lora_config"]["lora_rank"], 
-            max_cpu_loras=vllm_config.get("max_loras", 5), 
-            max_num_seqs=vllm_config["max_parallel_seq"], 
-            task="generate"
+            model=vllm_config["model_name"], enable_lora=True, max_loras=vllm_config.get("max_loras", 5), max_lora_rank=vllm_config["lora_config"]["lora_rank"], 
+            max_cpu_loras=vllm_config.get("max_loras", 5), max_num_seqs=vllm_config["max_parallel_seq"], task="generate"
         )
         self.engine = LLMEngine.from_engine_args(engine_args)
-        self.sampling_params = SamplingParams(
-            temperature=vllm_config.get("temperature", 0.7), 
-            top_p=vllm_config.get("top_p", 0.95), 
-            max_tokens=vllm_config.get("max_tokens", 4096)
-        )
+        self.sampling_params = SamplingParams(temperature=vllm_config.get("temperature", 0.7),  top_p=vllm_config.get("top_p", 0.95), max_tokens=vllm_config.get("max_tokens", 4096))
 
         self._queue = deque()
         self._futures = {}
@@ -52,14 +43,12 @@ class VLLMActor:
                 self._next_id += 1
                 self._futures[req_id] = fut
                 lora_req = LoRARequest(lora_name=path, lora_path=path, lora_int_id=abs(hash(path))) if path is not None else None
-                # print(f"[Actor {os.getpid()}] submitting req {req_id} with {lora_req}")
+                print(f"[Actor {os.getpid()}] submitting req {req_id} with {lora_req}")
                 self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
             # Step the engine and only resolve once finish_reason is non-None
             for out in self.engine.step():
                 token = out.outputs[-1] # take the last token in this partial output
-                if token.finish_reason is None: # skip interim/newline events
-                    continue
+                if token.finish_reason is None: continue # skip interim/newline events
                 fut = self._futures.pop(out.request_id, None) # now it’s done—fulfil the future
-                if fut:
-                    fut.set_result(token.text)
+                if fut: fut.set_result(token.text)
 

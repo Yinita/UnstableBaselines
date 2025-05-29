@@ -1,4 +1,5 @@
-import os, ray, wandb
+import ray
+import os, wandb, datetime
 import numpy as np
 from collections import deque
 from typing import List, Dict, Optional, Tuple, Callable
@@ -10,16 +11,37 @@ from unstable.utils.local_files import write_eval_data_to_file
 
 @ray.remote
 class WandBTracker:
-    def __init__(self, args):
-        self.args = args 
-        self.ma_range = args.ma_range
+    def __init__(
+        self, 
+        wandb_run_name: str,
+        ma_range: int = 100,
+        output_dir: Optional[str] = None,
+        wandb_project_name: str= "UnstableBaselines",
+    ):
+        self.ma_range = ma_range
+        self.wandb_name = wandb_run_name
+        self._build_output_dir(output_dir=output_dir) 
 
-        self.wandb_name = args.wandb_name 
-        wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
+        wandb.init(project=wandb_project_name, name=self.wandb_name)
         self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}} # Metric containers
         self.eval_iter_metrics = {} # use iteration as key, when full, log and clear to save space
         self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0} # Core counters
         self.std_metrics = ["Player Rewards", "Game Length", "Response Length (avg char)", "Observation Length (avg char)"]
+
+
+    def _build_output_dir(self, output_dir):
+        self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.wandb_name) if not output_dir else output_dir
+        os.makedirs(self.output_dir)
+
+        self.output_dir_train = os.path.join(self.output_dir, "training_data"); os.makedirs(self.output_dir_train, exist_ok=True)
+        self.output_dir_eval = os.path.join(self.output_dir, "eval_data"); os.makedirs(self.output_dir_eval, exist_ok=True)
+        self.output_dir_checkpoints = os.path.join(self.output_dir, "checkpoints"); os.makedirs(self.output_dir_checkpoints, exist_ok=True)
+
+    def get_checkpoints_dir(self):
+        return self.output_dir_checkpoints
+
+    def get_train_dir(self):
+        return self.output_dir_train
 
     def update_metric(self, name, value, prefix, env_id):
         if env_id not in self.metrics[prefix]:
@@ -80,7 +102,7 @@ class WandBTracker:
         # Save CSV
         self.log_metrics("evaluation")
         if episode_info:
-            foldername = os.path.join(self.args.output_dir_eval, env_id)
+            foldername = os.path.join(self.output_dir_eval, env_id)
             os.makedirs(foldername, exist_ok=True)
             filename = os.path.join(foldername, f"episode-{self.eval_ep_count[env_id]}-{outcome_metric.split()[0].lower()}.csv")
             write_eval_data_to_file(episode_info=episode_info, filename=filename)
@@ -89,10 +111,10 @@ class WandBTracker:
         self.eval_ep_count["all"] += 1
 
         # check if we should log the iteration based results
-        if len(self.eval_iter_metrics[ckpt_iteration][env_id]["Game Length"]) >= self.args.eval_games_per_update_step: # log it
-            wandb_dict = {f"Eval '{env_id}'/{name}": np.mean(self.eval_iter_metrics[ckpt_iteration][env_id][name]) for name in self.eval_iter_metrics[ckpt_iteration][env_id]}
-            wandb_dict[f"Eval '{env_id}'/ckpt-iteration"] = ckpt_iteration
-            wandb.log(wandb_dict)
+        # if len(self.eval_iter_metrics[ckpt_iteration][env_id]["Game Length"]) >= self.args.eval_games_per_update_step: # log it
+        #     wandb_dict = {f"Eval '{env_id}'/{name}": np.mean(self.eval_iter_metrics[ckpt_iteration][env_id][name]) for name in self.eval_iter_metrics[ckpt_iteration][env_id]}
+        #     wandb_dict[f"Eval '{env_id}'/ckpt-iteration"] = ckpt_iteration
+        #     wandb.log(wandb_dict)
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str):
         if env_id not in self.num_trajectories: self.num_trajectories[env_id] = 0
@@ -115,7 +137,7 @@ class WandBTracker:
         n_turns = len(trajectory.pid)
         self.update_metric("Game Length", n_turns, "collection", env_id)
         for i in range(n_turns):
-            if player_id==trajectory.pid[i] or self.args.use_all_data:
+            if player_id==trajectory.pid[i]:
                 self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection", env_id)
                 self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
                 self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)

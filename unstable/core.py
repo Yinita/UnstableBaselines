@@ -14,7 +14,7 @@ class Trajectory:
 
 @dataclass
 class Step:
-    pid: int; obs: str; act: str; reward: float; env_id: str 
+    pid: int; obs: str; act: str; reward: float; env_id: str; raw_reward: float; transformed_end_of_game_reward: float; step_reward: float
 
 @dataclass
 class Opponent:
@@ -60,9 +60,10 @@ class ModelPool:
         return self._ckpt_log[-1] if self._ckpt_log else None
 
     def ckpt_path(self, uid):
+        if uid is None: return None
         return self._models[uid].path_or_name
 
-    def sample(self, uid_me="current", band=(0.2,0.4,0.6,0.8)):
+    def sample(self, uid_me, band=(0.2,0.4,0.6,0.8)):
         if self.sample_mode == "self-play":
             return None #self.latest_ckpt()
         if self.sample_mode == "lagged":

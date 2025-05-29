@@ -56,18 +56,20 @@ class Collector:
 
     def _build_game_args(self, env_id, num_players, player_id, prompt_template, seed):
         actor = next(self.actor_iter)
-        lora_path = ray.get(self.model_pool.latest_ckpt.remote())
-        opponent_uid = ray.get(self.model_pool.sample.remote(uid_me="current"))
+        current_model_uid = ray.get(self.model_pool.latest_ckpt.remote())
+        lora_path = ray.get(self.model_pool.ckpt_path.remote(current_model_uid))
+        opponent_uid = ray.get(self.model_pool.sample.remote(uid_me=current_model_uid))
         opponent_path_or_name = ray.get(self.model_pool.ckpt_path.remote(opponent_uid))
         return dict(
             env_id=env_id, num_players=num_players, player_id=player_id, actor=actor, lora_path=lora_path, opponent_uid=opponent_uid, 
+            model_uid=current_model_uid,
             opponent_path_or_name=opponent_path_or_name, prompt_template=prompt_template, seed=seed
         )
     
     
     def collect(self, num_workers: int):
         @ray.remote(num_cpus=0.1)
-        def run_game(env_id, num_players, player_id, actor, lora_path, opponent_uid, opponent_path_or_name, prompt_template, seed: int = 489):
+        def run_game(env_id, num_players, player_id, actor, lora_path, opponent_uid, model_uid, opponent_path_or_name, prompt_template, seed: int = 489):
             # build model and opponent
             # model, opponent = self._build_models(actor=actor, opponent_uid=opponent_uid, prompt_template=prompt_template)
             obs_formatting_fn = OBSERVATION_FORMATTING[prompt_template]; action_extraction_fn = ACTION_EXTRACTION[prompt_template]
@@ -110,31 +112,29 @@ class Collector:
 
         in_flight, iterated_seed = [], 0
         while self.alive:
-            # top up queue
-            while len(in_flight) < num_workers:
+            while len(in_flight) < num_workers: # top up queue
                 env_id, num_players, player_id, prompt_template = self._sample_env(seed=iterated_seed)
 
                 args = self._build_game_args(env_id, num_players, player_id, prompt_template, iterated_seed)
                 future = run_game.remote(**args)
 
-                in_flight.append((future, args["opponent_uid"]))
+                in_flight.append((future, args["opponent_uid"], args["model_uid"]))
                 iterated_seed += 1
                 print(f"Num workers working: ", len(in_flight))
 
             # wait for one to finish
-            done_ref, _ = ray.wait([f for f,_ in in_flight], num_returns=1)
-            idx = next(i for i,(f,_) in enumerate(in_flight) if f==done_ref[0])
-            future, opponent_uid = in_flight.pop(idx)
+            done_ref, _ = ray.wait([f for f,_,_ in in_flight], num_returns=1)
+            idx = next(i for i,(f,_,_) in enumerate(in_flight) if f==done_ref[0])
+            future, opponent_uid, model_uid = in_flight.pop(idx)
 
             traj, player_id, env_id = ray.get(future)
             self.buffer.add_trajectory.remote(trajectory=traj, player_id=player_id, env_id=env_id)
             
             if opponent_uid is not None:
-                current_uid = ray.get(self.model_pool.current_uid.remote())
-                self.model_pool.update_ratings.remote(uid_me=current_uid, uid_opp=opponent_uid, final_reward=traj.final_rewards[player_id])
+                self.model_pool.update_ratings.remote(uid_me=model_uid, uid_opp=opponent_uid, final_reward=traj.final_rewards[player_id])
 
             if self.tracker: # optionally log it
-                self.tracker.add_trajectory.remote(traj=traj, player_id=player_id, env_id=env_id)
+                self.tracker.add_trajectory.remote(trajectory=traj, player_id=player_id, env_id=env_id)
 
             print(f"Completed game")
 

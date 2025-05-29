@@ -1,5 +1,5 @@
 import torch 
-from algorithms import BaseAlgo
+from unstable.algorithms import BaseAlgo
 
 # TODO
 class PPO(BaseAlgo):

@@ -184,3 +184,5 @@ checkpoint*
 
 *.zip
 checkpoint*
+
+outputs/*
