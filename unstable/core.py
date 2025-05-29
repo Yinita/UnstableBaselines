@@ -7,9 +7,12 @@ class Trajectory:
     pid: List[int] = field(default_factory=list)
     obs: List[str] = field(default_factory=list)
     actions: List[str] = field(default_factory=list)
+    extracted_actions: List[str] = field(default_factory=list)
+    infos: List[Dict] = field(default_factory=list)
     final_rewards: Dict[int, float] = field(default_factory=dict)
     num_turns: int = field(default_factory=int)
     format_feedbacks: List[Dict] = field(default_factory=list)
+    board_states: List[str] = field(default_factory=list)
 
 
 @dataclass

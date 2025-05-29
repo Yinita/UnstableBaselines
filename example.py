@@ -36,7 +36,7 @@ ray.init()
 
 
 # initialize the tracker to keep wandb up to date and print as necessary
-tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=f"{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}")
+tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=f"{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}") # , exploration_env_id=["SimpleTak-v0-train"]) for exploration metrics
 
 # initialize the StepBuffer (used to hold and sample from collected traces)
 step_buffer = unstable.StepBuffer.remote(

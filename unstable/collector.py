@@ -94,7 +94,9 @@ class Collector:
                     done, info = env.step(action=extracted_action)
                     traj.pid.append(pid)
                     traj.obs.append(formatted_prompt)
-                    traj.actions.append(raw_action)
+                    traj.actions.append(raw_action); traj.extracted_actions.append(extracted_action)
+                    traj.infos.append(info)
+                    traj.board_states.append(env.state.game_state['board'])
                     format_feedback["invalid_move"] = 0 # change to 1 for final move if invalid
                     traj.format_feedbacks.append(format_feedback)
 
@@ -106,6 +108,7 @@ class Collector:
                 if done: break
 
             traj.final_rewards = env.close(); traj.num_turns=turn
+            print(f"FINAL REWARDS: {traj.final_rewards}")
             
             return traj, player_id, env_id
 
