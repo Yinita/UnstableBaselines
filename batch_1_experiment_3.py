@@ -47,7 +47,7 @@ EVALUATION_ENVS = [
     ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 
-WANDB_RUN_NAME = f"Batch-1-Experiment-2--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
+WANDB_RUN_NAME = f"Batch-1-Experiment-3--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
 
 
 ray.init()
@@ -64,8 +64,7 @@ step_reward_transformation = retra.ComposeStepRewardTransforms([
 #     retra.PenaltyForInvalidMove(reward= 1.0, penalty= -1.0), 
 ])
 sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
-    # retra.NormalizeRewardsByEnv(z_score=False) # normalize the sampled batch
-    retra.NormalizeRewards() # normalize the sampled batch
+    retra.NormalizeRewardsByEnv(z_score=False) # normalize the sampled batch
 ])
 
 # initialize the StepBuffer (used to hold and sample from collected traces)
