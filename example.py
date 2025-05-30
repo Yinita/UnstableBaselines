@@ -41,7 +41,7 @@ ray.init()
 
 
 # initialize the tracker to keep wandb up to date and print as necessary
-tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=f"{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}")
+tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=f"{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}", exploration_env_id=["SimpleTak-v0-train"]) # , exploration_env_id=["SimpleTak-v0-train"]) for exploration metrics
 
 # build the reward transformations to be used
 final_reward_transformation = retra.ComposeFinalRewardTransforms([
