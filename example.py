@@ -8,11 +8,11 @@ NUM_LEARNERS = 1
 
 MODEL_NAME = "Qwen/Qwen3-4B-base"
 
-BATCH_SIZE = 128
+BATCH_SIZE = 384
 BUFFER_SIZE = BATCH_SIZE*2
-GRADIENT_ACCUMULATION_STEPS = 128
+GRADIENT_ACCUMULATION_STEPS = 384
 
-LR = 1e-4
+LR = 5e-5
 GRAD_CLIP = 0.5
 
 
@@ -26,7 +26,7 @@ lora_config = {
 vllm_config = {
     "model_name": MODEL_NAME, 
     "temperature": 0.7,
-    "max_tokens": 4096,
+    "max_tokens": 3500,
     "max_parallel_seq": 256,
     "max_loras": 5,
     "lora_config": lora_config
@@ -68,12 +68,22 @@ step_buffer = unstable.StepBuffer.remote(
 # initialize and populate the Opponent pool
 model_pool = unstable.ModelPool.remote(
     sample_mode="adaptive-trueskill",
-    max_active_lora=6 # how many lora checkpoints to sample from
+    # sample_mode="fixed",
+    max_active_lora=8 # how many lora checkpoints to sample from
 )
 ray.get(model_pool.add_checkpoint.remote(path=None, iteration="-1")) # add base checkpoint
 # model_pool.add_checkpoint.remote(path="", iteration="-1") # add previous checkpoint
 ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-lite-001")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-001")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="deepseek/deepseek-r1-distill-llama-8b")) # add fixed opponents
+ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-8b")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="qwen/qwen-2.5-7b-instruct")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="deepseek/deepseek-r1-0528-qwen3-8b")) # add fixed opponents
+ray.get(model_pool.add_fixed.remote(name="qwen/qwen-turbo")) # add fixed opponents
+ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-14b")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="meta-llama/llama-3.3-70b-instruct")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-30b-a3b")) # add fixed opponents
+
 
 # build collector
 collector = unstable.Collector.options(name="Collector").remote(

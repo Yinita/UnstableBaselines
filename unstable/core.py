@@ -2,6 +2,9 @@ from dataclasses import dataclass, field
 from typing import List, Dict
 import trueskill, math, ray, random
 
+# local imports
+from unstable.tracker import WandBTracker
+
 @dataclass
 class Trajectory:
     pid: List[int] = field(default_factory=list)
@@ -26,7 +29,7 @@ class Opponent:
 
 @ray.remote
 class ModelPool:
-    def __init__(self, sample_mode, max_active_lora, lag_range=(1,7), beta=4.0):
+    def __init__(self, sample_mode, max_active_lora, tracker: Optional[WandBTracker]=None, lag_range=(1,7), beta=4.0):
         self.TS = trueskill.TrueSkill(beta=beta)
         self._models   = {}         # uid -> Opponent dataclass
         self._ckpt_log = []         # ordered list of checkpoint uids
@@ -34,6 +37,12 @@ class ModelPool:
         self.sample_mode = sample_mode #"self-play", "lagged", "fixed", "adaptive-trueskill"
         self.max_active_lora = max_active_lora
         self._latest_uid = None
+
+        # for tracking
+        self._match_counts = defaultdict(int) #  (uid_a, uid_b) -> games played
+        self._rating_log = [] #  [(time, uid, μ, σ), …]
+        self._step_counter = 0 #  learner step snapshot id
+        self._tracker = tracker
 
     def current_uid(self):
         return self._latest_uid
@@ -104,6 +113,9 @@ class ModelPool:
         self._models[uid_opp].rating = new_b
         print(f"\nUPDATED TRUESKILL:\n\t{uid_me} -> {self._models[uid_me].rating}\n\t{uid_opp} -> {self._models[uid_opp].rating}")
 
+        # register the game for tracking
+        self._register_game(uid_me=uid_me, uid_opp=uid_opp)
+
     def _exp_win(self, A, B):
         return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
 
@@ -131,3 +143,19 @@ class ModelPool:
         # choose who to retire: oldest OR weakest below threshold
         to_drop = sorted(active_uids, key=lambda u: (self._models[u].rating.mu, self._ckpt_log.index(u)))[:len(active_uids)-MAX_ACTIVE]           # weakest first, then oldest
         for u in to_drop: self._retire(u)
+
+
+    def _register_game(self, uid_me, uid_opp):
+        if uid_opp is None:                       # self-play
+            uid_opp = uid_me
+        pair = tuple(sorted((uid_me, uid_opp)))
+        self._match_counts[pair] += 1
+
+
+    def snapshot(self, iteration: int):
+        self._step_counter = iteration
+        for uid, opp in self._models.items():
+            self._rating_log.append((time.time(), uid, opp.rating.mu, opp.rating.sigma))
+            if self._tracker: self._tracker.log_trueskill.remote(step=iteration, uid=uid, mu=opp.rating.mu, sigma=opp.rating.sigma)
+        # push matchup matrix (sparse dict is fine)
+        if self._tracker: self._tracker.log_matchup_counts.remote(step=iteration, counts=dict(self._match_counts))

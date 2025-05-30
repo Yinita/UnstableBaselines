@@ -235,7 +235,7 @@ class Collector:
             #     traj.format_feedbacks[-1]["invalid_move"] = 1
             traj.final_rewards = env.close()
             traj.num_turns = turn
-             if info["end_by_invalid"] and pid==player_id:  
+            if info["end_by_invalid"] and pid==player_id:  
                 traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
             return traj, player_id, env_id
 

@@ -148,3 +148,13 @@ class WandBTracker:
 
     def log_learner(self, wandb_dict):
         wandb.log(wandb_dict)
+
+    def log_trueskill(self, step, uid, mu, sigma):
+        wandb.log({f"trueskill/{uid}/mu":    mu,
+                f"trueskill/{uid}/sigma": sigma,
+                "learner/step": step})
+
+    def log_matchup_counts(self, step, counts: dict):
+        # counts = {("ckpt-200","ckpt-195"): 17, ("ckpt-200","gemini"): 9, …}
+        for (u1, u2), n in counts.items():
+            wandb.log({f"matchups/{u1}_vs_{u2}": n, "learner/step": step})
