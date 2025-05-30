@@ -1,9 +1,10 @@
 from dataclasses import dataclass, field
+from collections import defaultdict
 from typing import List, Dict
 import trueskill, math, ray, random
 
 # local imports
-from unstable.tracker import WandBTracker
+# from unstable.tracker import WandBTracker
 
 @dataclass
 class Trajectory:
@@ -16,7 +17,7 @@ class Trajectory:
 
 
 @dataclass
-class Step:
+class Step: # TODO change to only contain necessary + info-dict for flexibility
     pid: int; obs: str; act: str; reward: float; env_id: str; raw_reward: float; transformed_end_of_game_reward: float; step_reward: float
 
 @dataclass
@@ -29,7 +30,7 @@ class Opponent:
 
 @ray.remote
 class ModelPool:
-    def __init__(self, sample_mode, max_active_lora, tracker: Optional[WandBTracker]=None, lag_range=(1,7), beta=4.0):
+    def __init__(self, sample_mode, max_active_lora, tracker=None, lag_range=(1,7), beta=4.0):
         self.TS = trueskill.TrueSkill(beta=beta)
         self._models   = {}         # uid -> Opponent dataclass
         self._ckpt_log = []         # ordered list of checkpoint uids

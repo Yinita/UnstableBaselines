@@ -67,6 +67,7 @@ step_buffer = unstable.StepBuffer.remote(
 
 # initialize and populate the Opponent pool
 model_pool = unstable.ModelPool.remote(
+    tracker=tracker,
     sample_mode="adaptive-trueskill",
     # sample_mode="fixed",
     max_active_lora=8 # how many lora checkpoints to sample from
@@ -76,11 +77,11 @@ ray.get(model_pool.add_checkpoint.remote(path=None, iteration="-1")) # add base 
 ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-lite-001")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-001")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="deepseek/deepseek-r1-distill-llama-8b")) # add fixed opponents
-ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-8b")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-8b")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="qwen/qwen-2.5-7b-instruct")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="deepseek/deepseek-r1-0528-qwen3-8b")) # add fixed opponents
-ray.get(model_pool.add_fixed.remote(name="qwen/qwen-turbo")) # add fixed opponents
-ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-14b")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="qwen/qwen-turbo")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-14b")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="meta-llama/llama-3.3-70b-instruct")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-30b-a3b")) # add fixed opponents
 
