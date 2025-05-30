@@ -136,6 +136,7 @@ class Learner:
                 if self.model_pool and self._last_ckpt:
                     self.model_pool.add_checkpoint.remote(str(self._last_ckpt), self._step)
                     print(f"[Learner] ↪registered → {self._last_ckpt}")
+                    self.model_pool.snapshot.remote(self._step)
 
         print("[Learner] training finished.")
         return {"final_step":self._step, "samples":self._samples}

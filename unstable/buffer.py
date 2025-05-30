@@ -20,7 +20,7 @@ def write_training_data_to_file(batch, filename: str):
         writer = csv.writer(csvfile)
         writer.writerow(['pid', 'obs', 'act', 'reward', "env_id", "raw_reward", "transformed_end_of_game_reward", "step_reward"])  # header
         for step in batch:
-            writer.writerow([step.pid, step.obs, step.act, step.reward])
+            writer.writerow([step.pid, step.obs, step.act, step.reward, step.env_id, step.raw_reward, step.transformed_end_of_game_reward, step.step_reward])
 
 
 @ray.remote
