@@ -56,15 +56,17 @@ ray.init()
 tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=WANDB_RUN_NAME, exploration_env_id=["SimpleTak-v0-train"]) # , exploration_env_id=["SimpleTak-v0-train"]) for exploration metrics
 
 # build the reward transformations to be used
-final_reward_transformation = retra.ComposeFinalRewardTransforms([
-    retra.RoleAdvantageByEnvFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
-])
+# final_reward_transformation = retra.ComposeFinalRewardTransforms([
+#     retra.RoleAdvantageByEnvFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
+# ])
+final_reward_transformation= None
 step_reward_transformation = retra.ComposeStepRewardTransforms([
-    retra.RewardForThinkTags(reward=1.5), # +0.25 for using the correct format
-    retra.PenaltyForInvalidMove(reward= 1.0, penalty= -1.0), 
+    retra.RewardForThinkTags(reward=1.0), # +0.25 for using the correct format
+#     retra.PenaltyForInvalidMove(reward= 1.0, penalty= -1.0), 
 ])
 sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
-    retra.NormalizeRewardsByEnv(z_score=True) # normalize the sampled batch
+    # retra.NormalizeRewardsByEnv(z_score=False) # normalize the sampled batch
+    retra.NormalizeRewards(z_score=False) # normalize the sampled batch
 ])
 
 # initialize the StepBuffer (used to hold and sample from collected traces)
