@@ -67,7 +67,7 @@ class WandBTracker:
 
     def log_metrics(self, prefix):
         for env_id in self.metrics[prefix]:
-            tag  = f"{prefix} '{env_id}')"
+            tag  = f"{prefix} '({env_id}')"
             wandb_dict = {
                 f"{tag}/Num Trajectories": self.num_trajectories[env_id] if prefix in ["collection", "exploration"] else self.eval_ep_count[env_id],
                 **{f"{tag}/Player Turns ({i})": self.player_turns[env_id][i] for i in self.player_turns[env_id] if env_id in self.player_turns and prefix=="exploration"}
