@@ -8,9 +8,9 @@ NUM_LEARNERS = 1
 
 MODEL_NAME = "Qwen/Qwen3-4B-base"
 
-BATCH_SIZE = 384
+BATCH_SIZE = 16
 BUFFER_SIZE = 768
-GRADIENT_ACCUMULATION_STEPS = 384
+GRADIENT_ACCUMULATION_STEPS = 16
 
 LR = 1e-5
 GRAD_CLIP = 0.2
@@ -27,7 +27,7 @@ lora_config = {
 vllm_config = {
     "model_name": MODEL_NAME, 
     "temperature": 0.7,
-    "max_tokens": 4096,
+    "max_tokens": 2500, #4096,
     "max_parallel_seq": 384,
     "max_loras": 5,
     "lora_config": lora_config
@@ -47,7 +47,7 @@ EVALUATION_ENVS = [
     ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 
-WANDB_RUN_NAME = f"Batch-1-Experiment-0--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
+WANDB_RUN_NAME = f"TS-testing--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
 
 
 ray.init()
@@ -80,9 +80,8 @@ step_buffer = unstable.StepBuffer.remote(
 # initialize and populate the Opponent pool
 model_pool = unstable.ModelPool.remote(
     tracker=tracker,
-    # sample_mode="adaptive-trueskill",
-    sample_mode="fixed",
-    # sample_mode="mirror",
+    sample_mode="mirror",
+    # sample_mode="fixed",
     # sample_mode="lagged",
     # sample_mode="random",
     # sample_mode="match-quality",
@@ -93,7 +92,7 @@ model_pool = unstable.ModelPool.remote(
 )
 ray.get(model_pool.add_checkpoint.remote(path=None, iteration="-1")) # add base checkpoint
 # model_pool.add_checkpoint.remote(path="", iteration="-1") # add previous checkpoint
-ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-lite-001")) # add fixed opponents
+# ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-lite-001")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-001")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="deepseek/deepseek-r1-distill-llama-8b")) # add fixed opponents
 # ray.get(model_pool.add_fixed.remote(name="qwen/qwen3-8b")) # add fixed opponents

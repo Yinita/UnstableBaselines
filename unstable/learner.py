@@ -1,13 +1,26 @@
-import time
+import time, pathlib
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
 import ray, torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
+from safetensors.torch import load_file as safe_load
 
 # local imports
 from unstable.algorithms import BaseAlgo
+
+
+def load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
+    ckpt_dir = pathlib.Path(ckpt_dir)
+    candidates = [ckpt_dir / "adapter_model.safetensors", ckpt_dir / "adapter_model.bin", ckpt_dir / "pytorch_model.bin",]
+    for path in candidates:
+        if path.exists():
+            print(f"[loader] found LoRA adapter → {path.name}")
+            lora_sd = safe_load(str(path)) if path.suffix == ".safetensors" else torch.load(path, map_location="cpu")
+            set_peft_model_state_dict(peft_model, lora_sd, adapter_name="default")
+            return
+    raise FileNotFoundError(f"No adapter_model.* found in {ckpt_dir}")
 
 
 def _build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any] | None, initial_lora_path: Optional[str], freeze_base: bool = True):
@@ -145,6 +158,6 @@ class Learner:
         ckpt_dir = self.ckpt_root / f"iteration-{self._step}"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         model = self.model.module if hasattr(self.model,'module') else self.model
-        model.save_pretrained(ckpt_dir)
+        model.save_pretrained(ckpt_dir, save_adapter=True)
         self._last_ckpt = ckpt_dir
         print(f"[Learner] saved → {ckpt_dir}")
