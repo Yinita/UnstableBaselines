@@ -47,7 +47,7 @@ EVALUATION_ENVS = [
     ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 
-WANDB_RUN_NAME = f"Batch-1-Experiment-4--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
+WANDB_RUN_NAME = f"Batch-1-Experiment-6--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
 
 
 ray.init()

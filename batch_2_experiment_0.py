@@ -8,9 +8,9 @@ NUM_LEARNERS = 1
 
 MODEL_NAME = "Qwen/Qwen3-4B-base"
 
-BATCH_SIZE = 384
-BUFFER_SIZE = 768
-GRADIENT_ACCUMULATION_STEPS = 384
+BATCH_SIZE = 256
+BUFFER_SIZE = 512
+GRADIENT_ACCUMULATION_STEPS = 256
 
 LR = 1e-5
 GRAD_CLIP = 0.2
@@ -47,7 +47,7 @@ EVALUATION_ENVS = [
     ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 
-WANDB_RUN_NAME = f"Batch-1-Experiment-5--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
+WANDB_RUN_NAME = f"Batch-2-Experiment-0--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
 
 
 ray.init()
