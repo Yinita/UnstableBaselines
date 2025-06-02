@@ -140,7 +140,7 @@ class Collector:
             traj.num_turns = turn
             if info["end_by_invalid"] and pid==player_id:  
                 traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
-            return traj, player_id, env_id
+            return traj, player_id, env_id, (info["end_by_invalid"] and pid != player_id) 
 
         # @ray.remote(num_cpus=0.1)
         @ray.remote(num_cpus=0)
@@ -213,12 +213,13 @@ class Collector:
             finished = done_ref[0]
 
             # ── E) if it was a TRAINING game ───────────────────────────────
-            idx = next((i for i, (f, _, _) in enumerate(train_flight)
-                        if f == finished), None)
+            idx = next((i for i, (f, _, _) in enumerate(train_flight) if f == finished), None)
             if idx is not None:
                 fut, opp_uid, mdl_uid = train_flight.pop(idx)
-                traj, pid, env_id = ray.get(fut)
+                traj, pid, env_id, end_by_opponent_invalid = ray.get(fut)
                 # send to buffer / trueskill / tracker
+                if end_by_opponent_invalid:
+                    continue
                 self.buffer.add_trajectory.remote(traj, pid, env_id)
                 if opp_uid is not None:
                     self.model_pool.update_ratings.remote(
