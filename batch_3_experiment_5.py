@@ -81,7 +81,7 @@ step_buffer = unstable.StepBuffer.remote(
 model_pool = unstable.ModelPool.remote(
     tracker=tracker,
     # sample_mode="adaptive-trueskill",
-    sample_mode="random",
+    sample_mode="match-quality",
     max_active_lora=5 # how many lora checkpoints to sample from
 )
 ray.get(model_pool.add_checkpoint.remote(path=None, iteration="-1")) # add base checkpoint

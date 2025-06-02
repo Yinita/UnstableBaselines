@@ -47,7 +47,7 @@ EVALUATION_ENVS = [
     ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 
-WANDB_RUN_NAME = f"Batch-3-Experiment-4--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
+WANDB_RUN_NAME = f"Batch-3-Experiment-2-extra-{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
 
 
 ray.init()
@@ -81,7 +81,7 @@ step_buffer = unstable.StepBuffer.remote(
 model_pool = unstable.ModelPool.remote(
     tracker=tracker,
     # sample_mode="adaptive-trueskill",
-    sample_mode="random",
+    sample_mode="mirror",
     max_active_lora=5 # how many lora checkpoints to sample from
 )
 ray.get(model_pool.add_checkpoint.remote(path=None, iteration="-1")) # add base checkpoint
