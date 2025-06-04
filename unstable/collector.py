@@ -218,8 +218,8 @@ class Collector:
                 fut, opp_uid, mdl_uid = train_flight.pop(idx)
                 traj, pid, env_id, end_by_opponent_invalid = ray.get(fut)
                 # send to buffer / trueskill / tracker
-                if end_by_opponent_invalid:
-                    continue
+                # if end_by_opponent_invalid:
+                #     continue
                 self.buffer.add_trajectory.remote(traj, pid, env_id)
                 if opp_uid is not None:
                     self.model_pool.update_ratings.remote(
