@@ -21,6 +21,10 @@ class ModelPool:
         # for tracking
         self._match_counts = defaultdict(int) # (uid_a, uid_b) -> games played
         self._unique_actions_seqs = {}
+        self._full_unique_actions_seqs = {
+            "unigrams": set(), "bigrams": set(), "trigrams": set(), "4-grams": set(), "5-grams": set(),
+            "total_counts": {"unigrams": 0, "bigrams": 0, "trigrams": 0, "4-grams": 0, "5-grams": 0,
+        }}
         self._step_counter = 0 # learner step snapshot id
         self._tracker = tracker
 
@@ -163,6 +167,9 @@ class ModelPool:
                 self._unique_actions_seqs[key][name].add(tuple(game_action_seq[i:i+n]))
                 self._unique_actions_seqs[key]["total_counts"][name] += 1
 
+                self._full_unique_actions_seqs[name].add(tuple(game_action_seq[i:i+n]))
+                self._full_unique_actions_seqs["total_counts"][name] += 1
+
 
     def push_game_outcome(self, uid_me: str, uid_opp: str, final_reward: float, game_action_seq: List[str]):
         if uid_me not in self._models or uid_opp not in self._models: return  # skip if either side is unknown
@@ -231,6 +238,12 @@ class ModelPool:
                 ratio = unique / total if total > 0 else 0.0
                 ratios[ngram_type] = ratio
             stats[key] = ratios
+
+        
+        for key, values in self._full_unique_actions_seqs():
+            total = values["total_counts"].get(key, 0)
+            stats[f"unqiue-counts-{key}"] = len(values.get(key, set()))
+            
         return stats
 
 

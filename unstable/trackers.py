@@ -91,13 +91,15 @@ class Tracker(BaseTracker):
             log_dict[f"matchups/{uid1}_vs_{uid2}"] = count
 
         # Log n-gram exploration stats (if provided)
-        if exploration_ratios:
-            for (uid1, uid2), ratios in exploration_ratios.items():
-                for ngram_type, ratio in ratios.items():
-                    log_dict[f"{f"exploration/{uid1}_vs_{uid2}"}/{ngram_type}_diversity"] = ratio
+        # if exploration_ratios:
+        #     for (uid1, uid2), ratios in exploration_ratios.items():
+        #         for ngram_type, ratio in ratios.items():
+        #             log_dict[f"{f"exploration/{uid1}_vs_{uid2}"}/{ngram_type}_diversity"] = ratio
+        for name, count in exploration_ratios.items():
+            log_dict[f"exploration/{name}"] = count
 
         # Include iteration step for context
-        log_dict["learner/step"] = iteration
+        # log_dict["learner/step"] = iteration
 
         # Push to WandB
         if self.wandb_project:
