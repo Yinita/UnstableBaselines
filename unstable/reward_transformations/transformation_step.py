@@ -1,5 +1,5 @@
 from typing import List
-from trajectory_buffer import Trajectory
+from unstable.core import Trajectory
 
 
 # Step reward Transformations

@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Optional
 from collections import defaultdict
 
-from trajectory_buffer import Step
+from unstable.core import Step
 
 # Sampling reward Transformations
 class SamplingRewardTransform:

@@ -7,3 +7,4 @@ torch
 transformers
 peft
 textarena[datasets]
+trueskill

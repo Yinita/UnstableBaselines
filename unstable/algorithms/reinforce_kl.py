@@ -1,5 +1,5 @@
 import torch, copy
-from algorithms import BaseAlgo
+from unstable.core import BaseAlgo
 
 class Reinforce_KL(BaseAlgo):
     def __init__(self, args, model, tokenizer, device):
@@ -16,7 +16,7 @@ class Reinforce_KL(BaseAlgo):
         enc = self.tokenizer([o + a for o, a in zip(obs, acts)], return_tensors="pt", padding=True).to(self.device)
         return enc, advs, obs
 
-    def update(self, steps):
+    def update(self, steps, scaling: float = 1.0):
         enc, advs, obs = self.prepare_batch(steps=steps)
         
         # Get logits from policy (π)
@@ -51,6 +51,7 @@ class Reinforce_KL(BaseAlgo):
 
         # Total loss
         loss = pg_loss + self.kl_coef * kl_loss
+        loss = loss / scaling
         loss.backward()
 
         return {

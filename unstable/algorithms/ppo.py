@@ -1,12 +1,8 @@
 import torch 
+from unstable.core import BaseAlgo
 
-class BaseAlgo:
-    def __init__(self, args, model, tokenizer, device):
-        self.args = args
-        self.model = model
-        self.tokenizer = tokenizer
-        self.device = device
-
+# TODO
+class PPO(BaseAlgo):
     def prepare_batch(self, steps):
         """
         Turn a list[Step] into tensors on self.dev.

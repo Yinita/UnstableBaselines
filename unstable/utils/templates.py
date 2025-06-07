@@ -2,7 +2,6 @@ import re
 from typing import Tuple, Dict
 
 
-
 def apply_default_template(observation: str) -> str:
     return (
         "You are playing a two-player zero-sum game. Make valid moves to win. "
@@ -29,26 +28,30 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
     
     if matches:
-        action = matches[-1]  # Take the last one
-        if "[" not in action:
-            action = f"[{action.strip()}]"
-        has_think = 1
-    else:
+        last_match = matches[-1].strip()
+        if last_match:  # non-empty boxed
+            action = f"[{last_match}]" if "[" not in last_match else last_match
+            has_think = 1
+        else:  # empty boxed
+            action = raw_action
+            has_think = 0
+    else:  # no boxed at all
         action = raw_action
         has_think = 0
 
     format_feedback = {"has_think": bool(has_think), "has_answer": False, "order_correct": False}
     return action, format_feedback
-    
 
 
 OBSERVATION_FORMATTING = {
     "default": apply_default_template,
     "qwen3": qwen3_template,
     "qwen3-game": qwen3_template,
+    "qwen3-zs": qwen3_template,
     "qwen3-reasoning": qwen3_template_reasoning,
 }
 
 ACTION_EXTRACTION = {
-    "default": extract_action_and_format_feedback
+    "default": extract_action_and_format_feedback,
+    "qwen3-zs": extract_action_and_format_feedback,
 }

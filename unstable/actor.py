@@ -1,25 +1,26 @@
 import os, time
 import asyncio
 from collections import deque
-from typing import Optional
+from typing import Optional, Dict, Any
 
 import ray, torch, vllm
 from vllm import EngineArgs, LLMEngine, SamplingParams
 from vllm.lora.request import LoRARequest
 
+
+@ray.remote
 class VLLMActor:
-    def __init__(self, args):
+    def __init__(self, vllm_config: Dict[str, Any]):
         gpu_ids = ray.get_gpu_ids() 
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
         torch.cuda.set_device(0)
 
-        self.args = args
         engine_args = EngineArgs(
-            model=args.model_name, enable_lora=True, max_loras=args.vllm_max_loras, max_lora_rank=args.lora_rank, 
-            max_cpu_loras=args.vllm_max_loras, max_num_seqs=args.max_vllm_seq, task="generate"
+            model=vllm_config["model_name"], enable_lora=True, max_loras=vllm_config.get("max_loras", 5), max_lora_rank=vllm_config["lora_config"]["lora_rank"], 
+            max_cpu_loras=vllm_config.get("max_loras", 5), max_num_seqs=vllm_config["max_parallel_seq"], task="generate"
         )
         self.engine = LLMEngine.from_engine_args(engine_args)
-        self.sampling_params = SamplingParams(temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
+        self.sampling_params = SamplingParams(temperature=vllm_config.get("temperature", 0.7),  top_p=vllm_config.get("top_p", 0.95), max_tokens=vllm_config.get("max_tokens", 4096))
 
         self._queue = deque()
         self._futures = {}
@@ -47,8 +48,7 @@ class VLLMActor:
             # Step the engine and only resolve once finish_reason is non-None
             for out in self.engine.step():
                 token = out.outputs[-1] # take the last token in this partial output
-                if token.finish_reason is None: # skip interim/newline events
-                    continue
+                if token.finish_reason is None: continue # skip interim/newline events
                 fut = self._futures.pop(out.request_id, None) # now it’s done—fulfil the future
-                if fut:
-                    fut.set_result(token.text)
+                if fut: fut.set_result(token.text)
+

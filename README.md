@@ -9,6 +9,8 @@
 > for rapid prototyping of *multi‑turn / multi‑agent* algorithms on
 > [TextArena](https://github.com/LeonGuertler/TextArena) environments.
 >
+> The main focus on unstable baselines is to enable fast prototyping/research. For something a bit more production ready we recomment to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers)
+>
 > **Work in progress — interfaces will change.**
 
 ---
