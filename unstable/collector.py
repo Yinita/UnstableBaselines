@@ -47,6 +47,10 @@ def _iter_from_uid(uid: str) -> int:
     match = re.search(r"(\d+)$", uid)
     return int(match.group(1)) if match else 0
 
+def _extract_action(action: str) -> str:
+    match = re.search(r"\[(.*?)\]", action)
+    return match.group(1).strip().lower() if match else ""
+
 
 @ray.remote
 class Collector:
@@ -139,6 +143,7 @@ class Collector:
             obs_format = OBSERVATION_FORMATTING[prompt_template]
             extract_fn = ACTION_EXTRACTION[prompt_template]
             model = CallableActorWrapper(actor, lora_path, obs_format, extract_fn)
+            game_action_seq = []
 
             if opponent_uid is None: opponent = model
             elif opponent_uid.startswith("ckpt-"): opponent = CallableActorWrapper(actor, opponent_path_or_name, obs_format, extract_fn)
@@ -152,24 +157,28 @@ class Collector:
             while True:
                 pid, obs = env.get_observation()
                 if pid == player_id:
-                    raw, act, fb, prompt = model.get_full_response(obs)
+                    raw_act, act, fb, prompt = model.get_full_response(obs)
                     done, info = env.step(act)
-                    traj.pid.append(pid); traj.obs.append(prompt)
-                    traj.actions.append(raw)
-                    fb["invalid_move"] = 0; traj.extracted_actions.append(act)
+                    traj.pid.append(pid)
+                    traj.obs.append(prompt)
+                    traj.actions.append(raw_act)
+                    fb["invalid_move"] = 0
+                    traj.extracted_actions.append(act)
                     traj.infos.append(info)
-                    traj.board_states.append(env.state.game_state['board'] if 'board' in env.state.game_state else None)
                     traj.format_feedbacks.append(fb)
                 else:
-                    done, info = env.step(opponent(obs))
+                    act = opponent(obs)
+                    done, info = env.step(act)
                 turn += 1
                 if done:
                     break
+
+                game_action_seq.append(_extract_action(act))
             traj.final_rewards = env.close()
             traj.num_turns = turn
             if info["end_by_invalid"] and pid==player_id:  
                 traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
-            return traj, player_id, env_id, (info["end_by_invalid"] and pid != player_id) 
+            return traj, player_id, env_id, (info["end_by_invalid"] and pid != player_id), game_action_seq
 
         @ray.remote(num_cpus=0)
         def run_eval_game(env_id, num_players, player_id, actor, lora_path, opponent_name, prompt_template, seed: int = 489):
@@ -231,20 +240,22 @@ class Collector:
             idx = next((i for i, (f, _, _) in enumerate(train_flight) if f == finished), None)
             if idx is not None:
                 fut, opp_uid, mdl_uid = train_flight.pop(idx)
-                traj, pid, env_id, end_by_opponent_invalid = ray.get(fut)
+                traj, pid, env_id, end_by_opponent_invalid, game_action_seq = ray.get(fut)
                 if self.filter_opponent_invalid and  end_by_opponent_invalid:
                     continue
                 self.buffer.add_trajectory.remote(traj, pid, env_id)
                 if opp_uid is not None:
-                    self.model_pool.update_ratings.remote(
-                        uid_me=mdl_uid, uid_opp=opp_uid,
-                        final_reward=traj.final_rewards[pid]
+                    self.model_pool.push_game_outcome.remote(
+                        uid_me=mdl_uid, uid_opp=opp_uid, final_reward=traj.final_rewards[pid], game_action_seq=game_action_seq
                     )
+                    # self.model_pool.update_ratings.remote(
+                    #     uid_me=mdl_uid, uid_opp=opp_uid,
+                    #     final_reward=traj.final_rewards[pid]
+                    # )
                 if self.tracker:
                     self.tracker.add_trajectory.remote(traj, pid, env_id)
                 continue  # back to top of loop
 
-            # ── F) otherwise it was an EVALUATION game ─────────────────────
             idx = next(i for i, (f, *_) in enumerate(self._eval_flight) if f == finished)
             fut, env_id, pid, ckpt_uid, seed = self._eval_flight.pop(idx)
             ep_info, _, _, final_r = ray.get(fut)
@@ -252,6 +263,5 @@ class Collector:
                 self.tracker.add_eval_episode.remote(episode_info=ep_info, final_reward=final_r, current_ckpt_pid=pid, env_id=env_id, ckpt_iteration=ckpt_uid)
             print(f"[EVAL] ckpt={ckpt_uid} env={env_id} seed={seed} done")
 
-    # ──────────────────────────────────────────────────────────────────────────
 
     def stop(self): self.alive = False

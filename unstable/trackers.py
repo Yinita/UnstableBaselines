@@ -61,6 +61,8 @@ class Tracker(BaseTracker):
                 self._update_metric(name="Response Length (avg. char)", value=len(trajectory.actions[i]), prefix=prefix, env_id=env_id)
                 self._update_metric(name="Observation Length (avg. char)", value=len(trajectory.obs[i]), prefix=prefix, env_id=env_id)
 
+        
+
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str, prefix: str="collection"):
         self._add_trajectory_to_metrics(trajectory=trajectory, player_id=player_id, env_id=env_id, prefix=prefix)
@@ -76,44 +78,28 @@ class Tracker(BaseTracker):
 
 
 
-    def log_model_pool(self, iteration: int, match_counts, ts_dict: Dict[str, Dict[str, float]]): #, uid: str, mu: float, sigma: float, counts: Dict):
-        pass
+    def log_model_pool(self, iteration: int, match_counts, ts_dict: Dict[str, Dict[str, float]], exploration_ratios: Dict[str, float]): #, uid: str, mu: float, sigma: float, counts: Dict):
+        log_dict = {}
 
+        # Log TrueSkill values
+        for uid, ts in ts_dict.items():
+            log_dict[f"trueskill/{uid}/mu"] = ts["mu"]
+            log_dict[f"trueskill/{uid}/sigma"] = ts["sigma"]
 
+        # Log match counts
+        for (uid1, uid2), count in match_counts.items():
+            log_dict[f"matchups/{uid1}_vs_{uid2}"] = count
 
-    # def log_trueskill(self, step, uid, mu, sigma):
-    #     wandb.log({f"trueskill/{uid}/mu": mu, f"trueskill/{uid}/sigma": sigma, "learner/step": step})
+        # Log n-gram exploration stats (if provided)
+        if exploration_ratios:
+            for (uid1, uid2), ratios in exploration_ratios.items():
+                for ngram_type, ratio in ratios.items():
+                    log_dict[f"{f"exploration/{uid1}_vs_{uid2}"}/{ngram_type}_diversity"] = ratio
 
-    # def log_matchup_counts(self, step, counts: dict):
-    #     # counts = {("ckpt-200","ckpt-195"): 17, ("ckpt-200","gemini"): 9, …}
-    #     for (u1, u2), n in counts.items():
-    #         wandb.log({f"matchups/{u1}_vs_{u2}": n, "learner/step": step})
+        # Include iteration step for context
+        log_dict["learner/step"] = iteration
 
-    # def log_action_n_grams(self, action_n_grams: dict, env_id: str):
-    #     def _normalize_ngrams(ngrams):
-    #         total = sum(ngrams.values())
-    #         return {k: v / total for k, v in ngrams.items()}
-    #     def _compute_entropy(prob_dist):
-    #         return -sum(p * math.log2(p) for p in prob_dist if p > 0)
-    #     wandb_dict = {
-    #         **{f"exploration ({env_id})/{n}-gram entropy": _compute_entropy(_normalize_ngrams(action_n_grams[n]).values()) for n in action_n_grams},
-    #         **{f"exploration ({env_id})/unique {n}-grams": len(action_n_grams[n]) for n in action_n_grams}
-    #         }
-    #     wandb.log(wandb_dict)
+        # Push to WandB
+        if self.wandb_project:
+            wandb.log(log_dict)
 
-    # def log_pairwise_n_gram_distances(self, dist_matrix: np.ndarray, uids: List[str]):
-    #     wandb_dict = {}
-    #     for i in range(dist_matrix.shape[0]):
-    #         distances = [dist_matrix[i, j] for j in range(dist_matrix.shape[1]) if i != j]
-    #         if distances:  # Only compute min if we have distances
-    #             wandb_dict[f'opponent sampling/min dist.{uids[i]}'] = np.min(distances)
-    #             wandb_dict[f'opponent sampling/max dist.{uids[i]}'] = np.max(distances)
-    #         else:
-    #             wandb_dict[f'opponent sampling/min dist.{uids[i]}'] = 0.0  # or np.nan
-    #             wandb_dict[f'opponent sampling/max dist.{uids[i]}'] = 0.0  # or np.nan
-    #     wandb.log(wandb_dict)
-
-    # @staticmethod
-    # def _entropy(counts: Dict[str, int]) -> float:
-    #     total = sum(counts.values())
-    #     return -sum((c / total) * math.log(c / total) for c in counts.values()) if total > 0.0 else 0.0

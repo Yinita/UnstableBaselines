@@ -13,7 +13,6 @@ class Trajectory:
     final_rewards: Dict[int, float] = field(default_factory=dict)
     num_turns: int = field(default_factory=int)
     format_feedbacks: List[Dict] = field(default_factory=list)
-    board_states: List[str] = field(default_factory=list)
 
 
 @dataclass

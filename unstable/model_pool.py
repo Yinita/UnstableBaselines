@@ -1,6 +1,7 @@
 
 import trueskill, math, ray, random, time
 from collections import defaultdict
+from typing import List
 
 # local imports
 from unstable.core import Opponent
@@ -19,6 +20,7 @@ class ModelPool:
 
         # for tracking
         self._match_counts = defaultdict(int) # (uid_a, uid_b) -> games played
+        self._unique_actions_seqs = {}
         self._step_counter = 0 # learner step snapshot id
         self._tracker = tracker
 
@@ -131,10 +133,7 @@ class ModelPool:
     def _sample_exploration_opponent(self, uid_me: str):
         raise NotImplementedError
 
-
-    def update_ratings(self, uid_me, uid_opp, final_reward):
-        if uid_me not in self._models or uid_opp not in self._models: return  # skip if either side is unknown
-
+    def _update_ratings(self, uid_me: str, uid_opp: str, final_reward: float):
         a = self._models[uid_me].rating
         b = self._models[uid_opp].rating
 
@@ -142,14 +141,35 @@ class ModelPool:
         elif final_reward == -1: new_b, new_a = self.TS.rate_1vs1(b, a) # uid_opp wins → order is (b, a)
         elif final_reward == 0: new_a, new_b = self.TS.rate_1vs1(a, b, drawn=True) # draw
         else: return # unexpected reward value
-            
 
         self._models[uid_me].rating = new_a
         self._models[uid_opp].rating = new_b
-        print(f"\nUPDATED TRUESKILL:\n\t{uid_me} -> {self._models[uid_me].rating}\n\t{uid_opp} -> {self._models[uid_opp].rating}")
 
-        # register the game for tracking
-        self._register_game(uid_me=uid_me, uid_opp=uid_opp)
+    def _register_game(self, uid_me, uid_opp):
+        if uid_opp is None: uid_opp = uid_me # self-play
+        pair = tuple(sorted((uid_me, uid_opp)))
+        self._match_counts[tuple(sorted((uid_me, uid_opp)))] += 1
+
+    def _track_exploration(self, uid_me: str, uid_opp: str, game_action_seq: List[str]):
+        key = tuple(sorted((uid_me, uid_opp)))
+        if key not in self._unique_actions_seqs:
+            self._unique_actions_seqs[key] = {
+                "unigrams": set(), "bigrams": set(), "trigrams": set(), "4-grams": set(), "5-grams": set(),
+                "total_counts": {"unigrams": 0, "bigrams": 0, "trigrams": 0, "4-grams": 0, "5-grams": 0,
+            }}
+
+        for n, name in [(1,"unigrams"), (2, "bigrams"), (3, "trigrams"), (4, "4-grams"), (5, "5-grams")]:
+            for i in range(len(game_action_seq) - n + 1):
+                self._unique_actions_seqs[key][name].add(tuple(game_action_seq[i:i+n]))
+                self._unique_actions_seqs[key]["total_counts"][name] += 1
+
+
+    def push_game_outcome(self, uid_me: str, uid_opp: str, final_reward: float, game_action_seq: List[str]):
+        if uid_me not in self._models or uid_opp not in self._models: return  # skip if either side is unknown
+        self._update_ratings(uid_me=uid_me, uid_opp=uid_opp, final_reward=final_reward) # update ts
+        self._register_game(uid_me=uid_me, uid_opp=uid_opp) # register the game for tracking
+        self._track_exploration(uid_me=uid_me, uid_opp=uid_opp, game_action_seq=game_action_seq) # tracke unique action seqs
+
 
     def _exp_win(self, A, B): return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
     def _activate(self, uid): self._models[uid].active = True
@@ -200,17 +220,26 @@ class ModelPool:
             if opp.kind != "checkpoint": continue
             opp.active = (uid in keep)
 
-    def _register_game(self, uid_me, uid_opp):
-        if uid_opp is None: # self-play
-            uid_opp = uid_me
-        pair = tuple(sorted((uid_me, uid_opp)))
-        self._match_counts[pair] += 1
+    
+    def _get_exploration_ratios(self):
+        stats = {}
+        for key, data in self._unique_actions_seqs.items():
+            ratios = {}
+            for ngram_type in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]:
+                total = data["total_counts"].get(ngram_type, 0)
+                unique = len(data.get(ngram_type, set()))
+                ratio = unique / total if total > 0 else 0.0
+                ratios[ngram_type] = ratio
+            stats[key] = ratios
+        return stats
+
 
     def snapshot(self, iteration: int):
         self._step_counter = iteration
-        self._tracker.log_model_pool(
+        self._tracker.log_model_pool.remote(
             iteration=iteration, match_counts=dict(self._match_counts),
             ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
+            exploration_ratios=self._get_exploration_ratios()
         )
 
 
