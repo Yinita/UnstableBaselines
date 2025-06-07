@@ -5,7 +5,6 @@ from typing import List, Dict, Optional, Tuple, Callable
 # local imports
 from unstable.core import Trajectory, Step, BaseTracker
 from unstable.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
-# from unstable.tracker import WandBTracker
 
 # TODO doc-string
 

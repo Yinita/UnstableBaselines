@@ -6,8 +6,6 @@ import unstable.algorithms
 
 from unstable.core import BaseTracker
 from unstable.trackers import Tracker
-# import unstable.trackers
-# from unstable.trackers.factory import make_tracker
 
 
 __all__ = ["Collector", "StepBuffer", "ModelPool", "Learner", "Tracker"]

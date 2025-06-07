@@ -19,7 +19,6 @@ class ModelPool:
 
         # for tracking
         self._match_counts = defaultdict(int) # (uid_a, uid_b) -> games played
-        self._rating_log = [] # [(time, uid, μ, σ), …]
         self._step_counter = 0 # learner step snapshot id
         self._tracker = tracker
 
@@ -209,10 +208,9 @@ class ModelPool:
 
     def snapshot(self, iteration: int):
         self._step_counter = iteration
-        for uid, opp in self._models.items():
-            self._rating_log.append((time.time(), uid, opp.rating.mu, opp.rating.sigma))
-        #     if self._tracker: 
-        #         self._tracker.log_trueskill.remote(step=iteration, uid=uid, mu=opp.rating.mu, sigma=opp.rating.sigma)
-        # if self._tracker: self._tracker.log_matchup_counts.remote(step=iteration, counts=dict(self._match_counts))
+        self._tracker.log_model_pool(
+            iteration=iteration, match_counts=dict(self._match_counts),
+            ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
+        )
 
 

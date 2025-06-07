@@ -76,8 +76,8 @@ class Tracker(BaseTracker):
 
 
 
-    # def log_model_pool(self, iteration: int, uid: str, mu: float, sigma: float, counts: Dict):
-
+    def log_model_pool(self, iteration: int, match_counts, ts_dict: Dict[str, Dict[str, float]]): #, uid: str, mu: float, sigma: float, counts: Dict):
+        pass
 
 
 
