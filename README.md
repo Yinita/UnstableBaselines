@@ -16,12 +16,10 @@
 ---
 
 ## Key Features
-
 * **Asynchronous collection & learning** – actors generate data while learners train.
 * **Multi‑agent, multi‑turn** focus with self‑play or fixed opponents.
 * **LoRA‑first** fine‑tuning workflow for fast, lightweight updates.
 * **Composable reward transforms** at step, final, and sampling stages.
-* **One‑command launch** (`bash run.sh`) with built‑in evaluation and W\&B logging.
 
 ## Collaboration
 
@@ -48,37 +46,5 @@ cd ..
 ## Quick Start
 
 ```bash
-# fine‑tune Qwen3 on SimpleTak with 7 actors and 1 learner
-bash run.sh
+python3 example.py
 ```
-
-Adjust `--num_actors`, `--num_learners`, and the environment lists inside `run.sh` to match your GPU setup.
-
-## Project Layout
-
-```text
-unstable-baselines/
-|-- algorithms/
-|   |-- reinforce.py
-|   |-- reinforce_kl.py
-|   |-- ppo.py
-|   `-- ...
-|-- actors/
-|   `-- vllm_actor.py
-|-- learners/
-|   |-- single_node_distributed.py
-|   `-- lora_utils.py
-|-- reward_transformations/
-|-- utils/
-|-- trajectory_buffer.py
-|-- unstable.py   # main entrypoint
-`-- run.sh        # example launch script
-```
-
-## Roadmap
-
-* [ ] PPO with GAE
-* [ ] GRPO (branching and efficient)
-* [ ] Multi‑Node training
-* [ ] Single‑GPU training
-* [ ] Rich dashboards
