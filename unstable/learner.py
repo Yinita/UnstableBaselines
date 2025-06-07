@@ -8,7 +8,9 @@ from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
 from safetensors.torch import load_file as safe_load
 
 # local imports
-from unstable.algorithms import BaseAlgo
+from unstable.buffer import StepBuffer
+from unstable.core import BaseAlgo
+from unstable.model_pool import ModelPool
 
 
 def load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
@@ -55,9 +57,9 @@ class Learner:
     def __init__(
         self,
         model_name: str,
-        step_buffer,  # StepBuffer handle (Ray actor)
-        model_pool,
-        algorithm,
+        step_buffer: StepBuffer,
+        model_pool: ModelPool,
+        algorithm: BaseAlgo,
         batch_size: int = 384,
         gradient_accum_steps: int = 32,
         learning_rate: float = 5e-6,
@@ -131,12 +133,12 @@ class Learner:
 
             # Logging
             if self.tracker is not None:
-                log = {f"learner/{k}": v / self.grad_accum for k, v in metrics_acc.items()}
+                log = {f"{k}": v / self.grad_accum for k, v in metrics_acc.items()}
                 log.update({
-                    "learner/step": self._step, 
-                    "learner/samples_seen": self._samples_seen, 
-                    "learner/lr": self.optimizer.param_groups[0]["lr"], 
-                    "learner/grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5
+                    "step": self._step, 
+                    "samples_seen": self._samples_seen, 
+                    "lr": self.optimizer.param_groups[0]["lr"], 
+                    "grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5
                 })
                 self.tracker.log_learner.remote(log)
             else:

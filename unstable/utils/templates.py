@@ -2,7 +2,6 @@ import re
 from typing import Tuple, Dict
 
 
-
 def apply_default_template(observation: str) -> str:
     return (
         "You are playing a two-player zero-sum game. Make valid moves to win. "

@@ -1,3 +1,18 @@
+# 
+
+
+relevant functions for tracking:
+
+
+1) the tracker should store all output dirs [get_checkpoint_dir, get_train_dir]
+2) log_learner (accept dict log all values in dict)
+3) add_trajectory
+4) add_eval_episode
+5) write the train and eval data to file 
+6) maybe add buffer size etc. etc.
+
+
+
 # unstable-baselines (WIP)
 (it's calles `unstable-baselines` becuase the maintained OpenAI baselines package is called `stable-baselines`)
 
@@ -83,3 +98,21 @@ change run name to model + envs (no player count) + opponent type + time
 - TODO optimize by grouping same lora paths to same gpus
 - TODO add better reward stats (optimally somehow log the transformed rewards to wandb as well)
 - TODO seperate the logs for everything (and actually log to files) for easier debuggin
+
+
+
+
+
+
+# # TODO split up the rewards when saving the training data 
+# # TODO buffer needs to build the output dir and communicate it to everybody else
+# # TODO buffer needs to hold the logging object (such that both the collector and learner can log stuff via it)
+
+# # TODO log trueskills
+# # TODO log opponent frequency 
+# # TODO add grad_norm back into tracking
+
+# # TODO (long-term) keep pool of learning lora weights for stability
+
+
+# # TODO Rich overview. Top right, elo table with sampling frequency. Bottom right, utilization metrics, Top left maybe buffer size, total games played etc; bottom left ?

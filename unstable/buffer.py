@@ -3,9 +3,9 @@ import os, ray, random, csv
 from typing import List, Dict, Optional, Tuple, Callable
 
 # local imports
-from unstable.core import Trajectory, Step
+from unstable.core import Trajectory, Step, BaseTracker
 from unstable.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
-from unstable.tracker import WandBTracker
+# from unstable.tracker import WandBTracker
 
 # TODO doc-string
 
@@ -18,9 +18,9 @@ def write_eval_data_to_file(episode_info, filename):
 def write_training_data_to_file(batch, filename: str):
     with open(filename, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['pid', 'obs', 'act', 'reward', "env_id", "raw_reward", "transformed_end_of_game_reward", "step_reward"])  # header
+        writer.writerow(['pid', 'obs', 'act', 'reward', "env_id", "step_info"])  # header
         for step in batch:
-            writer.writerow([step.pid, step.obs, step.act, step.reward, step.env_id, step.raw_reward, step.transformed_end_of_game_reward, step.step_reward])
+            writer.writerow([step.pid, step.obs, step.act, step.reward, step.env_id, step.step_info])
 
 
 @ray.remote
@@ -32,7 +32,7 @@ class StepBuffer:
         step_reward_transformation: Optional[ComposeStepRewardTransforms], 
         sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms], 
         buffer_strategy: str = "random", # what happens when the buffer size exceeds 'max_buffer_size' many samples. Options are 'random' and 'sequential'
-        tracker: Optional[WandBTracker] = None,
+        tracker: Optional[BaseTracker] = None,
     ):
         self.max_buffer_size = max_buffer_size
         self.buffer_strategy = buffer_strategy 
@@ -52,14 +52,8 @@ class StepBuffer:
             reward = transformed_rewards[trajectory.pid[i]]
             step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) if self.step_reward_transformation is not None else reward
             self.steps.append(Step(
-                pid=trajectory.pid[i], 
-                obs=trajectory.obs[i], 
-                act=trajectory.actions[i], 
-                reward=step_reward, 
-                env_id=env_id,
-                raw_reward=trajectory.final_rewards[trajectory.pid[i]],
-                transformed_end_of_game_reward=transformed_rewards[trajectory.pid[i]],
-                step_reward=step_reward
+                pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward, env_id=env_id,
+                step_info={"raw_reward": trajectory.final_rewards[trajectory.pid[i]], "transformed_end_of_game_reward": transformed_rewards[trajectory.pid[i]], "step_reward": step_reward}
             ))
         print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 
