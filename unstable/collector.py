@@ -241,26 +241,21 @@ class Collector:
             if idx is not None:
                 fut, opp_uid, mdl_uid = train_flight.pop(idx)
                 traj, pid, env_id, end_by_opponent_invalid, game_action_seq = ray.get(fut)
-                if self.filter_opponent_invalid and  end_by_opponent_invalid:
+                if self.filter_opponent_invalid and end_by_opponent_invalid:
                     continue
+
                 self.buffer.add_trajectory.remote(traj, pid, env_id)
+                if self.tracker: self.tracker.add_trajectory.remote(traj, pid, env_id)
                 if opp_uid is not None:
-                    self.model_pool.push_game_outcome.remote(
-                        uid_me=mdl_uid, uid_opp=opp_uid, final_reward=traj.final_rewards[pid], game_action_seq=game_action_seq
-                    )
-                    # self.model_pool.update_ratings.remote(
-                    #     uid_me=mdl_uid, uid_opp=opp_uid,
-                    #     final_reward=traj.final_rewards[pid]
-                    # )
-                if self.tracker:
-                    self.tracker.add_trajectory.remote(traj, pid, env_id)
+                    self.model_pool.push_game_outcome.remote(uid_me=mdl_uid, uid_opp=opp_uid, final_reward=traj.final_rewards[pid], game_action_seq=game_action_seq)
+
                 continue  # back to top of loop
 
             idx = next(i for i, (f, *_) in enumerate(self._eval_flight) if f == finished)
             fut, env_id, pid, ckpt_uid, seed = self._eval_flight.pop(idx)
             ep_info, _, _, final_r = ray.get(fut)
             if self.tracker:
-                self.tracker.add_eval_episode.remote(episode_info=ep_info, final_reward=final_r, current_ckpt_pid=pid, env_id=env_id, ckpt_iteration=ckpt_uid)
+                self.tracker.add_eval_episode.remote(episode_info=ep_info, final_rewards=final_r, player_id=pid, env_id=env_id, iteration=ckpt_uid)
             print(f"[EVAL] ckpt={ckpt_uid} env={env_id} seed={seed} done")
 
 

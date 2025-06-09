@@ -44,8 +44,8 @@ class Tracker(BaseTracker):
             model_reward = trajectory.final_rewards[player_id]
             opponent_reward = trajectory.final_rewards[1-player_id]
             self._update_metric(name="Win Rate", value=int(model_reward > opponent_reward), prefix=prefix, env_id=env_id)
-            self._update_metric(name="Draw Rate", value=int(model_reward < opponent_reward), prefix=prefix, env_id=env_id)
-            self._update_metric(name="Loss Rate", value=int(model_reward == opponent_reward), prefix=prefix, env_id=env_id)
+            self._update_metric(name="Loss Rate", value=int(model_reward < opponent_reward), prefix=prefix, env_id=env_id)
+            self._update_metric(name="Draw Rate", value=int(model_reward == opponent_reward), prefix=prefix, env_id=env_id)
             self._update_metric(name="Reward", value=model_reward, prefix=prefix, env_id=env_id) # log all rewards
             self._update_metric(name=f"Reward (pid={player_id})", value=model_reward, prefix=prefix, env_id=env_id) # log rewards by pid
 
@@ -61,21 +61,35 @@ class Tracker(BaseTracker):
                 self._update_metric(name="Response Length (avg. char)", value=len(trajectory.actions[i]), prefix=prefix, env_id=env_id)
                 self._update_metric(name="Observation Length (avg. char)", value=len(trajectory.obs[i]), prefix=prefix, env_id=env_id)
 
-        
-
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str, prefix: str="collection"):
         self._add_trajectory_to_metrics(trajectory=trajectory, player_id=player_id, env_id=env_id, prefix=prefix)
         self._log_metrics(prefix=prefix)
 
-
     def log_learner(self, info_dict: Dict):
         self.metrics.update({f"learner/{name}": value for name, value in info_dict.items()})
         self.learner_metrics = info_dict
 
-    def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int, prefix: str="evaluation"):
-        raise NotImplementedError
+    def _add_eval_episode_to_metrics(self, episode_info: Dict, final_rewards: Dict, player_id: int, env_id: str, iteration: int, prefix: str="evaluation"):
+        self._update_metric(name="Game Length", value=len(episode_info), prefix=prefix, env_id=env_id) # log game length
+        self._update_metric(name="Reward", value=final_rewards[player_id], prefix=prefix, env_id=env_id)
 
+        if len(final_rewards) == 2: # two-player env
+            model_reward = final_rewards[player_id]
+            opponent_reward = final_rewards[1-player_id]
+            self._update_metric(name="Win Rate", value=int(model_reward > opponent_reward), prefix=prefix, env_id=env_id)
+            self._update_metric(name="Draw Rate", value=int(model_reward < opponent_reward), prefix=prefix, env_id=env_id)
+            self._update_metric(name="Loss Rate", value=int(model_reward == opponent_reward), prefix=prefix, env_id=env_id)
+
+            # save csv 
+            # TODO
+
+        else:
+            raise NotImplementedError("Tracker is not implemented for more than two player games")
+
+    def add_eval_episode(self, episode_info: Dict, final_rewards: Dict, player_id: int, env_id: str, iteration: int, prefix: str="evaluation"):
+        self._add_eval_episode_to_metrics(episode_info=episode_info, final_rewards=final_rewards, player_id=player_id, env_id=env_id, iteration=iteration, prefix=prefix)
+        self._log_metrics(prefix=prefix)
 
 
     def log_model_pool(self, iteration: int, match_counts, ts_dict: Dict[str, Dict[str, float]], exploration_ratios: Dict[str, float]): #, uid: str, mu: float, sigma: float, counts: Dict):

@@ -6,7 +6,7 @@ import unstable.reward_transformations as retra
 NUM_ACTORS = 2
 NUM_LEARNERS = 1
 COLLECTION_WORKERS = 512 
-EVALUTION_WORKERS = 0
+EVALUTION_WORKERS = 16
 ITERATIONS = 500
 
 MODEL_NAME = "Qwen/Qwen3-1.7B-base"
@@ -31,7 +31,7 @@ TRAINING_ENVS = [
 ]
 EVALUATION_ENVS = [
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    # ("SimpleTak-v0-train", 2, "qwen3-zs"), 
+    ("SimpleTak-v0-train", 2, "qwen3-zs"), 
     # ("Nim-v0-train", 2, "qwen3-zs"), 
     # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")

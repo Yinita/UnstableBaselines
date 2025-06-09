@@ -191,7 +191,6 @@ class ModelPool:
         if not cands: return # only the current ckpt exists
 
         cur_rating = self._models[current].rating
-        β = self.TS.beta
 
         # score candidates according to sampling mode
         scores = {}
@@ -230,19 +229,19 @@ class ModelPool:
     
     def _get_exploration_ratios(self):
         stats = {}
-        for key, data in self._unique_actions_seqs.items():
-            ratios = {}
-            for ngram_type in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]:
-                total = data["total_counts"].get(ngram_type, 0)
-                unique = len(data.get(ngram_type, set()))
-                ratio = unique / total if total > 0 else 0.0
-                ratios[ngram_type] = ratio
-            stats[key] = ratios
-
+        # for key, data in self._unique_actions_seqs.items():
+        #     ratios = {}
+        #     for ngram_type in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]:
+        #         total = data["total_counts"].get(ngram_type, 0)
+        #         unique = len(data.get(ngram_type, set()))
+        #         ratio = unique / total if total > 0 else 0.0
+        #         ratios[ngram_type] = ratio
+        #     stats[key] = ratios
         
-        for key, values in self._full_unique_actions_seqs():
-            total = values["total_counts"].get(key, 0)
-            stats[f"unqiue-counts-{key}"] = len(values.get(key, set()))
+        for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]:
+            stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
+
+        print(self._full_unique_actions_seqs)
             
         return stats
 
