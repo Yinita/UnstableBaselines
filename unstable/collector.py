@@ -4,7 +4,6 @@ from typing import List, Dict, Tuple, Optional, Any, Callable
 
 # local imports
 from unstable.core import Trajectory, BaseTracker
-# from unstable.tracker import WandBTracker
 from unstable.actor import VLLMActor
 from unstable.utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
 
@@ -64,7 +63,7 @@ class Collector:
         training_envs: List[Tuple[str, int, Optional[str]]],
         evaluation_envs: List[Tuple[str, int, Optional[str]]],
         evaluation_opponent: str = "google/gemini-2.0-flash-lite-001",
-        num_eval_games_per_env: int = 32,
+        max_eval_games_per_ckpt: int = 32,
         eval_every_n_steps: int = 5,
         tracker: Optional[BaseTracker] = None,
         filter_opponent_invalid: bool = False
@@ -80,7 +79,7 @@ class Collector:
             training_envs (List[Tuple[str, int, Optional[str]]]): List of training environments.
             evaluation_envs (List[Tuple[str, int, Optional[str]]]): List of evaluation environments.
             evaluation_opponent (str): Opponent for evaluation.
-            num_eval_games_per_env (int): Number of evaluation games per environment.
+            max_eval_games_per_ckpt (int): Max number of eval games per checkpoint.
             eval_every_n_steps (int): Frequency of evaluations.
             tracker (Optional[WandBTracker]): Tracker for logging metrics.
             filter_opponent_invalid (bool): whether to remove games ending with the opponent making an invalid move
@@ -92,21 +91,16 @@ class Collector:
         self.training_envs = training_envs
         self.evaluation_envs = evaluation_envs
         self.evaluation_opponent = evaluation_opponent
-        self.num_eval_games_per_env = num_eval_games_per_env
+        self.max_eval_games_per_ckpt = max_eval_games_per_ckpt
         self.eval_every_n_steps = eval_every_n_steps
-        self._last_eval_ckpt = None
-        self._eval_flight = []
-        self._pending_eval_tasks = []
         self.filter_opponent_invalid = filter_opponent_invalid
-
-        self._eval_seed_table = {env_id: list(range(num_eval_games_per_env)) for env_id, *_ in evaluation_envs}
 
         actors = [VLLMActor.options(num_gpus=1).remote(vllm_config=vllm_config) for _ in range(num_actors)]
         self.actor_iter = itertools.cycle(actors)
 
-    def _sample_env(self, seed: int = 489) -> Tuple[str, int, int, Optional[str]]:
+    def _sample_env(self, seed: int = 489, _type: str = "train") -> Tuple[str, int, int, Optional[str]]:
         """Samples a random environment from the training set."""
-        env_id, num_players, prompt_template = random.Random(seed).choice(self.training_envs)
+        env_id, num_players, prompt_template = random.Random(seed).choice(self.training_envs if _type=="train" else self.evaluation_envs)
         player_id = random.Random(seed + 1).randrange(num_players)
         return env_id, num_players, player_id, prompt_template
 
@@ -123,18 +117,13 @@ class Collector:
             prompt_template=prompt_template, seed=seed
         )
 
-    def _spawn_eval_sweep(self, ckpt_uid: str):
-        """Schedules evaluation tasks without launching them immediately."""
+    def _build_eval_args(self, env_id, num_players, player_id, prompt_template, ckpt_uid, seed):
         lora_path = ray.get(self.model_pool.ckpt_path.remote(ckpt_uid))
-        for env_id, num_players, prompt_template in self.evaluation_envs:
-            for seed in self._eval_seed_table[env_id]:
-                actor = next(self.actor_iter)
-                eval_args = dict(
-                    env_id=env_id, num_players=num_players, player_id=random.Random(seed).randrange(num_players),
-                    actor=actor, lora_path=lora_path, opponent_name=self.evaluation_opponent,
-                    prompt_template=prompt_template, seed=seed,
-                )
-                self._pending_eval_tasks.append((eval_args, env_id, eval_args['player_id'], ckpt_uid, seed))
+        actor = next(self.actor_iter)
+        return dict(
+            env_id=env_id, num_players=num_players, player_id=player_id, actor=actor, lora_path=lora_path,
+            opponent_name=self.evaluation_opponent, prompt_template=prompt_template, seed=seed
+        )
 
     def collect(self, num_workers: int, num_eval_workers: int):
         """ Main loop for collecting trajectories and evaluations concurrently """
@@ -192,10 +181,8 @@ class Collector:
             episode_info, turn = [], 0
             while True:
                 pid, obs = env.get_observation()
-                if pid == player_id:
-                    full, act, fb, prompt = model.get_full_response(obs); name = "current_ckpt"
-                else:
-                    full = act = opponent(obs); name = opponent_name
+                if pid == player_id:    full, act, fb, prompt = model.get_full_response(obs); name = "current_ckpt"
+                else:                   full = act = opponent(obs); name = opponent_name
 
                 done, info = env.step(act)
                 turn += 1
@@ -205,8 +192,11 @@ class Collector:
 
             return episode_info, player_id, env_id, env.close()
 
-        train_flight: list[tuple] = []
+        train_flight: List[Tuple] = []
+        eval_flight: List[Tuple] = []
+        ckpt_eval_game_count: Dict[str, int] = {}
         iter_seed = 0
+        eval_iter_seed = 0
 
         while self.alive:
             while len(train_flight) < num_workers:
@@ -217,23 +207,16 @@ class Collector:
                 iter_seed += 1
 
             latest_ckpt = ray.get(self.model_pool.latest_ckpt.remote())
-            if (not self._pending_eval_tasks and not self._eval_flight):
-                if self._last_eval_ckpt is None:
-                    self._spawn_eval_sweep(latest_ckpt)
-                    self._last_eval_ckpt = latest_ckpt
-                elif (_iter_from_uid(latest_ckpt) - _iter_from_uid(self._last_eval_ckpt)) >= self.eval_every_n_steps:
-                    self._spawn_eval_sweep(latest_ckpt)
-                    self._last_eval_ckpt = latest_ckpt
+            while (len(eval_flight) < num_eval_workers) and (ckpt_eval_game_count.get(latest_ckpt, 0) < self.max_eval_games_per_ckpt*len(self.evaluation_envs)):
+                env_id, n, pid, tmpl = self._sample_env(seed=eval_iter_seed, _type="eval")
+                args = self._build_eval_args(env_id, n, pid, tmpl, latest_ckpt, eval_iter_seed)
+                fut = run_eval_game.remote(**args)
+                eval_flight.append((fut, env_id, pid, latest_ckpt, eval_iter_seed))
+                eval_iter_seed += 1
+                ckpt_eval_game_count[latest_ckpt] = ckpt_eval_game_count.get(latest_ckpt, 0) + 1 
 
-            while (len(self._eval_flight) < num_eval_workers
-                   and self._pending_eval_tasks):
-                eval_args, env_id, pid, ckpt_uid, seed = self._pending_eval_tasks.pop(0)
-                fut = run_eval_game.remote(**eval_args)
-                self._eval_flight.append((fut, env_id, pid, ckpt_uid, seed))
-
-            wait_pool = ([f for f, *_ in train_flight] + [f for f, *_ in self._eval_flight])
-            if not wait_pool:
-                continue  # nothing running (should not happen)
+            wait_pool = ([f for f, *_ in train_flight] + [f for f, *_ in eval_flight])
+            if not wait_pool: continue  # nothing running (should not happen)
             done_ref, _ = ray.wait(wait_pool, num_returns=1)
             finished = done_ref[0]
 
@@ -248,14 +231,12 @@ class Collector:
                 if self.tracker: self.tracker.add_trajectory.remote(traj, pid, env_id)
                 if opp_uid is not None:
                     self.model_pool.push_game_outcome.remote(uid_me=mdl_uid, uid_opp=opp_uid, final_reward=traj.final_rewards[pid], game_action_seq=game_action_seq)
-
                 continue  # back to top of loop
 
-            idx = next(i for i, (f, *_) in enumerate(self._eval_flight) if f == finished)
-            fut, env_id, pid, ckpt_uid, seed = self._eval_flight.pop(idx)
+            idx = next(i for i, (f, *_) in enumerate(eval_flight) if f == finished)
+            fut, env_id, pid, ckpt_uid, seed = eval_flight.pop(idx)
             ep_info, _, _, final_r = ray.get(fut)
-            if self.tracker:
-                self.tracker.add_eval_episode.remote(episode_info=ep_info, final_rewards=final_r, player_id=pid, env_id=env_id, iteration=ckpt_uid)
+            if self.tracker: self.tracker.add_eval_episode.remote(episode_info=ep_info, final_rewards=final_r, player_id=pid, env_id=env_id, iteration=ckpt_uid)
             print(f"[EVAL] ckpt={ckpt_uid} env={env_id} seed={seed} done")
 
 
