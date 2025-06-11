@@ -122,6 +122,7 @@ class Learner:
         world = dist.get_world_size()
         rank  = dist.get_rank()
         mini = self.batch_size // self.grad_accum #// 2
+        self.optimizer.zero_grad(set_to_none=True)
 
         while self._step < iterations:
             # wait until buffer has enough samples
@@ -136,7 +137,6 @@ class Learner:
 
             # batch = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
             self._samples += len(batch)
-            self.optimizer.zero_grad(set_to_none=True)
 
             for i in range(self.grad_accum//2):
                 sub = batch[i*mini : (i+1)*mini]
@@ -145,6 +145,7 @@ class Learner:
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.optimizer.step()
+            self.optimizer.zero_grad(set_to_none=True)
             self._step += 1
 
             if self._step % 5 == 0 and dist.get_rank() == 0:
@@ -153,33 +154,56 @@ class Learner:
             if self._step % self.save_every == 0:
                 self._save_checkpoint()
 
-
             dist.barrier()
 
         dist.destroy_process_group()
         return f"rank {dist.get_rank()} done"
 
-
-
     def _save_checkpoint(self):
         d = self.ckpt_root / f"iter-{self._step}"
-        os.makedirs(d, exist_ok=True) if dist.get_rank() == 0 else None
-
-        # everybody enters the FULL_STATE_DICT context
-        full_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-        with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT, full_cfg):
-            full_sd = self.model.state_dict() # ← collective; all ranks must call
-
         if dist.get_rank() == 0:
-            base = AutoModelForCausalLM.from_pretrained(
-                self.tokenizer.name_or_path, torch_dtype=torch.bfloat16)
-            cfg  = self.model.peft_config["default"]
-            peft_model = get_peft_model(base, cfg)
+            os.makedirs(d, exist_ok=True)
 
-            set_peft_model_state_dict(peft_model, full_sd, adapter_name="default")
-            peft_model.save_pretrained(d, save_adapter=True)
+        # --- everyone reaches the barrier synchronously ----
+        dist.barrier(device_ids=[torch.cuda.current_device()])
+
+        if dist.get_rank() == 0: # only rank-0 writes
+            # collect only parameters that require_grad ⇒ LoRA weights
+            lora_sd = {k: p.detach().cpu() for k, p in (self.model.module if hasattr(self.model, "module") else self.model).named_parameters() if p.requires_grad}
+            safetensors.torch.save_file(lora_sd, d / "adapter_model.safetensors")
+
+            # write config
+            import json, pathlib
+            cfg = next(iter(self.model.peft_config.values()))
+            json.dump(cfg.to_dict(), open(d / "adapter_config.json", "w"))
 
             if self.model_pool:
                 self.model_pool.add_checkpoint.remote(str(d), self._step)
-        dist.barrier(device_ids=[torch.cuda.current_device()])  # everyone syncs out
+
+        # allow rank-1 to continue once the file is on disk
+        dist.barrier(device_ids=[torch.cuda.current_device()])
+        print(f"[Learner-0] ckpt → {d}", flush=True)
+        torch.cuda.empty_cache()
+
+    # def _save_checkpoint(self):
+    #     d = self.ckpt_root / f"iter-{self._step}"
+    #     os.makedirs(d, exist_ok=True) if dist.get_rank() == 0 else None
+
+    #     # everybody enters the FULL_STATE_DICT context
+    #     full_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
+    #     with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT, full_cfg):
+    #         full_sd = self.model.state_dict() # ← collective; all ranks must call
+
+    #     if dist.get_rank() == 0:
+    #         base = AutoModelForCausalLM.from_pretrained(
+    #             self.tokenizer.name_or_path, torch_dtype=torch.bfloat16)
+    #         cfg  = self.model.peft_config["default"]
+    #         peft_model = get_peft_model(base, cfg)
+
+    #         set_peft_model_state_dict(peft_model, full_sd, adapter_name="default")
+    #         peft_model.save_pretrained(d, save_adapter=True)
+
+    #         if self.model_pool:
+    #             self.model_pool.add_checkpoint.remote(str(d), self._step)
+    #     dist.barrier(device_ids=[torch.cuda.current_device()])  # everyone syncs out
 

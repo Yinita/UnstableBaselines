@@ -2,7 +2,7 @@ import re, ray, random, itertools
 from typing import List, Dict, Tuple, Optional, Any, Callable
 
 import textarena as ta 
-assert textarena.__version__ == "0.6.9", f"You need to use TextArena version 0.6.9 (build from source). You are using: {textarena.__version__}"
+assert ta.__version__ == "0.6.9", f"You need to use TextArena version 0.6.9 (build from source). You are using: {textarena.__version__}"
 
 # local imports
 from unstable.core import Trajectory, BaseTracker
