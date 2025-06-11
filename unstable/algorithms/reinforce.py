@@ -24,4 +24,3 @@ class Reinforce(BaseAlgo):
         loss = -(advs * seq_logp).mean() / scaling
         loss.backward()
         return {"loss": loss.item(), "logp_mean": seq_logp.mean().item(), "logp_std": seq_logp.std().item(), "num_steps": len(steps)}
-

@@ -11,13 +11,16 @@ class Tracker(BaseTracker):
         super().__init__(run_name=run_name, output_dir=output_dir)
         self.accum_strategy = accum_strategy
         self.wandb_project = wandb_project
-        self.metrics = {}
+        self._ma_range = 512; 
+        self._tau = 0.001
 
+        self.metrics = {}
         if self.wandb_project is not None: # use wandb
             wandb.init(project=self.wandb_project, name=self.run_name)
 
-        self._ma_range = 512; 
-        self._tau = 0.001
+
+    def get_wandb_project(self):    return self.wandb_project
+    def get_run_name(self):         return self.run_name
 
     def _log_metrics(self, prefix: str):
         if self.wandb_project: wandb.log({name: np.mean(value) if isinstance(value, collections.deque) else value for name, value in self.metrics.items() if prefix in name})

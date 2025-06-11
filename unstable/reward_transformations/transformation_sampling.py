@@ -10,15 +10,9 @@ class SamplingRewardTransform:
         raise NotImplementedError
 
 class ComposeSamplingRewardTransforms:
-    def __init__(self, transforms: List[SamplingRewardTransform]):
-        self.transforms = transforms
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.transforms})"
-
-    def register(self, transform: SamplingRewardTransform):
-        self.transforms.append(transform)
-
+    def __init__(self, transforms: List[SamplingRewardTransform]):  self.transforms = transforms
+    def __repr__(self):                                             return f"{self.__class__.__name__}({self.transforms})"
+    def register(self, transform: SamplingRewardTransform):         self.transforms.append(transform)
     def __call__(self, x: List[Step]) -> List[Step]:
         for t in self.transforms:
             x = t(x)
@@ -35,44 +29,18 @@ class NormalizeRewards(SamplingRewardTransform):
         return steps
 
 class NormalizeRewardsByEnv(SamplingRewardTransform):
-    def __init__(self, z_score: bool = False):
-        self.z_score = z_score  # divide by std if True
-
+    def __init__(self, z_score: bool = False): self.z_score = z_score  # divide by std if True
     def __call__(self, steps: List[Step], env_id: Optional[str] = None) -> List[Step]:
         env_buckets = defaultdict(list)
-        for step in steps:                       # bucket by env
-            env_buckets[step.env_id].append(step)
-
+        for step in steps: 
+            env_buckets[step.env_id].append(step) # bucket by env
         for env_steps in env_buckets.values():
             r = np.asarray([s.reward for s in env_steps], dtype=np.float32)
             mean = r.mean()
-            if self.z_score:
-                std = r.std() + 1e-8
-                normed = (r - mean) / std
-            else:
-                normed = r - mean
-
-            # write back
-            for s, nr in zip(env_steps, normed):
+            if self.z_score:    normed = (r - mean) / (r.std() + 1e-8)
+            else:               normed = r - mean
+            for s, nr in zip(env_steps, normed): # write back
                 s.reward = float(nr)
 
         return steps
 
-
-# class NormalizeRewardsByEnv(SamplingRewardTransform):
-#     def __call__(self, steps: List[Step]) -> List[Step]:
-#         # Group rewards by env_id
-#         env_to_steps = defaultdict(list)
-#         for step in steps:
-#             env_to_steps[step.env_id].append(step)
-
-#         # Normalize rewards within each environment
-#         for env_id, env_steps in env_to_steps.items():
-#             rewards = [s.reward for s in env_steps]
-#             mean = np.mean(rewards)
-#             std = np.std(rewards) + 1e-8  # to avoid division by zero
-
-#             for s in env_steps:
-#                 s.reward = (s.reward - mean)  # optionally: / std # TODO ablate
-
-#         return steps

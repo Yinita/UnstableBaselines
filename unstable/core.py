@@ -35,10 +35,11 @@ class Opponent:
 
 
 class BaseAlgo:
-    def initialize(self, model, tokenizer, device):
+    def initialize(self, model, tokenizer, device, accelerator=None):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
+        self.accel = accelerator
 
     def prepare_batch(self, steps):
         """
@@ -54,8 +55,6 @@ class BaseAlgo:
         Return latest loss as float (for logging).
         """
         raise NotImplementedError
-
-
 
 class BaseTracker:
     def __init__(self, run_name: str, output_dir: Optional[str] = None):

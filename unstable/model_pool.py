@@ -68,7 +68,6 @@ class ModelPool:
         elif self.sample_mode == "exploration": return self._sample_exploration_opponent(uid_me=uid_me) # sample an opponent based on the expected number of unique board states when playing against that opponent
         else: raise ValueError(self.sample_mode)
 
-
     def _sample_fixed_opponent(self):
         fixed = [u for u,m in self._models.items() if m.kind=="fixed"]
         return random.choice(fixed)
@@ -93,11 +92,9 @@ class ModelPool:
             weights.append(q) # already scaled
 
         # softmax the weights
-        weights_sum = sum(weights)
         for i in range(len(weights)): 
-            weights[i] = weights[i] / weights_sum
-        # # fallback – nothing active except myself
-        if not cand:
+            weights[i] = weights[i] / sum(weights)
+        if not cand: 
             return None
         return random.choices(cand, weights=weights, k=1)[0]
 
@@ -111,9 +108,8 @@ class ModelPool:
             cand.append(uid)
             weights.append(d)
 
-        weights_sum = sum(weights)
         for i in range(len(weights)):
-            weights[i] = 1 - (weights[i] / weights_sum) # smaller dist greater match prob
+            weights[i] = 1 - (weights[i] / sum(weights)) # smaller dist greater match prob
         if not cand:
             return None
         return random.choices(cand, weights=weights, k=1)[0]
@@ -127,9 +123,8 @@ class ModelPool:
             cand.append(uid)
             weights.append(d)
 
-        weights_sum = sum(weights)
         for i in range(len(weights)):
-            weights[i] = weights[i]/weights_sum
+            weights[i] = weights[i]/sum(weights)
         if not cand:
             return None
         return random.choices(cand, weights=weights, k=1)[0]
@@ -166,7 +161,6 @@ class ModelPool:
             for i in range(len(game_action_seq) - n + 1):
                 self._unique_actions_seqs[key][name].add(tuple(game_action_seq[i:i+n]))
                 self._unique_actions_seqs[key]["total_counts"][name] += 1
-
                 self._full_unique_actions_seqs[name].add(tuple(game_action_seq[i:i+n]))
                 self._full_unique_actions_seqs["total_counts"][name] += 1
 
