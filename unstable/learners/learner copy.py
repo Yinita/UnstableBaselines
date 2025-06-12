@@ -14,83 +14,8 @@ import transformers
 from unstable.buffer import StepBuffer
 from unstable.core import BaseAlgo
 from unstable.model_pool import ModelPool
+from unstable.learners.utils import load_lora_state, build_peft_model, make_checkpointing_filter
 
-
-def load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
-    ckpt_dir = pathlib.Path(ckpt_dir)
-    candidates = [ckpt_dir / "adapter_model.safetensors", ckpt_dir / "adapter_model.bin", ckpt_dir / "pytorch_model.bin",]
-    for path in candidates:
-        if path.exists():
-            print(f"[loader] found LoRA adapter → {path.name}")
-            lora_sd = safe_load(str(path)) if path.suffix == ".safetensors" else torch.load(path, map_location="cpu")
-            set_peft_model_state_dict(peft_model, lora_sd, adapter_name="default")
-            return
-    raise FileNotFoundError(f"No adapter_model.* found in {ckpt_dir}")
-
-
-def _build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any] | None, initial_lora_path: Optional[str], freeze_base: bool = True):
-    """Load base model + wrap with LoRA.  Return (model, tokenizer)."""
-    print(f"[Learner] Loading base model: {base_name} …")
-    base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True)
-    if freeze_base:
-        for p in base.parameters(): p.requires_grad_(False)
-
-    lcfg = LoraConfig(
-        r=lora_cfg.get("lora_rank", 32),
-        lora_alpha=lora_cfg.get("lora_alpha", 32),
-        lora_dropout=lora_cfg.get("lora_dropout", 0.05),
-        bias="none",
-        task_type="CAUSAL_LM",
-        target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]),
-    )
-    model = get_peft_model(base, lcfg).to(device)
-
-    if initial_lora_path:
-        print(f"[Learner] Loading initial LoRA weights from {initial_lora_path}")
-        load_lora_state(model, initial_lora_path)
-
-    tok = AutoTokenizer.from_pretrained(base_name, trust_remote_code=True)
-    tok.pad_token = tok.eos_token  # safe default
-    return model, tok
-
-def skip_lora(mod):
-    # Don't checkpoint the module itself or any sub-module that IS or CONTAINS a LoRA layer
-    if isinstance(mod, LoraLayer):
-        return False
-    for name, child in mod.named_modules():
-        if isinstance(child, LoraLayer):
-            return False
-    return True
-
-def make_checkpoint_filter(percentage: float, block_class: type):
-    """
-    Returns a check_fn for use in apply_activation_checkpointing.
-
-    Args:
-        percentage: float between 0.0 and 1.0 — what percent of blocks to checkpoint.
-        block_class: class to match (e.g., `transformer.Block` or similar)
-
-    Returns:
-        check_fn to pass into `apply_activation_checkpointing`
-    """
-
-    def check_fn(module):
-        # Skip anything that is or contains a LoRA layer
-        if isinstance(module, LoraLayer):
-            return False
-        for _, child in module.named_modules():
-            if isinstance(child, LoraLayer):
-                return False
-
-        # Only consider top-level blocks
-        if isinstance(module, block_class):
-            # Hash module name or id to distribute evenly
-            module_id = id(module)
-            mod_fraction = (module_id % 1000) / 1000.0  # Uniform(0,1)
-            return mod_fraction < percentage
-
-        return False
-    return check_fn
 
 
 @ray.remote
@@ -111,7 +36,7 @@ class Learner:
         num_learners: int = 1,
         ckpt_root: str = "checkpoints",
         save_every: int = 1,
-        tracker=None,  # WandBTracker handle (optional)
+        tracker=None,
     ):
         """Async learner.
 
@@ -122,6 +47,9 @@ class Learner:
         batch_delay_buffer : how much larger the buffer has to be (× batch)
             before the first optimisation step – helps avoid early bias.
         """
+        self.activation_checkpointing = False # TODO add to init
+        self.gradient_checkpointing = True  # TODO add to init
+
         self.algorithm = algorithm
         self.batch_size = batch_size
         self.grad_accum = gradient_accum_steps
@@ -143,11 +71,13 @@ class Learner:
         # if num_learners > 1: self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[0], output_device=0, find_unused_parameters=False) # Wrap in DDP (assumes learners launched with 1 GPU each)
         
         self.model.config.use_cache = False
-        self.model.gradient_checkpointing_enable() # gradient checkpointing
-        # apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=skip_lora) # activation checkpointing
-        check_fn = make_checkpoint_filter(percentage=0.25, block_class=transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer)
-        apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
-
+        if self.gradient_checkpointing:
+            self.model.gradient_checkpointing_enable() # gradient checkpointing
+        
+        if self.activation_checkpointing: # TODO fix the qwen3 hardcoding part. Can prob get class from model 
+            check_fn = make_checkpointing_filter(percentage=0.25, block_class=transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer)
+            apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
+    
         # algorithm and optimizer
         self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=learning_rate)
         self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device)
@@ -184,15 +114,12 @@ class Learner:
             if self.tracker is not None:
                 log = {f"{k}": v / self.grad_accum for k, v in metrics_acc.items()}
                 log.update({
-                    "step": self._step, 
-                    "samples_seen": self._samples_seen, 
-                    "lr": self.optimizer.param_groups[0]["lr"], 
+                    "step": self._step,  "samples_seen": self._samples_seen,  "lr": self.optimizer.param_groups[0]["lr"], 
                     "grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5
                 })
                 self.tracker.log_learner.remote(log)
             else:
-                if self._step % 10 == 0:
-                    print(f"[Learner] step {self._step:>5} | loss={metrics_acc.get('loss', 0)/self.grad_accum:.4f}")
+                if self._step % 10 == 0: print(f"[Learner] step {self._step:>5} | loss={metrics_acc.get('loss', 0)/self.grad_accum:.4f}")
 
             # save & register checkpoint every step
             if self._step % self.save_every == 0:
@@ -205,31 +132,10 @@ class Learner:
         print("[Learner] training finished.")
         return {"final_step":self._step, "samples":self._samples}
 
-    # def _save_checkpoint(self):
-    #     ckpt_dir = self.ckpt_root / f"iteration-{self._step}"
-    #     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    #     model = self.model.module if hasattr(self.model,'module') else self.model
-    #     model.save_pretrained(ckpt_dir, save_adapter=True)
-    #     self._last_ckpt = ckpt_dir
-    #     print(f"[Learner] saved → {ckpt_dir}")
     def _save_checkpoint(self):
         ckpt_dir = self.ckpt_root / f"iteration-{self._step}"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
-        
-        model = self.model.module if hasattr(self.model, 'module') else self.model
+        model = self.model.module if hasattr(self.model,'module') else self.model
         model.save_pretrained(ckpt_dir, save_adapter=True)
-        
-        # Patch adapter_config.json to include "model_type": "qwen3"
-        adapter_config_path = ckpt_dir / "adapter_config.json"
-        if adapter_config_path.exists():
-            with open(adapter_config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            config["model_type"] = "qwen3"
-            with open(adapter_config_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=2)
-            print(f"[Learner] patched model_type in → {adapter_config_path}")
-        else:
-            print(f"[Learner] WARNING: adapter_config.json not found in {ckpt_dir}")
-
         self._last_ckpt = ckpt_dir
         print(f"[Learner] saved → {ckpt_dir}")

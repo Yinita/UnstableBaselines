@@ -3,6 +3,7 @@ from unstable.core import BaseAlgo
 
 class Reinforce_KL(BaseAlgo):
     def __init__(self, args, model, tokenizer, device):
+        raise NotImplementedError(f"Reinforce-KL has not been updated to the new code yet.")
         self.ref_model = copy.deepcopy(model)
         self.kl_coef = 0.2 
         self.ref_model.eval()
