@@ -1,14 +1,14 @@
-import os, time, ray, torch, torch.distributed as dist
-from datetime import datetime
+import time, pathlib, math, json
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
+import ray, torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft.tuners.lora import LoraLayer
 from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
 from safetensors.torch import load_file as safe_load
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import StateDictType, FullStateDictConfig
-
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
+import transformers
 
 # local imports
 from unstable.buffer import StepBuffer
@@ -16,194 +16,220 @@ from unstable.core import BaseAlgo
 from unstable.model_pool import ModelPool
 
 
-for k in ("NCCL_SOCKET_IFNAME", "NCCL_NET"):
-    os.environ.pop(k, None)
-os.environ.update(
-    NCCL_P2P_LEVEL="SYS", NCCL_SHM_DISABLE="0", NCCL_IB_DISABLE="1", NCCL_PLUGIN_DISABLE="1",
-    NCCL_DEBUG="INFO", TORCH_NCCL_BLOCKING_WAIT="1", TORCH_NCCL_ASYNC_ERROR_HANDLING="1",
-)
-
-
-def _load_lora_state(peft_model, ckpt_dir: str | Path):
-    ckpt_dir = Path(ckpt_dir)
-    for fn in ("adapter_model.safetensors", "adapter_model.bin", "pytorch_model.bin"):
-        p = ckpt_dir / fn
-        if p.exists():
-            sd = safe_load(str(p)) if p.suffix == ".safetensors" else torch.load(p, map_location="cpu")
-            set_peft_model_state_dict(peft_model, sd, adapter_name="default")
+def load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
+    ckpt_dir = pathlib.Path(ckpt_dir)
+    candidates = [ckpt_dir / "adapter_model.safetensors", ckpt_dir / "adapter_model.bin", ckpt_dir / "pytorch_model.bin",]
+    for path in candidates:
+        if path.exists():
+            print(f"[loader] found LoRA adapter → {path.name}")
+            lora_sd = safe_load(str(path)) if path.suffix == ".safetensors" else torch.load(path, map_location="cpu")
+            set_peft_model_state_dict(peft_model, lora_sd, adapter_name="default")
             return
-    raise FileNotFoundError(f"No adapter_model.* in {ckpt_dir}")
+    raise FileNotFoundError(f"No adapter_model.* found in {ckpt_dir}")
 
-def _build_peft_model(base_name: str, device: torch.device, lcfg: Dict[str,Any], init_path: Optional[str]):
+
+def _build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any] | None, initial_lora_path: Optional[str], freeze_base: bool = True):
+    """Load base model + wrap with LoRA.  Return (model, tokenizer)."""
+    print(f"[Learner] Loading base model: {base_name} …")
     base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True)
-    for p in base.parameters(): p.requires_grad_(False)
+    if freeze_base:
+        for p in base.parameters(): p.requires_grad_(False)
 
-    cfg = LoraConfig(
-        r=lcfg["lora_rank"], lora_alpha=lcfg["lora_alpha"], lora_dropout=lcfg["lora_dropout"],
-        bias="none", task_type="CAUSAL_LM", target_modules=lcfg["target_modules"],
+    lcfg = LoraConfig(
+        r=lora_cfg.get("lora_rank", 32),
+        lora_alpha=lora_cfg.get("lora_alpha", 32),
+        lora_dropout=lora_cfg.get("lora_dropout", 0.05),
+        bias="none",
+        task_type="CAUSAL_LM",
+        target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]),
     )
-    model = get_peft_model(base, cfg).to(device)
-    for n, p in model.named_parameters():
-        if p.requires_grad and p.dtype != torch.bfloat16:   # LoRA params
-            p.data = p.data.to(torch.bfloat16)
+    model = get_peft_model(base, lcfg).to(device)
 
-    if init_path:
-        _load_lora_state(model, init_path)
+    if initial_lora_path:
+        print(f"[Learner] Loading initial LoRA weights from {initial_lora_path}")
+        load_lora_state(model, initial_lora_path)
 
     tok = AutoTokenizer.from_pretrained(base_name, trust_remote_code=True)
-    tok.pad_token = tok.eos_token
+    tok.pad_token = tok.eos_token  # safe default
     return model, tok
+
+def skip_lora(mod):
+    # Don't checkpoint the module itself or any sub-module that IS or CONTAINS a LoRA layer
+    if isinstance(mod, LoraLayer):
+        return False
+    for name, child in mod.named_modules():
+        if isinstance(child, LoraLayer):
+            return False
+    return True
+
+def make_checkpoint_filter(percentage: float, block_class: type):
+    """
+    Returns a check_fn for use in apply_activation_checkpointing.
+
+    Args:
+        percentage: float between 0.0 and 1.0 — what percent of blocks to checkpoint.
+        block_class: class to match (e.g., `transformer.Block` or similar)
+
+    Returns:
+        check_fn to pass into `apply_activation_checkpointing`
+    """
+
+    def check_fn(module):
+        # Skip anything that is or contains a LoRA layer
+        if isinstance(module, LoraLayer):
+            return False
+        for _, child in module.named_modules():
+            if isinstance(child, LoraLayer):
+                return False
+
+        # Only consider top-level blocks
+        if isinstance(module, block_class):
+            # Hash module name or id to distribute evenly
+            module_id = id(module)
+            mod_fraction = (module_id % 1000) / 1000.0  # Uniform(0,1)
+            return mod_fraction < percentage
+
+        return False
+    return check_fn
 
 
 @ray.remote
 class Learner:
     def __init__(
         self,
-        rank: int,
-        world_size: int,
         model_name: str,
         step_buffer: StepBuffer,
         model_pool: ModelPool,
         algorithm: BaseAlgo,
-        batch_size: int  = 384,
-        gradient_accum: int  = 32,
-        lr: float= 5e-6,
-        grad_clip: float= 1.0,
-        delay_mult: float= 1.5,
-        lora_cfg: Dict[str,Any] | None = None,
-        initial_lora: Optional[str] = None,
-        ckpt_root: str  = "checkpoints",
-        save_every: int  = 1,
-        tracker=None,
+        batch_size: int = 384,
+        gradient_accum_steps: int = 32,
+        learning_rate: float = 5e-6,
+        grad_clip: float = 1.0,
+        batch_delay_buffer: float = 1.5,
+        lora_cfg: Dict[str, Any] = {},
+        initial_lora_path: Optional[str] = None,
+        num_learners: int = 1,
+        ckpt_root: str = "checkpoints",
+        save_every: int = 1,
+        tracker=None,  # WandBTracker handle (optional)
     ):
-        # −− device −−
-        torch.cuda.set_device(0)
-        self.device = torch.device("cuda")
+        """Async learner.
 
-        # −− create /tmp file for PG bootstrap −−
-        init_file = "/tmp/learner_pg_shared"
-        if rank == 0 and os.path.exists(init_file):
-            os.remove(init_file)
-
-        dist.init_process_group(backend="nccl", init_method=f"file://{init_file}", rank=rank, world_size=world_size)
-
-        # −− model ➜ FSDP −−
-        self.model, self.tokenizer = _build_peft_model(model_name, self.device, lora_cfg or {}, initial_lora)
-        self.model = FSDP(self.model, use_orig_params=True)
-
-        self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=lr)
+        Args
+        -----
+        batch_size : *total* batch size per optimisation step.
+        gradient_accum_steps : split batch into this many micro‑batches.
+        batch_delay_buffer : how much larger the buffer has to be (× batch)
+            before the first optimisation step – helps avoid early bias.
+        """
         self.algorithm = algorithm
-        self.algorithm.initialize(self.model, self.tokenizer, self.device)
-
-        # bookkeeping
+        self.batch_size = batch_size
+        self.grad_accum = gradient_accum_steps
+        self.grad_clip = grad_clip
+        self.batch_delay_buffer = batch_delay_buffer
         self.step_buffer = step_buffer
         self.model_pool = model_pool
-        self.batch_size = batch_size
-        self.grad_accum = gradient_accum
-        self.grad_clip = grad_clip
-        self.delay_mult = delay_mult
         self.tracker = tracker
         self.save_every = save_every
-        self._step = 0; self._samples = 0
-
-        self.ckpt_root = Path(ray.get(tracker.get_checkpoints_dir.remote()) if tracker else ckpt_root)
+        ckpt_root = ray.get(self.tracker.get_checkpoints_dir.remote()) if self.tracker else ckpt_root
+        self.ckpt_root = Path(ckpt_root)
         self.ckpt_root.mkdir(parents=True, exist_ok=True)
 
-    def ready(self):
-        print(f"[Learner-{os.getenv('RANK', '?')}] ready", flush=True)
-        return True
+        # — device selection —
+        gpu_ids = ray.get_gpu_ids()
+        self.device = (torch.device(f"cuda:{gpu_ids[0]}") if gpu_ids else torch.device("cpu"))
 
-    def synced(self):
-        dist.barrier(device_ids=[torch.cuda.current_device()])
-        return True
+        self.model, self.tokenizer = _build_peft_model(model_name, self.device, lora_cfg, initial_lora_path)
+        # if num_learners > 1: self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[0], output_device=0, find_unused_parameters=False) # Wrap in DDP (assumes learners launched with 1 GPU each)
+        
+        self.model.config.use_cache = False
+        self.model.gradient_checkpointing_enable() # gradient checkpointing
+        # apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=skip_lora) # activation checkpointing
+        check_fn = make_checkpoint_filter(percentage=0.25, block_class=transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer)
+        apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
-    # training loop
+        # algorithm and optimizer
+        self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=learning_rate)
+        self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device)
+
+        # training counters
+        self._step = 0  # optimisation step counter
+        self._samples_seen = 0
+
+
     def train(self, iterations: int):
-        world = dist.get_world_size()
-        rank  = dist.get_rank()
-        mini = self.batch_size // self.grad_accum #// 2
-        self.optimizer.zero_grad(set_to_none=True)
+        print("[Learner] starting training loop …")
+        mini_bs = self.batch_size // self.grad_accum
 
         while self._step < iterations:
-            # wait until buffer has enough samples
-            while ray.get(self.step_buffer.size.remote()) < self.batch_size * self.delay_mult:
-                time.sleep(0.2)
+            while (ray.get(self.step_buffer.size.remote()) < self.batch_size * self.batch_delay_buffer): time.sleep(0.2)
 
-            # dist.barrier()
-            batch = ray.get(self.step_buffer.get_batch.remote(self.batch_size//2))
-            # dist.barrier()
+            batch: List = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
+            assert len(batch) == self.batch_size
+            self._samples_seen += len(batch)
+            self.optimizer.zero_grad(set_to_none=True)
 
-            print(f"[RANK {rank}] received {len(batch)} batch_size.", flush=True)
-
-            # batch = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
-            self._samples += len(batch)
-
-            for i in range(self.grad_accum//2):
-                sub = batch[i*mini : (i+1)*mini]
-                print(f"[RANK {rank}] received {len(sub)} mini batch size. Going from {i*mini} to {(i+1)*mini}.", flush=True)
-                self.algorithm.update(sub, scaling=self.grad_accum)
+            metrics_acc: Dict[str, float] = {}
+            for i in range(self.grad_accum):
+                sub = batch[i * mini_bs : (i + 1) * mini_bs]
+                update_metrics = self.algorithm.update(sub, scaling=self.grad_accum)
+                for k, v in update_metrics.items():
+                    metrics_acc[k] = metrics_acc.get(k, 0.0) + v
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             self.optimizer.step()
-            self.optimizer.zero_grad(set_to_none=True)
             self._step += 1
 
-            if self._step % 5 == 0 and dist.get_rank() == 0:
-                print(f"[Learner-0] step {self._step}", flush=True)
+            # Logging
+            if self.tracker is not None:
+                log = {f"{k}": v / self.grad_accum for k, v in metrics_acc.items()}
+                log.update({
+                    "step": self._step, 
+                    "samples_seen": self._samples_seen, 
+                    "lr": self.optimizer.param_groups[0]["lr"], 
+                    "grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5
+                })
+                self.tracker.log_learner.remote(log)
+            else:
+                if self._step % 10 == 0:
+                    print(f"[Learner] step {self._step:>5} | loss={metrics_acc.get('loss', 0)/self.grad_accum:.4f}")
 
+            # save & register checkpoint every step
             if self._step % self.save_every == 0:
                 self._save_checkpoint()
+                if self.model_pool and self._last_ckpt:
+                    self.model_pool.add_checkpoint.remote(str(self._last_ckpt), self._step)
+                    print(f"[Learner] ↪registered → {self._last_ckpt}")
+                    self.model_pool.snapshot.remote(self._step)
 
-            dist.barrier()
-
-        dist.destroy_process_group()
-        return f"rank {dist.get_rank()} done"
-
-    def _save_checkpoint(self):
-        d = self.ckpt_root / f"iter-{self._step}"
-        if dist.get_rank() == 0:
-            os.makedirs(d, exist_ok=True)
-
-        # --- everyone reaches the barrier synchronously ----
-        dist.barrier(device_ids=[torch.cuda.current_device()])
-
-        if dist.get_rank() == 0: # only rank-0 writes
-            # collect only parameters that require_grad ⇒ LoRA weights
-            lora_sd = {k: p.detach().cpu() for k, p in (self.model.module if hasattr(self.model, "module") else self.model).named_parameters() if p.requires_grad}
-            safetensors.torch.save_file(lora_sd, d / "adapter_model.safetensors")
-
-            # write config
-            import json, pathlib
-            cfg = next(iter(self.model.peft_config.values()))
-            json.dump(cfg.to_dict(), open(d / "adapter_config.json", "w"))
-
-            if self.model_pool:
-                self.model_pool.add_checkpoint.remote(str(d), self._step)
-
-        # allow rank-1 to continue once the file is on disk
-        dist.barrier(device_ids=[torch.cuda.current_device()])
-        print(f"[Learner-0] ckpt → {d}", flush=True)
-        torch.cuda.empty_cache()
+        print("[Learner] training finished.")
+        return {"final_step":self._step, "samples":self._samples}
 
     # def _save_checkpoint(self):
-    #     d = self.ckpt_root / f"iter-{self._step}"
-    #     os.makedirs(d, exist_ok=True) if dist.get_rank() == 0 else None
+    #     ckpt_dir = self.ckpt_root / f"iteration-{self._step}"
+    #     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    #     model = self.model.module if hasattr(self.model,'module') else self.model
+    #     model.save_pretrained(ckpt_dir, save_adapter=True)
+    #     self._last_ckpt = ckpt_dir
+    #     print(f"[Learner] saved → {ckpt_dir}")
+    def _save_checkpoint(self):
+        ckpt_dir = self.ckpt_root / f"iteration-{self._step}"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        
+        model = self.model.module if hasattr(self.model, 'module') else self.model
+        model.save_pretrained(ckpt_dir, save_adapter=True)
+        
+        # Patch adapter_config.json to include "model_type": "qwen3"
+        adapter_config_path = ckpt_dir / "adapter_config.json"
+        if adapter_config_path.exists():
+            with open(adapter_config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            config["model_type"] = "qwen3"
+            with open(adapter_config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2)
+            print(f"[Learner] patched model_type in → {adapter_config_path}")
+        else:
+            print(f"[Learner] WARNING: adapter_config.json not found in {ckpt_dir}")
 
-    #     # everybody enters the FULL_STATE_DICT context
-    #     full_cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
-    #     with FSDP.state_dict_type(self.model, StateDictType.FULL_STATE_DICT, full_cfg):
-    #         full_sd = self.model.state_dict() # ← collective; all ranks must call
-
-    #     if dist.get_rank() == 0:
-    #         base = AutoModelForCausalLM.from_pretrained(
-    #             self.tokenizer.name_or_path, torch_dtype=torch.bfloat16)
-    #         cfg  = self.model.peft_config["default"]
-    #         peft_model = get_peft_model(base, cfg)
-
-    #         set_peft_model_state_dict(peft_model, full_sd, adapter_name="default")
-    #         peft_model.save_pretrained(d, save_adapter=True)
-
-    #         if self.model_pool:
-    #             self.model_pool.add_checkpoint.remote(str(d), self._step)
-    #     dist.barrier(device_ids=[torch.cuda.current_device()])  # everyone syncs out
-
+        self._last_ckpt = ckpt_dir
+        print(f"[Learner] saved → {ckpt_dir}")

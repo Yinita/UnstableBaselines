@@ -71,7 +71,9 @@ class Tracker(BaseTracker):
 
     def log_learner(self, info_dict: Dict):
         self.metrics.update({f"learner/{name}": value for name, value in info_dict.items()})
-        self.learner_metrics = info_dict
+        self._log_metrics(prefix="learner")
+        # self.learner_metrics = info_dict
+        # wandb.log()
 
     def _add_eval_episode_to_metrics(self, episode_info: Dict, final_rewards: Dict, player_id: int, env_id: str, iteration: int, prefix: str="evaluation"):
         self._update_metric(name="Game Length", value=len(episode_info), prefix=prefix, env_id=env_id) # log game length
