@@ -1,6 +1,8 @@
 # 
 
 
+- add tqdm for chunked forward (maybe within rich interface)
+
 relevant functions for tracking:
 
 

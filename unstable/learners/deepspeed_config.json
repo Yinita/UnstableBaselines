@@ -1,0 +1,14 @@
+{
+    "train_batch_size": 384,
+    "gradient_accumulation_steps": 32,
+    "fp16": {
+      "enabled": true
+    },
+    "zero_optimization": {
+      "stage": 1
+    },
+    "tensor_parallel": {
+      "tp_size": 2
+    }
+  }
+  

@@ -57,32 +57,32 @@ collector = unstable.Collector.options(name="Collector").remote(
 # Algorithm and Learner
 algorithm = unstable.algorithms.Reinforce()
 
-learner = unstable.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
-    num_learners=NUM_LEARNERS, tracker=tracker, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
-    batch_size=BATCH_SIZE, gradient_accum_steps=GRAD_ACCUM, learning_rate=LR, grad_clip=GRAD_CLIP, batch_delay_buffer=1.5, lora_cfg=lora_config,
-)
-
-try:
-    collector.collect.remote(num_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS)
-    ray.get(learner.train.remote(ITERATIONS))
-finally:
-    ray.kill(collector, no_restart=True)
-    ray.shutdown()
-
-
-# learners = [
-#     unstable.Learner.options(name=f"Learner-{r}", num_gpus=1).remote(
-#         rank=r, world_size=NUM_LEARNERS, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
-#         batch_size=BATCH_SIZE, gradient_accum=GRAD_ACCUM, lr=LR, grad_clip=GRAD_CLIP, delay_mult=1.5, lora_cfg=lora_config, tracker=tracker
-#     )
-#     for r in range(NUM_LEARNERS)
-# ]
+# learner = unstable.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
+#     num_learners=NUM_LEARNERS, tracker=tracker, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
+#     batch_size=BATCH_SIZE, gradient_accum_steps=GRAD_ACCUM, learning_rate=LR, grad_clip=GRAD_CLIP, batch_delay_buffer=1.5, lora_cfg=lora_config,
+# )
 
 # try:
-#     collector.collect.remote(num_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS) # start collection
-#     ray.get([L.ready.remote() for L in learners]) # ensure everybody is ready
-#     ray.get([L.synced.remote() for L in learners])
-#     ray.get([L.train.remote(ITERATIONS) for L in learners]) # start learning
+#     collector.collect.remote(num_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS)
+#     ray.get(learner.train.remote(ITERATIONS))
 # finally:
 #     ray.kill(collector, no_restart=True)
 #     ray.shutdown()
+
+
+learners = [
+    unstable.FSDPLearner.options(name=f"Learner-{r}", num_gpus=1).remote(
+        rank=r, world_size=NUM_LEARNERS, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
+        batch_size=BATCH_SIZE, gradient_accum=GRAD_ACCUM, lr=LR, grad_clip=GRAD_CLIP, delay_mult=1.5, lora_cfg=lora_config, tracker=tracker
+    )
+    for r in range(NUM_LEARNERS)
+]
+
+try:
+    collector.collect.remote(num_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS) # start collection
+    ray.get([L.ready.remote() for L in learners]) # ensure everybody is ready
+    ray.get([L.synced.remote() for L in learners])
+    ray.get([L.train.remote(ITERATIONS) for L in learners]) # start learning
+finally:
+    ray.kill(collector, no_restart=True)
+    ray.shutdown()

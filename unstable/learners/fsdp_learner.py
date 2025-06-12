@@ -3,11 +3,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, List
 
-from safetensors.torch import safetensors
-from torch.distributed.fsdp.wrap import enable_wrap, wrap
+# from safetensors.torch import safetensors
+from torch.distributed.fsdp.wrap import enable_wrap, wrap, transformer_auto_wrap_policy
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, MixedPrecision, StateDictType, FullStateDictConfig, BackwardPrefetch
-
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, MixedPrecision, StateDictType, FullStateDictConfig, BackwardPrefetch, ShardingStrategy
+from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
 # local imports
 from unstable.buffer import StepBuffer
 from unstable.core import BaseAlgo
@@ -63,26 +63,33 @@ class FSDPLearner:
         # model -> FSDP 
         self.model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg or {}, initial_lora)
         
-        if self.offload_activations_to_cpu:
-            self.model = FSDP(
-                self.model, sharding_strategy=torch.distributed.fsdp.ShardingStrategy.FULL_SHARD,
-                forward_prefetch=False, cpu_offload=torch.distributed.fsdp.CPUOffload(offload_params=False, offload_activations=True),
-                backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-            )
-        else:
-            self.model = FSDP(self.model, use_orig_params=True)
+        # if self.offload_activations_to_cpu:
+        #     self.model = FSDP(
+        #         self.model, sharding_strategy=torch.distributed.fsdp.ShardingStrategy.FULL_SHARD,
+        #         forward_prefetch=False, cpu_offload=torch.distributed.fsdp.CPUOffload(offload_params=False, offload_activations=True),
+        #         backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+        #     )
+        # else:
+        #     self.model = FSDP(self.model, use_orig_params=True)
+
+        self.fsdp_model = FSDP(
+            self.model,
+            auto_wrap_policy=transformer_auto_wrap_policy({Qwen3DecoderLayer}),
+            sharding_strategy=ShardingStrategy.FULL_SHARD,
+            use_orig_params=True,
+        )
 
         if self.gradient_checkpointing: 
             self.model.gradient_checkpointing_enable()
 
-        if self.mixed_precision_training:
-            with enable_wrap(wrapper_cls=FSDP, mixed_precision=MixedPrecision(param_dtype=torch.bfloat16)):
-                self.model = wrap(self.model)
+        # if self.mixed_precision_training:
+        #     with enable_wrap(wrapper_cls=FSDP, mixed_precision=MixedPrecision(param_dtype=torch.bfloat16)):
+        #         self.model = wrap(self.model)
         
-        if self.activation_checkpointing: 
-            activation_ckpting_pct = 0.25
-            check_fn = make_checkpointing_filter(percentage=activation_ckpting_pct, block_class=transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer)
-            apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
+        # if self.activation_checkpointing: 
+        #     activation_ckpting_pct = 0.25
+        #     check_fn = make_checkpointing_filter(percentage=activation_ckpting_pct, block_class=transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer)
+        #     apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
 
 
         self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=lr)
