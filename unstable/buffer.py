@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, Tuple, Callable
 from unstable.core import Trajectory, Step, BaseTracker
 from unstable.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
 
-# TODO doc-string
+# TODO doc-strings
 
 def write_eval_data_to_file(episode_info, filename):
     with open(filename, mode='w', newline='', encoding='utf-8') as f:
