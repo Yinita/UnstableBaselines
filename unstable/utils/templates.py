@@ -23,6 +23,16 @@ def qwen3_template_reasoning(observation: str) -> str:
         "<|im_start|>assistant\n"
     )
 
+"""
+<bos><start_of_turn>user
+knock knock<end_of_turn>
+<start_of_turn>model
+who is there<end_of_turn>
+<start_of_turn>user
+Gemma<end_of_turn>
+<start_of_turn>model
+Gemma who?<end_of_turn>
+"""
 
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
     matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)

@@ -7,9 +7,9 @@ COLLECTION_WORKERS = 128
 EVALUATION_WORKERS = 0
 ITERATIONS = 128
 MODEL_NAME = "Qwen/Qwen3-4B-base"
-BATCH_SIZE = 16
-BUFFER_SIZE = 16*2
-GRAD_ACCUM = 16
+BATCH_SIZE = 2
+BUFFER_SIZE = 2*2
+GRAD_ACCUM = 2
 LR = 1e-5
 GRAD_CLIP = 0.2
 
@@ -56,7 +56,23 @@ collector = unstable.Collector.options(name="Collector").remote(
 # Algorithm and Learner
 algorithm = unstable.algorithms.Reinforce()
 
-learner = unstable.learners.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
+training_config = {
+    "deepspeed_config": deepspeed_config,
+    "step_buffer": step_buffer,
+    "tracker": tracker,
+    "model_pool": model_pool,
+    "iterations": 64,
+    "lora_cfg": lora_cfg,
+    "model_name": vllm_config["model_name"],
+    "batch_size": BATCH_SIZE
+}
+trainer = TorchTrainer(
+    train_func,
+    train_loop_config=training_config,
+    scaling_config=ScalingConfig(num_workers=4, use_gpu=True),
+)
+
+learner = unstable.learners.DeepSpeedLearner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
     num_learners=NUM_LEARNERS, tracker=tracker, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
     batch_size=BATCH_SIZE, gradient_accum_steps=GRAD_ACCUM, learning_rate=LR, grad_clip=GRAD_CLIP, batch_delay_buffer=1.5, lora_cfg=lora_config,
 )
@@ -68,3 +84,20 @@ finally:
     ray.kill(collector, no_restart=True)
     ray.shutdown()
 
+
+# learners = [
+#     unstable.Learner.options(name=f"Learner-{r}", num_gpus=1).remote(
+#         rank=r, world_size=NUM_LEARNERS, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
+#         batch_size=BATCH_SIZE, gradient_accum=GRAD_ACCUM, lr=LR, grad_clip=GRAD_CLIP, delay_mult=1.5, lora_cfg=lora_config, tracker=tracker
+#     )
+#     for r in range(NUM_LEARNERS)
+# ]
+
+# try:
+#     collector.collect.remote(num_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS) # start collection
+#     ray.get([L.ready.remote() for L in learners]) # ensure everybody is ready
+#     ray.get([L.synced.remote() for L in learners])
+#     ray.get([L.train.remote(ITERATIONS) for L in learners]) # start learning
+# finally:
+#     ray.kill(collector, no_restart=True)
+#     ray.shutdown()

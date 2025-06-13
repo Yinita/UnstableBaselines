@@ -1,4 +1,6 @@
 import time, ray, unstable
+from ray.train import ScalingConfig
+from ray.train.torch import TorchTrainer
 import unstable.reward_transformations as retra
 
 NUM_LEARNERS = 1
@@ -7,9 +9,9 @@ COLLECTION_WORKERS = 128
 EVALUATION_WORKERS = 0
 ITERATIONS = 128
 MODEL_NAME = "Qwen/Qwen3-4B-base"
-BATCH_SIZE = 16
-BUFFER_SIZE = 16*2
-GRAD_ACCUM = 16
+BATCH_SIZE = 2
+BUFFER_SIZE = 2*2
+GRAD_ACCUM = 2
 LR = 1e-5
 GRAD_CLIP = 0.2
 
@@ -56,15 +58,43 @@ collector = unstable.Collector.options(name="Collector").remote(
 # Algorithm and Learner
 algorithm = unstable.algorithms.Reinforce()
 
-learner = unstable.learners.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
-    num_learners=NUM_LEARNERS, tracker=tracker, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
-    batch_size=BATCH_SIZE, gradient_accum_steps=GRAD_ACCUM, learning_rate=LR, grad_clip=GRAD_CLIP, batch_delay_buffer=1.5, lora_cfg=lora_config,
+
+deepspeed_config = {
+    "train_batch_size": BATCH_SIZE * GRAD_ACCUM,
+    "gradient_accumulation_steps": GRAD_ACCUM,
+    "optimizer": {
+        "type": "AdamW",
+        "params": {
+            "lr": LR,
+            "betas": [0.9, 0.999],
+            "eps": 1e-8,
+            "weight_decay": 0.01,
+        },
+    },
+    "fp16": {"enabled": False},
+    "bf16": {"enabled": True},  # if using BF16
+}
+
+
+training_config = {
+    "deepspeed_config": deepspeed_config,
+    "step_buffer": step_buffer,
+    "tracker": tracker,
+    "model_pool": model_pool,
+    "iterations": 64,
+    "lora_cfg": lora_config,
+    "model_name": vllm_config["model_name"],
+    "batch_size": BATCH_SIZE
+}
+trainer = TorchTrainer(
+    unstable.learners.ds_learning_function.train_func,
+    train_loop_config=training_config,
+    scaling_config=ScalingConfig(num_workers=2, use_gpu=True), # resources_per_worker={"GPU": 2} for tensor parallel
 )
 
 try:
     collector.collect.remote(num_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS)
-    ray.get(learner.train.remote(ITERATIONS))
+    trainer.fit()
 finally:
     ray.kill(collector, no_restart=True)
     ray.shutdown()
-

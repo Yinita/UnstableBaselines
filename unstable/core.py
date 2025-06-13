@@ -35,10 +35,11 @@ class Opponent:
 
 
 class BaseAlgo:
-    def initialize(self, model, tokenizer, device, accelerator=None):
+    def initialize(self, model, tokenizer, device, max_train_len: Optional[int]= None, accelerator=None):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
+        self.max_train_len = max_train_len
         self.accel = accelerator
 
     def prepare_batch(self, steps):

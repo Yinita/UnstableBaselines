@@ -21,7 +21,14 @@ def _load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
 def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any] | None, initial_lora_path: Optional[str], freeze_base: bool = True):
     """Load base model + wrap with LoRA.  Return (model, tokenizer)."""
     print(f"[Learner] Loading base model: {base_name} ...")
-    base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True)
+    with torch.device(device):
+        base = AutoModelForCausalLM.from_pretrained(
+            base_name,
+            torch_dtype=torch.bfloat16,
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2",
+        )
+    base.config._attn_implementation = "flash_attention_2" # try forcing it
     if freeze_base:
         for p in base.parameters(): p.requires_grad_(False)
     lcfg = LoraConfig(
@@ -29,6 +36,12 @@ def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, A
         bias="none", task_type="CAUSAL_LM", target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]),
     )
     model = get_peft_model(base, lcfg).to(device)
+
+    print("\n[Debug] Attention module types:")
+    for name, module in model.named_modules():
+        # if "attn" in name.lower() or "attention" in name.lower():
+        if not "lora" in name.lower():
+            print(f"{name}: {type(module)}")
 
     if initial_lora_path:
         print(f"[Learner] Loading initial LoRA weights from {initial_lora_path}")
@@ -55,3 +68,39 @@ def _json_safe(obj):
     if isinstance(obj, set):
         return list(obj) # turn sets into lists
     raise TypeError # let json handle the rest
+
+
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import apply_activation_checkpointing, checkpoint_wrapper
+
+def apply_general_activation_checkpointing(model, percentage=1.0):
+    def check_fn(module):
+        # Skip LoRA layers
+        if isinstance(module, LoraLayer):
+            return False
+        for name, child in module.named_modules():
+            if isinstance(child, LoraLayer):
+                return False
+        # Check by name if this is likely a transformer block
+        if any(key in module.__class__.__name__.lower() for key in ["block", "layer", "decoder", "encoder"]):
+            mod_fraction = (id(module) % 1000) / 1000.0
+            return mod_fraction < percentage
+        return False
+
+    apply_activation_checkpointing(model, checkpoint_wrapper, check_fn)
+
+
+try:                from torch.utils.checkpoint import CheckpointImpl
+except ImportError: from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import CheckpointImpl
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
+from peft.tuners.lora.layer import LoraLayer
+
+def enable_full_activation_ckpt(model):
+    """ Wrap every leaf module in checkpoint_wrapper (skip LoRA layers). Equivalent to full-graph activation checkpointing """
+    def checkpoint_everything(mod):
+        if isinstance(mod, LoraLayer): return False
+        for _, child in mod.named_modules():
+            if isinstance(child, LoraLayer):
+                return False
+        return True
+
+    apply_activation_checkpointing(model, checkpoint_wrapper_fn=lambda m: checkpoint_wrapper(m, checkpoint_impl=CheckpointImpl.NO_REENTRANT), check_fn=checkpoint_everything)  # “always recompute”

@@ -1,7 +1,13 @@
 # 
 
 
-- add tqdm for chunked forward (maybe within rich interface)
+- add tracking for train seq len and truncation amount (both num trunc and trunc mag)
+- add a ddp trainer
+- add a fsdp trainer
+- change to specify the mini-batch size and batch size
+
+
+
 
 relevant functions for tracking:
 
