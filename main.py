@@ -6,15 +6,14 @@ NUM_ACTORS = 3
 COLLECTION_WORKERS = 256
 EVALUATION_WORKERS = 16
 ITERATIONS = 128
-# MODEL_NAME = "Qwen/Qwen3-4B-base"
-# MODEL_NAME = "meta-llama/Llama-3.2-3B"
-MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
+MODEL_NAME = "Qwen/Qwen3-4B-base"
+# MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 BATCH_SIZE = 384
 BUFFER_SIZE = 384*2
 GRAD_ACCUM = 384
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = 2500
+MAX_TRAIN_SEQ_LEN = None
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
@@ -28,14 +27,14 @@ vllm_config = {
 
 TRAINING_ENVS = [
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    ("SimpleTak-v0-train", 2, "llama-instruct-zs"), 
+    ("SimpleTak-v0-train", 2, "qwen3-zs"), 
     # ("Nim-v0-train", 2, "qwen3-zs"), 
     # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 EVALUATION_ENVS = [
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    ("SimpleTak-v0-train", 2, "llama-instruct-zs"), 
+    ("SimpleTak-v0-train", 2, "qwen3-zs"), 
     # ("Nim-v0-train", 2, "qwen3-zs"), 
     # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
@@ -91,7 +90,7 @@ learner = unstable.StandardLearner.options(num_gpus=NUM_LEARNERS, name="Learner"
     activation_checkpointing=True,
     gradient_checkpointing=True,
     use_trainer_cache=False,
-    max_train_len=MAX_TRAIN_SEQ_LEN
+    max_train_len=MAX_TRAIN_SEQ_LEN,
 )
 
 try:

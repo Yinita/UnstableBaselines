@@ -20,9 +20,16 @@ def _load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
 
 def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any] | None, initial_lora_path: Optional[str], freeze_base: bool = True):
     print(f"[Learner] Loading base model: {base_name} ...")
-    with torch.device(device):
-        base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True, attn_implementation="flash_attention_2")
-    base.config._attn_implementation = "flash_attention_2" # try forcing it # TODO not really working I think
+    try:
+        with torch.device(device):
+            base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True, attn_implementation="flash_attention_2")
+        base.config._attn_implementation = "flash_attention_2" # try forcing it # TODO not really working I think
+    except Exception as exc:
+        print(f"Flash attention not available.")
+        with torch.device(device):
+            base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True)
+
+    
     if freeze_base:
         for p in base.parameters(): p.requires_grad_(False)
     lcfg = LoraConfig(
