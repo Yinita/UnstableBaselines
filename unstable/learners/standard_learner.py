@@ -1,58 +1,27 @@
+
 import time, pathlib, math, json
 from typing import Any, Dict, Optional, List
 
-import ray, torch, transformers, os
+import ray, torch, transformers
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
 
 # local imports
 from unstable.buffer import StepBuffer
 from unstable.core import BaseAlgo
 from unstable.model_pool import ModelPool
-from unstable.learners.utils import build_peft_model, make_checkpointing_filter
+from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
 
-# TODO check if all of this is necessary for other gpus (debugging on RTX6000 ada)
-# TODO also make this exectution optional (i.e. not on import)
-for k in ("NCCL_SOCKET_IFNAME", "NCCL_NET"):
-    os.environ.pop(k, None)
-os.environ.update(
-    NCCL_P2P_LEVEL="SYS", NCCL_SHM_DISABLE="0", NCCL_IB_DISABLE="1", NCCL_PLUGIN_DISABLE="1",
-    NCCL_DEBUG="INFO", TORCH_NCCL_BLOCKING_WAIT="1", TORCH_NCCL_ASYNC_ERROR_HANDLING="1",
-)
+from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
+
 
 @ray.remote
-class DDPLearner:
+class StandardLearner:
     def __init__(
-        self,
-        model_name: str,
-        step_buffer: StepBuffer,
-        model_pool: ModelPool,
-        algorithm: BaseAlgo,
-        batch_size: int = 384,
-        gradient_accum_steps: int = 32,
-        learning_rate: float = 5e-6,
-        grad_clip: float = 1.0,
-        batch_delay_buffer: float = 1.5,
-        lora_cfg: Dict[str, Any] = {},
-        initial_lora_path: Optional[str] = None,
-        num_learners: int = 1,
-        ckpt_root: str = "checkpoints",
-        save_every: int = 1,
-        tracker=None,
+        self, model_name: str, step_buffer: StepBuffer, model_pool: ModelPool, algorithm: BaseAlgo, batch_size: int=384, gradient_accum_steps: int=32, learning_rate: float=5e-6,
+        grad_clip: float=1.0, batch_delay_buffer: float=1.5, lora_cfg: Dict[str,Any] = {}, initial_lora_path: Optional[str]=None, num_learners: int=1, ckpt_root: str="checkpoints",
+        save_every: int = 1, tracker=None, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool=False, max_train_len: Optional[int]=None
     ):
-        """Async learner.
-
-        Args
-        -----
-        batch_size : *total* batch size per optimisation step.
-        gradient_accum_steps : split batch into this many micro‑batches.
-        batch_delay_buffer : how much larger the buffer has to be (× batch)
-            before the first optimisation step – helps avoid early bias.
-        """
-        assert NotImplementedError("Not checked to be working reliably")
-        # TODO assert num learners
-        self.activation_checkpointing = False # TODO add to init
-        self.gradient_checkpointing = True  # TODO add to init
-
+        # TODO docstring
         self.algorithm = algorithm
         self.batch_size = batch_size
         self.grad_accum = gradient_accum_steps
@@ -66,28 +35,26 @@ class DDPLearner:
         self.ckpt_root = pathlib.Path(ckpt_root)
         self.ckpt_root.mkdir(parents=True, exist_ok=True)
 
+        torch.set_float32_matmul_precision('high')
+        torch.set_default_dtype(torch.bfloat16)
+
         # — device selection —
         gpu_ids = ray.get_gpu_ids()
         self.device = (torch.device(f"cuda:{gpu_ids[0]}") if gpu_ids else torch.device("cpu"))
+        self.model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, initial_lora_path)
+        self.model.to(torch.bfloat16)
 
-        self.model, self.tokenizer = _build_peft_model(model_name, self.device, lora_cfg, initial_lora_path)
         # if num_learners > 1: self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[0], output_device=0, find_unused_parameters=False) # Wrap in DDP (assumes learners launched with 1 GPU each)
         
-        self.model.config.use_cache = False
-        if self.gradient_checkpointing:
-            self.model.gradient_checkpointing_enable() # gradient checkpointing
+        if not use_trainer_cache:      self.model.config.use_cache = False
+        if gradient_checkpointing:     self.model.gradient_checkpointing_enable() # gradient checkpointing
+        if activation_checkpointing:   enable_full_activation_ckpt(self.model)
         
-        if self.activation_checkpointing: # TODO fix the qwen3 hardcoding part. Can prob get class from model 
-            check_fn = make_checkpointing_filter(percentage=0.25, block_class=transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer)
-            apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
-    
         # algorithm and optimizer
         self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=learning_rate)
-        self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device)
-
-        # training counters
-        self._step = 0
-        self._samples_seen = 0
+        self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device, max_train_len=max_train_len) # TODO create a tabel with recommended amounts for different vram qtys
+        
+        self._step = 0; self._samples_seen = 0 # training counters
 
 
     def train(self, iterations: int):
@@ -105,7 +72,8 @@ class DDPLearner:
             metrics_acc: Dict[str, float] = {}
             for i in range(self.grad_accum):
                 sub = batch[i * mini_bs : (i + 1) * mini_bs]
-                update_metrics = self.algorithm.update(sub, scaling=self.grad_accum)
+                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    update_metrics = self.algorithm.update(sub, scaling=self.grad_accum)
                 for k, v in update_metrics.items():
                     metrics_acc[k] = metrics_acc.get(k, 0.0) + v
 
@@ -142,3 +110,4 @@ class DDPLearner:
         model.save_pretrained(ckpt_dir, save_adapter=True)
         self._last_ckpt = ckpt_dir
         print(f"[Learner] saved → {ckpt_dir}")
+

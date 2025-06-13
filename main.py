@@ -7,13 +7,14 @@ COLLECTION_WORKERS = 256
 EVALUATION_WORKERS = 16
 ITERATIONS = 128
 # MODEL_NAME = "Qwen/Qwen3-4B-base"
-MODEL_NAME = "meta-llama/Llama-3.2-3B"
+# MODEL_NAME = "meta-llama/Llama-3.2-3B"
+MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 BATCH_SIZE = 384
 BUFFER_SIZE = 384*2
 GRAD_ACCUM = 384
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = 4096
+MAX_TRAIN_SEQ_LEN = 2500
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
@@ -27,14 +28,14 @@ vllm_config = {
 
 TRAINING_ENVS = [
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    ("SimpleTak-v0-train", 2, "llama-zs"), 
+    ("SimpleTak-v0-train", 2, "llama-instruct-zs"), 
     # ("Nim-v0-train", 2, "qwen3-zs"), 
     # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 EVALUATION_ENVS = [
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    ("SimpleTak-v0-train", 2, "llama-zs"), 
+    ("SimpleTak-v0-train", 2, "llama-instruct-zs"), 
     # ("Nim-v0-train", 2, "qwen3-zs"), 
     # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
@@ -61,14 +62,20 @@ ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
 
 # Collector
 collector = unstable.Collector.options(name="Collector").remote(
-    num_actors=NUM_ACTORS, tracker=tracker, vllm_config=vllm_config, step_buffer=step_buffer, model_pool=model_pool,
-    training_envs=TRAINING_ENVS, evaluation_envs=EVALUATION_ENVS, evaluation_opponent="google/gemini-2.0-flash-lite-001"
+    num_actors=NUM_ACTORS, 
+    tracker=tracker, 
+    vllm_config=vllm_config, 
+    step_buffer=step_buffer, 
+    model_pool=model_pool,
+    training_envs=TRAINING_ENVS, 
+    evaluation_envs=EVALUATION_ENVS, 
+    evaluation_opponent="google/gemini-2.0-flash-lite-001",
+    action_extraction="default"
 )
 
 # Algorithm and Learner
 algorithm = unstable.algorithms.Reinforce()
-
-learner = unstable.learners.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
+learner = unstable.StandardLearner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
     num_learners=NUM_LEARNERS, 
     tracker=tracker, 
     model_name=MODEL_NAME, 

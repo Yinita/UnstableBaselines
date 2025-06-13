@@ -5,99 +5,26 @@ from typing import Any, Dict, Optional, List
 
 # from safetensors.torch import safetensors
 from torch.distributed.fsdp.wrap import enable_wrap, wrap, transformer_auto_wrap_policy
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, MixedPrecision, StateDictType, FullStateDictConfig, BackwardPrefetch, ShardingStrategy
 from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
 # local imports
 from unstable.buffer import StepBuffer
 from unstable.core import BaseAlgo
 from unstable.model_pool import ModelPool
-from unstable.learners.utils import build_peft_model, make_checkpointing_filter, _json_safe
-
-
-# TODO check if all of this is necessary for other gpus (debugging on RTX6000 ada)
-for k in ("NCCL_SOCKET_IFNAME", "NCCL_NET"):
-    os.environ.pop(k, None)
-os.environ.update(
-    NCCL_P2P_LEVEL="SYS", NCCL_SHM_DISABLE="0", NCCL_IB_DISABLE="1", NCCL_PLUGIN_DISABLE="1",
-    NCCL_DEBUG="INFO", TORCH_NCCL_BLOCKING_WAIT="1", TORCH_NCCL_ASYNC_ERROR_HANDLING="1",
-)
+from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt, _json_safe
 
 
 
 @ray.remote
-class FSDPLearner:
+class MultiGPULearner:
     def __init__(
-        self,
-        rank: int,
-        world_size: int,
-        model_name: str,
-        step_buffer: StepBuffer,
-        model_pool: ModelPool,
-        algorithm: BaseAlgo,
-        batch_size: int  = 384,
-        gradient_accum: int  = 32,
-        lr: float= 5e-6,
-        grad_clip: float= 1.0,
-        delay_mult: float= 1.5,
-        lora_cfg: Dict[str,Any] | None = None,
-        initial_lora: Optional[str] = None,
-        ckpt_root: str  = "checkpoints",
-        save_every: int  = 1,
-        tracker=None,
-        verbose: bool = True
+        self, rank: int, world_size: int, use_fsdp: bool, model_name: str, step_buffer: StepBuffer, model_pool: ModelPool,
+        algorithm: BaseAlgo, batch_size: int=384, gradient_accum: int=32, lr: float=5e-6, grad_clip: float=1.0, delay_mult: float=1.5,
+        lora_cfg: Dict[str,Any]|None=None, initial_lora: Optional[str]=None, ckpt_root: str="checkpoints", save_every: int=1, tracker=None,
+        verbose: bool = True, activation_checkpointing: bool = True, gradient_checkpointing: bool = True, mixed_precision_training: bool = True
     ):
-        assert NotImplementedError("Not checked to be working reliably")
-
-        self.offload_activations_to_cpu = False
-        self.mixed_precision_training = False
-        self.activation_checkpointing = True
-        self.gradient_checkpointing = True
-
-        torch.cuda.set_device(0)
-        self.device = torch.device("cuda")
-
-        init_file = "/tmp/learner_pg_shared_4" # TODO fix this
-        if rank == 0 and os.path.exists(init_file):
-            os.remove(init_file)
-        dist.init_process_group(backend="nccl", init_method=f"file://{init_file}", rank=rank, world_size=world_size)
-
-        # model -> FSDP 
-        self.model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg or {}, initial_lora)
-        
-        # if self.offload_activations_to_cpu:
-        #     self.model = FSDP(
-        #         self.model, sharding_strategy=torch.distributed.fsdp.ShardingStrategy.FULL_SHARD,
-        #         forward_prefetch=False, cpu_offload=torch.distributed.fsdp.CPUOffload(offload_params=False, offload_activations=True),
-        #         backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-        #     )
-        # else:
-        #     self.model = FSDP(self.model, use_orig_params=True)
-
-        self.fsdp_model = FSDP(
-            self.model,
-            auto_wrap_policy=transformer_auto_wrap_policy({Qwen3DecoderLayer}),
-            sharding_strategy=ShardingStrategy.FULL_SHARD,
-            use_orig_params=True,
-        )
-
-        if self.gradient_checkpointing: 
-            self.model.gradient_checkpointing_enable()
-
-        # if self.mixed_precision_training:
-        #     with enable_wrap(wrapper_cls=FSDP, mixed_precision=MixedPrecision(param_dtype=torch.bfloat16)):
-        #         self.model = wrap(self.model)
-        
-        # if self.activation_checkpointing: 
-        #     activation_ckpting_pct = 0.25
-        #     check_fn = make_checkpointing_filter(percentage=activation_ckpting_pct, block_class=transformers.models.qwen3.modeling_qwen3.Qwen3DecoderLayer)
-        #     apply_activation_checkpointing(self.model, checkpoint_wrapper_fn=checkpoint_wrapper, check_fn=check_fn)
-
-
-        self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=lr)
-        self.algorithm = algorithm
-        self.algorithm.initialize(self.model, self.tokenizer, self.device)
-
+        # TODO docstring
         self.step_buffer = step_buffer
         self.model_pool = model_pool
         self.batch_size = batch_size
@@ -107,8 +34,31 @@ class FSDPLearner:
         self.tracker = tracker
         self.save_every = save_every
         self.verbose = verbose
-        self._step = 0
-        self._samples = 0
+        self._step = 0; self._samples = 0
+
+        torch.cuda.set_device(0)
+        self.device = torch.device("cuda")
+
+        init_file = "/tmp/learner_pg_shared_4" # TODO fix this
+        if rank == 0 and os.path.exists(init_file): os.remove(init_file)
+        dist.init_process_group(backend="nccl", init_method=f"file://{init_file}", rank=rank, world_size=world_size)
+
+        # model -> FSDP 
+        self.model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg or {}, initial_lora)
+
+        if use_fsdp:
+            mp = MixedPrecision(param_dtype=torch.bfloat16, reduce_dtype=torch.bfloat16, buffer_dtype=torch.bfloat16) if mixed_precision_training else None
+            self.model = FSDP(self.model, auto_wrap_policy=transformer_auto_wrap_policy({Qwen3DecoderLayer}), sharding_strategy=ShardingStrategy.FULL_SHARD, mixed_precision=mp, device_id=self.device, use_orig_params=True)
+        else:
+            self.model = DDP(self.model, device_ids=[rank], broadcast_buffers=False)
+
+        if gradient_checkpointing:   self.model.gradient_checkpointing_enable()
+        if activation_checkpointing: enable_full_activation_ckpt(self.model)
+
+
+        self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=lr)
+        self.algorithm = algorithm
+        self.algorithm.initialize(self.model, self.tokenizer, self.device)
 
         self.ckpt_root = Path(ray.get(tracker.get_checkpoints_dir.remote()) if tracker else ckpt_root)
         self.ckpt_root.mkdir(parents=True, exist_ok=True)
@@ -130,8 +80,7 @@ class FSDPLearner:
 
         while self._step < iterations:
             # wait until buffer has enough samples
-            while ray.get(self.step_buffer.size.remote()) < self.batch_size * self.delay_mult:
-                time.sleep(0.2)
+            while ray.get(self.step_buffer.size.remote()) < self.batch_size * self.delay_mult: time.sleep(0.2)
 
             batch = ray.get(self.step_buffer.get_batch.remote(self.batch_size//2))
             if self.verbose: print(f"[RANK {rank}] received {len(batch)} batch_size.", flush=True)
@@ -155,32 +104,23 @@ class FSDPLearner:
 
     def _save_checkpoint(self):
         d = self.ckpt_root / f"iter-{self._step}"
-        if dist.get_rank() == 0:
-            os.makedirs(d, exist_ok=True)
-
-        # ALL RANKS join before / after writing
-        dist.barrier(device_ids=[torch.cuda.current_device()])
-
+        if dist.get_rank() == 0: os.makedirs(d, exist_ok=True)
+        dist.barrier(device_ids=[torch.cuda.current_device()]) # ALL RANKS join before / after writing
         if dist.get_rank() == 0:
             # 1. Collect only parameters with requires_grad == True  (i.e. LoRA)
             lora_sd_raw = {k: p.detach().cpu() for k, p in (self.model.module if hasattr(self.model, "module") else self.model).named_parameters() if p.requires_grad}
-
             # 2. Normalise key names for vLLM/PEFT:
             lora_sd_fixed = {}
             for k, v in lora_sd_raw.items():
                 k = k.replace("base_model.model.", "", 1).replace(".default", "").replace("._checkpoint_wrapped_module", "")
                 lora_sd_fixed[k] = v
-
             # 3. Write adapter weights and config
             safetensors.save_file(lora_sd_fixed, d / "adapter_model.safetensors")
-
             cfg = next(iter(self.model.peft_config.values()))
             with open(d / "adapter_config.json", "w") as f:
                 json.dump(cfg.to_dict(), f, default=_json_safe, indent=2)
-
             # 4. Register with model-pool
             if self.model_pool: self.model_pool.add_checkpoint.remote(str(d), self._step)
-
         # ensure every rank waits until files are on disk
         dist.barrier(device_ids=[torch.cuda.current_device()])
         if dist.get_rank() == 0 and self.verbose:

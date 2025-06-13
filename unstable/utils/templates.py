@@ -1,41 +1,6 @@
 import re
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Callable
 
-
-def apply_default_template(observation: str) -> str:
-    return (
-        "You are playing a two-player zero-sum game. Make valid moves to win. "
-        "You should first reason about your next move, and then submit the move enclosed by \\boxed{}."
-        f"Observation: {observation}\n"
-    )
-
-def qwen3_template(observation: str) -> str:
-    return (
-        f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
-        "\nPlease reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n"
-        "<|im_start|>assistant\n"
-    )
-
-def qwen3_template_reasoning(observation: str) -> str:
-    return (
-        "<|im_start|>user\nPlease reason step by step, and put your final answer within \\boxed{}.\n"
-        f"Question: {observation}<|im_end|>\n"
-        "<|im_start|>assistant\n"
-    )
-
-def gemma3_template(observation: str) -> str:
-    return (
-        f"<bos><start_of_turn>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
-        "\nPlease reason step by step, and put your final answer within \\boxed{}.<end_of_turn>\n"
-        "<start_of_turn>model\n"
-    )
-
-def llama_template(observation: str) -> str:
-    return (
-        f"You are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
-        "\nPlease reason step by step, and put your final answer within \\boxed{}\n"
-        "Your answer:\n"
-    )
 
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
     matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
@@ -54,20 +19,35 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     format_feedback = {"has_think": bool(has_think), "has_answer": False, "order_correct": False}
     return action, format_feedback
 
+def format_template(system: str = "", user: str = "", assistant: str = "") -> str: return f"{system}{user}{assistant}"
 
-OBSERVATION_FORMATTING = {
-    "default": apply_default_template,
-    "qwen3": qwen3_template,
-    "qwen3-game": qwen3_template,
-    "qwen3-zs": qwen3_template,
-    "qwen3-reasoning": qwen3_template_reasoning,
-    "gemma3-zs": gemma3_template,
-    "llama-zs": llama_template
+TEMPLATE_PARTS = {
+    "default": {
+        "user": lambda obs: f"You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{{}}.\nObservation: {obs}\n"
+    },
+    "qwen3": {
+        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
+    },
+    "qwen3-reasoning": {
+        "user": lambda obs: f"<|im_start|>user\nPlease reason step by step, and put your final answer within \\boxed{{}}.\nQuestion: {obs}<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
+    },
+    "gemma3-zs": {
+        "user": lambda obs: f"<bos><start_of_turn>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<end_of_turn>\n",
+        "assistant": "<start_of_turn>model\n"
+    },
+    "llama-instruct-zs": {
+        "system": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nYou are playing a two-player zero-sum game. Make valid actions to win.<|eot_id|>",
+        "user": lambda obs: f"<|start_header_id|>user<|end_header_id|>\n\nCurrent Observation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|eot_id|>\n",
+        "assistant": "<|start_header_id|>assistant<|end_header_id|>"
+    },
 }
 
-ACTION_EXTRACTION = {
-    "default": extract_action_and_format_feedback,
-    "qwen3-zs": extract_action_and_format_feedback,
-    "gemma3-zs": extract_action_and_format_feedback,
-    "llama-zs": extract_action_and_format_feedback,
-}
+def apply_template(template_name: str, observation: str) -> str:
+    parts = TEMPLATE_PARTS.get(template_name)
+    # assert parts is not None, f"Template '{template_name}' does not exist."
+    return format_template(system=parts.get("system", ""), user=parts["user"](observation), assistant=parts.get("assistant", ""))
+
+OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda obs: apply_template(key, obs))() for key in TEMPLATE_PARTS}
+ACTION_EXTRACTION = {"default": extract_action_and_format_feedback}

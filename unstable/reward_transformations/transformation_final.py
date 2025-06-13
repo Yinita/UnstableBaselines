@@ -11,7 +11,6 @@ class ComposeFinalRewardTransforms:
     def __init__(self, transforms: List[FinalRewardTransform]): self.transforms = transforms
     def __repr__(self):                                         return f"{self.__class__.__name__}({self.transforms})"
     def register(self, transform: FinalRewardTransform):        self.transforms.append(transform)
-
     def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: Optional[str] = None) -> FINAL_REWARDS_FORMAT:
         for t in self.transforms:
             x = t(x, env_id)

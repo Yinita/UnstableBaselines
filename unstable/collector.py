@@ -68,7 +68,8 @@ class Collector:
         max_eval_games_per_ckpt: int = 32,
         eval_every_n_steps: int = 5,
         tracker: Optional[BaseTracker] = None,
-        filter_opponent_invalid: bool = False
+        filter_opponent_invalid: bool = False,
+        action_extraction: str = "default"
     ):
         """
         Initializes the Collector.
@@ -96,6 +97,7 @@ class Collector:
         self.max_eval_games_per_ckpt = max_eval_games_per_ckpt
         self.eval_every_n_steps = eval_every_n_steps
         self.filter_opponent_invalid = filter_opponent_invalid
+        self.action_extraction = action_extraction
 
         actors = [VLLMActor.options(num_gpus=1).remote(vllm_config=vllm_config) for _ in range(num_actors)]
         self.actor_iter = itertools.cycle(actors)
@@ -132,7 +134,7 @@ class Collector:
         @ray.remote(num_cpus=0)
         def run_game(env_id, num_players, player_id, actor, lora_path, opponent_uid, model_uid, opponent_path_or_name, prompt_template, seed: int = 489):
             obs_format = OBSERVATION_FORMATTING[prompt_template]
-            extract_fn = ACTION_EXTRACTION[prompt_template]
+            extract_fn = ACTION_EXTRACTION[self.action_extraction]
             model = CallableActorWrapper(actor, lora_path, obs_format, extract_fn)
             game_action_seq = []
 
@@ -173,7 +175,7 @@ class Collector:
 
         @ray.remote(num_cpus=0)
         def run_eval_game(env_id, num_players, player_id, actor, lora_path, opponent_name, prompt_template, seed: int = 489):
-            model = CallableActorWrapper( actor, lora_path, OBSERVATION_FORMATTING[prompt_template], ACTION_EXTRACTION[prompt_template])
+            model = CallableActorWrapper( actor, lora_path, OBSERVATION_FORMATTING[prompt_template], ACTION_EXTRACTION[self.action_extraction])
             opponent = ta.agents.OpenRouterAgent(opponent_name)
 
             env = ta.make(env_id)

@@ -2,8 +2,9 @@ import time, ray, unstable
 import unstable.reward_transformations as retra
 
 # TODO 
-NUM_LEARNERS = 1
-NUM_ACTORS = 3
+USE_FSDP = True # if set to false, fallback to DDP
+NUM_LEARNERS = 2
+NUM_ACTORS = 2
 COLLECTION_WORKERS = 128
 EVALUATION_WORKERS = 0
 ITERATIONS = 128
@@ -28,12 +29,9 @@ EVALUATION_ENVS= [("SimpleTak-v0-train", 2, "qwen3-zs")]
 
 WANDB_RUN_NAME = f"Run--{MODEL_NAME.split('/')[-1]}-{int(time.time())}"
 
-# Ray init 
-# ray.init(log_to_driver=True, logging_level="DEBUG")
-ray.init(log_to_driver=True)
 
-# Tracker
-tracker = unstable.Tracker.options(name="Tracker").remote(run_name=WANDB_RUN_NAME, wandb_project="UnstableBaselines")
+ray.init(log_to_driver=True) # Ray init 
+tracker = unstable.Tracker.options(name="Tracker").remote(run_name=WANDB_RUN_NAME, wandb_project="UnstableBaselines") # Tracker
 
 # Data Buffer
 step_buffer = unstable.StepBuffer.remote(
@@ -57,25 +55,27 @@ collector = unstable.Collector.options(name="Collector").remote(
 # Algorithm and Learner
 algorithm = unstable.algorithms.Reinforce()
 
-# learner = unstable.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
-#     num_learners=NUM_LEARNERS, tracker=tracker, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
-#     batch_size=BATCH_SIZE, gradient_accum_steps=GRAD_ACCUM, learning_rate=LR, grad_clip=GRAD_CLIP, batch_delay_buffer=1.5, lora_cfg=lora_config,
-# )
-
-# try:
-#     collector.collect.remote(num_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS)
-#     ray.get(learner.train.remote(ITERATIONS))
-# finally:
-#     ray.kill(collector, no_restart=True)
-#     ray.shutdown()
-
-
 learners = [
-    unstable.FSDPLearner.options(name=f"Learner-{r}", num_gpus=1).remote(
-        rank=r, world_size=NUM_LEARNERS, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
-        batch_size=BATCH_SIZE, gradient_accum=GRAD_ACCUM, lr=LR, grad_clip=GRAD_CLIP, delay_mult=1.5, lora_cfg=lora_config, tracker=tracker
+    unstable.FSDPLearner.options(name=f"Learner-{rank}", num_gpus=1).remote(
+        rank=rank, 
+        world_size=NUM_LEARNERS, 
+        use_fsdp=USE_FSDP,
+        model_name=MODEL_NAME, 
+        step_buffer=step_buffer, 
+        model_pool=model_pool, 
+        algorithm=algorithm, 
+        batch_size=BATCH_SIZE, 
+        gradient_accum=GRAD_ACCUM, 
+        lr=LR, 
+        grad_clip=GRAD_CLIP, 
+        delay_mult=1.5, 
+        lora_cfg=lora_config, 
+        tracker=tracker,
+        activation_checkpointing=True,
+        gradient_checkpointing=True,
+        mixed_precision_training=True
     )
-    for r in range(NUM_LEARNERS)
+    for rank in range(NUM_LEARNERS)
 ]
 
 try:
