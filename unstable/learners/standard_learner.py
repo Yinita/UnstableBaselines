@@ -31,21 +31,17 @@ class StandardLearner:
         self.model_pool = model_pool
         self.tracker = tracker
         self.save_every = save_every
-        ckpt_root = ray.get(self.tracker.get_checkpoints_dir.remote()) if self.tracker else ckpt_root
-        self.ckpt_root = pathlib.Path(ckpt_root)
+        self.ckpt_root = pathlib.Path(ray.get(self.tracker.get_checkpoints_dir.remote()) if self.tracker else ckpt_root)
         self.ckpt_root.mkdir(parents=True, exist_ok=True)
 
         torch.set_float32_matmul_precision('high')
         torch.set_default_dtype(torch.bfloat16)
 
-        # — device selection —
         gpu_ids = ray.get_gpu_ids()
         self.device = (torch.device(f"cuda:{gpu_ids[0]}") if gpu_ids else torch.device("cpu"))
         self.model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, initial_lora_path)
         self.model.to(torch.bfloat16)
 
-        # if num_learners > 1: self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[0], output_device=0, find_unused_parameters=False) # Wrap in DDP (assumes learners launched with 1 GPU each)
-        
         if not use_trainer_cache:      self.model.config.use_cache = False
         if gradient_checkpointing:     self.model.gradient_checkpointing_enable() # gradient checkpointing
         if activation_checkpointing:   enable_full_activation_ckpt(self.model)
@@ -53,7 +49,6 @@ class StandardLearner:
         # algorithm and optimizer
         self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=learning_rate)
         self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device, max_train_len=max_train_len) # TODO create a tabel with recommended amounts for different vram qtys
-        
         self._step = 0; self._samples_seen = 0 # training counters
 
 
