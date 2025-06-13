@@ -127,8 +127,8 @@ class ModelPool:
         if key not in self._unique_actions_seqs:
             self._unique_actions_seqs[key] = {
                 "unigrams": set(), "bigrams": set(), "trigrams": set(), "4-grams": set(), "5-grams": set(),
-                "total_counts": {"unigrams": 0, "bigrams": 0, "trigrams": 0, "4-grams": 0, "5-grams": 0,
-            }}
+                "total_counts": {"unigrams": 0, "bigrams": 0, "trigrams": 0, "4-grams": 0, "5-grams": 0}
+            }
 
         for n, name in [(1,"unigrams"), (2, "bigrams"), (3, "trigrams"), (4, "4-grams"), (5, "5-grams")]:
             for i in range(len(game_action_seq) - n + 1):
@@ -174,7 +174,6 @@ class ModelPool:
         for uid, opp in self._models.items():
             if opp.kind != "checkpoint": continue
             opp.active = (uid in keep)
-
     
     def _get_exploration_ratios(self):
         stats = {}
@@ -186,14 +185,8 @@ class ModelPool:
         #         ratio = unique / total if total > 0 else 0.0
         #         ratios[ngram_type] = ratio
         #     stats[key] = ratios
-        
-        for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]:
-            stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
-
-        print(self._full_unique_actions_seqs)
-            
+        for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]: stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
         return stats
-
 
     def snapshot(self, iteration: int):
         self._step_counter = iteration
@@ -204,3 +197,7 @@ class ModelPool:
         )
 
 
+    def get_snapshot(self):
+        latest = self.latest_ckpt()
+        r = self._models[latest].rating if latest else self.TS.create_rating()
+        return {"num_ckpts": len(self._ckpt_log), "mu": r.mu, "sigma": r.sigma}
