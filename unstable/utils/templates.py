@@ -2,25 +2,7 @@ import re
 from typing import Tuple, Dict, Callable
 
 
-def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
-    matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
-    if matches:
-        last_match = matches[-1].strip()
-        if last_match:  # non-empty boxed
-            action = f"[{last_match}]" if "[" not in last_match else last_match
-            has_think = 1
-        else:  # empty boxed
-            action = raw_action
-            has_think = 0
-    else:  # no boxed at all
-        action = raw_action
-        has_think = 0
-
-    format_feedback = {"has_think": bool(has_think), "has_answer": False, "order_correct": False}
-    return action, format_feedback
-
 def format_template(system: str = "", user: str = "", assistant: str = "") -> str: return f"{system}{user}{assistant}"
-
 TEMPLATE_PARTS = {
     "default": {
         "user": lambda obs: f"You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{{}}.\nObservation: {obs}\n"
@@ -43,11 +25,29 @@ TEMPLATE_PARTS = {
         "assistant": "<|start_header_id|>assistant<|end_header_id|>"
     },
 }
-
 def apply_template(template_name: str, observation: str) -> str:
     parts = TEMPLATE_PARTS.get(template_name)
-    # assert parts is not None, f"Template '{template_name}' does not exist."
     return format_template(system=parts.get("system", ""), user=parts["user"](observation), assistant=parts.get("assistant", ""))
+
+
+def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
+    matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
+    if matches:
+        last_match = matches[-1].strip()
+        if last_match:  # non-empty boxed
+            action = f"[{last_match}]" if "[" not in last_match else last_match
+            has_think = 1
+        else:  # empty boxed
+            action = raw_action
+            has_think = 0
+    else:  # no boxed at all
+        action = raw_action
+        has_think = 0
+
+    format_feedback = {"has_think": bool(has_think), "has_answer": False, "order_correct": False}
+    return action, format_feedback
+
+
 
 OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda obs: apply_template(key, obs))() for key in TEMPLATE_PARTS}
 ACTION_EXTRACTION = {"default": extract_action_and_format_feedback}
