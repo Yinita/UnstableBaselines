@@ -8,15 +8,9 @@ class FinalRewardTransform:
         raise NotImplementedError
 
 class ComposeFinalRewardTransforms:
-    def __init__(self, transforms: List[FinalRewardTransform]):
-        self.transforms = transforms
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}({self.transforms})"
-
-    def register(self, transform: FinalRewardTransform):
-        self.transforms.append(transform)
-
+    def __init__(self, transforms: List[FinalRewardTransform]): self.transforms = transforms
+    def __repr__(self):                                         return f"{self.__class__.__name__}({self.transforms})"
+    def register(self, transform: FinalRewardTransform):        self.transforms.append(transform)
     def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: Optional[str] = None) -> FINAL_REWARDS_FORMAT:
         for t in self.transforms:
             x = t(x, env_id)
@@ -32,15 +26,9 @@ class WinDrawLossFormatter(FinalRewardTransform):
     def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: Optional[str] = None) -> FINAL_REWARDS_FORMAT:
         x = x.copy()
         assert len(x)==2, f"WinDrawLossFormatter only works for two-player games. Recieved final reward: {x}"
-        if x[0]<x[1]:
-            x[0] = self.loss_reward
-            x[1] = self.win_reward
-        elif x[0]>x[1]:
-            x[0] = self.win_reward
-            x[1] = self.loss_reward
-        else:
-            x[0] = self.draw_reward
-            x[1] = self.draw_reward
+        if x[0]<x[1]:   x[0] = self.loss_reward; x[1] = self.win_reward
+        elif x[0]>x[1]: x[0] = self.win_reward; x[1] = self.loss_reward
+        else:           x[0] = self.draw_reward; x[1] = self.draw_reward
         return x
 
 class RoleAdvantageFormatter(FinalRewardTransform):

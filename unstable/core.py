@@ -35,27 +35,20 @@ class Opponent:
 
 
 class BaseAlgo:
-    def initialize(self, model, tokenizer, device):
+    def initialize(self, model, tokenizer, device, max_train_len: Optional[int]= None, accelerator=None):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
+        self.max_train_len = max_train_len
+        self.accel = accelerator
 
     def prepare_batch(self, steps):
-        """
-        Turn a list[Step] into tensors on self.dev.
-        Return whatever update() needs.
-        """
+        """ Turn a list[Step] into tensors on self.dev. Return whatever update() needs """
         raise NotImplementedError
 
     def update(self, batch):
-        """
-        One gradient update on *this worker only*.
-        Must call .backward() but NOT .step().
-        Return latest loss as float (for logging).
-        """
+        """ One gradient update on *this worker only*. Must call .backward() but NOT .step(). Return latest loss as float (for logging) """
         raise NotImplementedError
-
-
 
 class BaseTracker:
     def __init__(self, run_name: str, output_dir: Optional[str] = None):
@@ -69,9 +62,9 @@ class BaseTracker:
         for folder_name in ["training_data", "eval_data", "checkpoints"]: 
             self.output_dirs[folder_name] =  os.path.join(self.output_dir, folder_name); os.makedirs(self.output_dirs[folder_name], exist_ok=True)
 
-    def get_checkpoints_dir(self): return self.output_dirs["checkpoints"]
-    def get_train_dir(self): return self.output_dirs["training_data"]
-    def get_eval_dir(self): return self.output_dirs["eval_data"]
+    def get_checkpoints_dir(self):  return self.output_dirs["checkpoints"]
+    def get_train_dir(self):        return self.output_dirs["training_data"]
+    def get_eval_dir(self):         return self.output_dirs["eval_data"]
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str): raise NotImplementedError
     def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
     def log_lerner(self, info_dict: Dict): raise NotImplementedError

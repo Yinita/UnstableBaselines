@@ -1,6 +1,13 @@
 # 
 
 
+- add a ddp trainer
+- add a fsdp trainer
+- change to specify the mini-batch size and batch size
+
+
+
+
 relevant functions for tracking:
 
 

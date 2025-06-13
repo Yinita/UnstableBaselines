@@ -1,6 +1,7 @@
 import os, ray, wandb, datetime, collections
-from typing import Dict, Optional
+from typing import List, Tuple, Dict, Optional
 import numpy as np
+
 # local imports
 from unstable.core import BaseTracker, Trajectory
 
@@ -11,56 +12,41 @@ class Tracker(BaseTracker):
         super().__init__(run_name=run_name, output_dir=output_dir)
         self.accum_strategy = accum_strategy
         self.wandb_project = wandb_project
+        self._ma_range = 512; self._tau = 0.001
+
         self.metrics = {}
+        if self.wandb_project is not None: wandb.init(project=self.wandb_project, name=self.run_name) # use wandb
 
-        if self.wandb_project is not None: # use wandb
-            wandb.init(project=self.wandb_project, name=self.run_name)
 
-        self._ma_range = 512; 
-        self._tau = 0.001
+    def get_wandb_project(self):    return self.wandb_project
+    def get_run_name(self):         return self.run_name
 
     def _log_metrics(self, prefix: str):
         if self.wandb_project: wandb.log({name: np.mean(value) if isinstance(value, collections.deque) else value for name, value in self.metrics.items() if prefix in name})
 
     def _update_metric(self, name: str, value: float|int|bool, prefix: str, env_id:str):
         for key in [f"{prefix}-{env_id}/{name}", f"{prefix}-all/{name}"]:
-            if self.accum_strategy == "ma": 
-                if key not in self.metrics: self.metrics[key] = collections.deque(maxlen=self._ma_range)
-                self.metrics[key].append(value)
-
-            elif self.accum_strategy =="ema": 
-                self.metrics[key] = self.metrics.get(key) * (1-self._tau) + self._tau * value 
-
-            else:
-                raise NotImplementedError(f"The accumulation strategy {self.accum_strategy} is not implemented.")
+            match self.accum_strategy:
+                case "ma":  self.metrics.setdefault(key, collections.deque(maxlen=self._ma_range)).append(value)
+                case "ema": self.metrics[key] = self.metrics.get(key, 0.0) * (1-self._tau) + self._tau * value 
+                case _:     raise NotImplementedError(f"The accumulation strategy {self.accum_strategy} is not implemented.")
+    
+    def _batch_update_metrics(self, name_value_pairs: List[Tuple[str, float|int|bool]], prefix: str, env_id: str):
+        for name, value in name_value_pairs: 
+            self._update_metric(name=name, value=value, prefix=prefix, env_id=env_id)
 
     def _add_trajectory_to_metrics(self, trajectory: Trajectory, player_id: int, env_id: str, prefix: str="collection"):
-        self._update_metric(name="Game Length", value=trajectory.num_turns, prefix=prefix, env_id=env_id) # log game length
-
-        if len(trajectory.final_rewards) == 1: # single-player env
-            self._update_metric(name="Reward", value=model_reward, prefix=prefix, env_id=env_id) # log all rewards
-
-        elif len(trajectory.final_rewards) == 2: # two-player env
-            model_reward = trajectory.final_rewards[player_id]
-            opponent_reward = trajectory.final_rewards[1-player_id]
-            self._update_metric(name="Win Rate", value=int(model_reward > opponent_reward), prefix=prefix, env_id=env_id)
-            self._update_metric(name="Loss Rate", value=int(model_reward < opponent_reward), prefix=prefix, env_id=env_id)
-            self._update_metric(name="Draw Rate", value=int(model_reward == opponent_reward), prefix=prefix, env_id=env_id)
-            self._update_metric(name="Reward", value=model_reward, prefix=prefix, env_id=env_id) # log all rewards
-            self._update_metric(name=f"Reward (pid={player_id})", value=model_reward, prefix=prefix, env_id=env_id) # log rewards by pid
-
-        else:
-            raise NotImplementedError("Tracker is not implemented for more than two player games")
-        
+        m_reward = trajectory.final_rewards[player_id]; o_reward = trajectory.final_rewards[1-player_id]
+        name_value_pairs = [("Game Length", trajectory.num_turns)] # log game length
+        match len(trajectory.final_rewards):
+            case 1: name_value_pairs.extend([("Reward", m_reward)]) # single-player env
+            case 2: name_value_pairs.extend([("Win Rate", int(m_reward>o_reward)), ("Loss Rate", int(m_reward<o_reward)), ("Draw Rate", int(m_reward==o_reward)), ("Reward", m_reward), (f"Reward (pid={player_id})", m_reward)]) # two-player env
+            case _: raise NotImplementedError("Tracker is not implemented for more than two player games")
         for i in range(len(trajectory.pid)): # iterate over turns
             if player_id == trajectory.pid[i]: # ensure we are only logging our own model here 
-                for key in trajectory.format_feedbacks[i]: # log all format rewards 
-                    self._update_metric(name=f"Format Success Rate - {key}", value=trajectory.format_feedbacks[i][key], prefix=prefix, env_id=env_id)
-
-                # log obs and resp lengths
-                self._update_metric(name="Response Length (avg. char)", value=len(trajectory.actions[i]), prefix=prefix, env_id=env_id)
-                self._update_metric(name="Observation Length (avg. char)", value=len(trajectory.obs[i]), prefix=prefix, env_id=env_id)
-
+                for key in trajectory.format_feedbacks[i]: name_value_pairs.append((f"Format Success Rate - {key}", trajectory.format_feedbacks[i][key])) # log all format rewards 
+                name_value_pairs.extend([("Response Length (avg. char)", len(trajectory.actions[i])), ("Observation Length (avg. char)", len(trajectory.obs[i]))]) # log obs and resp lengths
+        self._batch_update_metrics(name_value_pairs=name_value_pairs, prefix=prefix, env_id=env_id)
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str, prefix: str="collection"):
         self._add_trajectory_to_metrics(trajectory=trajectory, player_id=player_id, env_id=env_id, prefix=prefix)
@@ -68,24 +54,21 @@ class Tracker(BaseTracker):
 
     def log_learner(self, info_dict: Dict):
         self.metrics.update({f"learner/{name}": value for name, value in info_dict.items()})
-        self.learner_metrics = info_dict
+        self._log_metrics(prefix="learner")
+        # self.learner_metrics = info_dict
+        # wandb.log()
 
     def _add_eval_episode_to_metrics(self, episode_info: Dict, final_rewards: Dict, player_id: int, env_id: str, iteration: int, prefix: str="evaluation"):
-        self._update_metric(name="Game Length", value=len(episode_info), prefix=prefix, env_id=env_id) # log game length
-        self._update_metric(name="Reward", value=final_rewards[player_id], prefix=prefix, env_id=env_id)
-
+        name_value_pairs = [("Game Length", len(episode_info)), ("Reward", final_rewards[player_id])] # Log game length and reward
         if len(final_rewards) == 2: # two-player env
-            model_reward = final_rewards[player_id]
-            opponent_reward = final_rewards[1-player_id]
-            self._update_metric(name="Win Rate", value=int(model_reward > opponent_reward), prefix=prefix, env_id=env_id)
-            self._update_metric(name="Draw Rate", value=int(model_reward < opponent_reward), prefix=prefix, env_id=env_id)
-            self._update_metric(name="Loss Rate", value=int(model_reward == opponent_reward), prefix=prefix, env_id=env_id)
-
+            m_reward=final_rewards[player_id]; o_reward=final_rewards[1-player_id]
+            name_value_pairs.extend([("Win Rate", int(m_reward>o_reward)), ("Loss Rate", int(m_reward<o_reward)), ("Draw Rate", int(m_reward==o_reward)), ("Reward", m_reward), (f"Reward (pid={player_id})", m_reward)])
             # save csv 
             # TODO
+        elif len(final_rewards) > 2: raise NotImplementedError("Tracker is not implemented for more than two player games")
 
-        else:
-            raise NotImplementedError("Tracker is not implemented for more than two player games")
+        self._batch_update_metrics(name_value_pairs=name_value_pairs, prefix=prefix, env_id=env_id)
+
 
     def add_eval_episode(self, episode_info: Dict, final_rewards: Dict, player_id: int, env_id: str, iteration: int, prefix: str="evaluation"):
         self._add_eval_episode_to_metrics(episode_info=episode_info, final_rewards=final_rewards, player_id=player_id, env_id=env_id, iteration=iteration, prefix=prefix)

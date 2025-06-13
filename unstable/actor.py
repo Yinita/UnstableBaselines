@@ -17,7 +17,7 @@ class VLLMActor:
 
         engine_args = EngineArgs(
             model=vllm_config["model_name"], enable_lora=True, max_loras=vllm_config.get("max_loras", 5), max_lora_rank=vllm_config["lora_config"]["lora_rank"], 
-            max_cpu_loras=vllm_config.get("max_loras", 5), max_num_seqs=vllm_config["max_parallel_seq"], task="generate"
+            max_cpu_loras=vllm_config.get("max_loras", 5), max_num_seqs=vllm_config["max_parallel_seq"], task="generate", max_model_len=vllm_config.get("max_model_len", 8192)
         )
         self.engine = LLMEngine.from_engine_args(engine_args)
         self.sampling_params = SamplingParams(temperature=vllm_config.get("temperature", 0.7),  top_p=vllm_config.get("top_p", 0.95), max_tokens=vllm_config.get("max_tokens", 4096))
