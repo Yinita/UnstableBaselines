@@ -1,8 +1,7 @@
 # 
 
 
-- add a ddp trainer
-- add a fsdp trainer
+- add proper logging for each module (and store at outputs/XXXXXXX/logs)
 - change to specify the mini-batch size and batch size
 
 

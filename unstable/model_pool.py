@@ -191,9 +191,9 @@ class ModelPool:
     def snapshot(self, iteration: int):
         self._step_counter = iteration
         self._tracker.log_model_pool.remote(
-            iteration=iteration, match_counts=dict(self._match_counts),
+            step=iteration, iteration=iteration, match_counts=dict(self._match_counts),
             ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
-            exploration_ratios=self._get_exploration_ratios()
+            exploration_ratios=self._get_exploration_ratios(),
         )
 
 
