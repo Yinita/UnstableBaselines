@@ -58,28 +58,19 @@ class ModelPool:
         return self._models[uid].path_or_name
 
     def sample(self, uid_me):
-        if self.sample_mode == "fixed": return self._sample_fixed_opponent() # randomly sample one of the fixed opponents provided
-        elif self.sample_mode == "mirror": return self.latest_ckpt() # literally play against yourself
-        elif self.sample_mode == "lagged": return self._sample_lagged_opponent() # sample an opponent randomly from the available checkpoints (will be lagged by default)
-        elif self.sample_mode == "random": return self._sample_random_opponent() # randomly select an opponent from prev checkpoints and fixed opponents
-        elif self.sample_mode == "match-quality": return self._sample_match_quality_opponent(uid_me=uid_me) # sample an opponent (fixed or prev) based on the TrueSkill match quality
-        elif self.sample_mode == "ts-dist": return self._sample_ts_dist_opponent(uid_me=uid_me) # sample an opponent (fixed or prev) based on the absolute difference in TrueSkill scores
-        elif self.sample_mode == "ts-dist-biased": return self._sample_ts_dist_biased_opponent(uid_me=uid_me) # sample an opponent (fixed or prev) based on the exp(mu_i-mu_b) distance (i.e. biased towards stronger opponents)
-        elif self.sample_mode == "exploration": return self._sample_exploration_opponent(uid_me=uid_me) # sample an opponent based on the expected number of unique board states when playing against that opponent
-        else: raise ValueError(self.sample_mode)
+        match self.sample_mode:
+            case "fixed":           return self._sample_fixed_opponent()                        # randomly sample one of the fixed opponents provided
+            case "mirror":          return self.latest_ckpt()                                   # literally play against yourself
+            case "lagged":          return self._sample_lagged_opponent()                       # sample an opponent randomly from the available checkpoints (will be lagged by default)
+            case "random":          return self._sample_random_opponent()                       # randomly select an opponent from prev checkpoints and fixed opponents
+            case "match-quality":   return self._sample_match_quality_opponent(uid_me=uid_me)   # sample an opponent (fixed or prev) based on the TrueSkill match quality
+            case "ts-dist":         return self._sample_ts_dist_opponent(uid_me=uid_me)         # sample an opponent (fixed or prev) based on the absolute difference in TrueSkill scores
+            case "exploration":     return self._sample_exploration_opponent(uid_me=uid_me)     # sample an opponent based on the expected number of unique board states when playing against that opponent
+            case _:                 raise ValueError(self.sample_mode)
 
-    def _sample_fixed_opponent(self):
-        fixed = [u for u,m in self._models.items() if m.kind=="fixed"]
-        return random.choice(fixed)
-
-    def _sample_lagged_opponent(self):
-        available = [u for u,m in self._models.items() if (m.kind=="checkpoint" and m.active==True)]
-        return random.choice(available)
-
-    def _sample_random_opponent(self):
-        fixed = [u for u,m in self._models.items() if m.kind=="fixed"]
-        checkpoints = [u for u,m in self._models.items() if (m.kind=="checkpoint" and m.active==True)]
-        return random.choice(fixed+checkpoints)
+    def _sample_fixed_opponent(self):   return random.choice([u for u,m in self._models.items() if m.kind=="fixed"])
+    def _sample_lagged_opponent(self):  return random.choice([u for u,m in self._models.items() if (m.kind=="checkpoint" and m.active==True)])
+    def _sample_random_opponent(self):  return random.choice([u for u,m in self._models.items() if m.kind=="fixed"]+[u for u,m in self._models.items() if (m.kind=="checkpoint" and m.active==True)])
 
     def _sample_match_quality_opponent(self, uid_me: str) -> str:
         """ Pick an opponent with probability ∝ TrueSkill match-quality """
@@ -92,10 +83,8 @@ class ModelPool:
             weights.append(q) # already scaled
 
         # softmax the weights
-        for i in range(len(weights)): 
-            weights[i] = weights[i] / sum(weights)
-        if not cand: 
-            return None
+        for i in range(len(weights)): weights[i] = weights[i] / sum(weights)
+        if not cand: return None
         return random.choices(cand, weights=weights, k=1)[0]
 
     def _sample_ts_dist_opponent(self, uid_me: str) -> str:
@@ -114,31 +103,15 @@ class ModelPool:
             return None
         return random.choices(cand, weights=weights, k=1)[0]
 
-    def _sample_ts_dist_biased_opponent(self, uid_me: str):
-        cand, weights = [], []
-        for uid, opp in self._models.items():
-            if uid == uid_me or not opp.active:
-                continue
-            d = math.exp((opp.rating.mu-self._models[uid_me].rating.mu)/25)
-            cand.append(uid)
-            weights.append(d)
-
-        for i in range(len(weights)):
-            weights[i] = weights[i]/sum(weights)
-        if not cand:
-            return None
-        return random.choices(cand, weights=weights, k=1)[0]
-
-    def _sample_exploration_opponent(self, uid_me: str):
-        raise NotImplementedError
+    def _sample_exploration_opponent(self, uid_me: str): raise NotImplementedError
 
     def _update_ratings(self, uid_me: str, uid_opp: str, final_reward: float):
         a = self._models[uid_me].rating
         b = self._models[uid_opp].rating
 
-        if final_reward == 1: new_a, new_b = self.TS.rate_1vs1(a, b) # uid_me wins → order is (a, b)
-        elif final_reward == -1: new_b, new_a = self.TS.rate_1vs1(b, a) # uid_opp wins → order is (b, a)
-        elif final_reward == 0: new_a, new_b = self.TS.rate_1vs1(a, b, drawn=True) # draw
+        if final_reward == 1:       new_a, new_b = self.TS.rate_1vs1(a, b) # uid_me wins → order is (a, b)
+        elif final_reward == -1:    new_b, new_a = self.TS.rate_1vs1(b, a) # uid_opp wins → order is (b, a)
+        elif final_reward == 0:     new_a, new_b = self.TS.rate_1vs1(a, b, drawn=True) # draw
         else: return # unexpected reward value
 
         self._models[uid_me].rating = new_a
@@ -172,9 +145,9 @@ class ModelPool:
         self._track_exploration(uid_me=uid_me, uid_opp=uid_opp, game_action_seq=game_action_seq) # tracke unique action seqs
 
 
-    def _exp_win(self, A, B): return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
-    def _activate(self, uid): self._models[uid].active = True
-    def _retire(self, uid): self._models[uid].active = False
+    def _exp_win(self, A, B):   return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
+    def _activate(self, uid):   self._models[uid].active = True
+    def _retire(self, uid):     self._models[uid].active = False
 
     def _maintain_active_pool(self):
         current = self.latest_ckpt()
@@ -188,32 +161,14 @@ class ModelPool:
 
         # score candidates according to sampling mode
         scores = {}
-        if self.sample_mode in {"random", "lagged"}: 
-            scores = {uid: self._ckpt_log.index(uid) for uid in cands}
-
-        elif self.sample_mode == "match-quality":
-            for uid in cands:
-                scores[uid] = self.TS.quality([cur_rating, self._models[uid].rating])
-
-        elif self.sample_mode == "ts-dist":
-            for uid in cands:
-                scores[uid] = -abs(cur_rating.mu - self._models[uid].rating.mu) 
-
-        elif self.sample_mode == "ts-dist-biased":
-            pos, neg = {}, {}
-            for uid in cands:
-                delta = self._models[uid].rating.mu - cur_rating.mu
-                (pos if delta >= 0 else neg)[uid] = delta
-            # keep strongest positives first; if not enough, use closest negatives
-            ordered = (sorted(pos, key=pos.__getitem__, reverse=True) + sorted(neg, key=lambda u: abs(neg[u])))
-            scores = {uid: len(ordered) - i for i, uid in enumerate(ordered)}# bigger rank ⇒ bigger score
-
-        else:
-            scores = {uid: self._ckpt_log.index(uid) for uid in cands}
+        match self.sample_mode:
+            case "random" | "lagged":   scores = {uid: self._ckpt_log.index(uid) for uid in cands}
+            case "match-quality":       scores.update({uid: self.TS.quality([cur_rating, self._models[uid].rating]) for uid in cands})
+            case "ts-dist":             scores.update({uid: -abs(cur_rating.mu - self._models[uid].rating.mu) for uid in cands})
+            case _:                     scores = {uid: self._ckpt_log.index(uid) for uid in cands}
 
         # pick the N best, plus the current ckpt
-        N = self.max_active_lora - 1 # slot for current already reserved
-        keep = {current} | set(sorted(scores, key=scores.__getitem__, reverse=True)[:max(0, N)])
+        keep = {current} | set(sorted(scores, key=scores.__getitem__, reverse=True)[:max(0, self.max_active_lora - 1)])
 
         # flip active flags
         for uid, opp in self._models.items():

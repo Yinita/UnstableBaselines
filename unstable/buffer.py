@@ -49,10 +49,8 @@ class StepBuffer:
         for i in range(n): # these are already just steps by our model
             reward = transformed_rewards[trajectory.pid[i]]
             step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) if self.step_reward_transformation is not None else reward
-            self.steps.append(Step(
-                pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward, env_id=env_id,
-                step_info={"raw_reward": trajectory.final_rewards[trajectory.pid[i]], "transformed_end_of_game_reward": transformed_rewards[trajectory.pid[i]], "step_reward": step_reward}
-            ))
+            step_info = {"raw_reward": trajectory.final_rewards[trajectory.pid[i]], "transformed_end_of_game_reward": transformed_rewards[trajectory.pid[i]], "step_reward": step_reward}
+            self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward, env_id=env_id, step_info=step_info))
         print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 
         excess_num_samples = int(len(self.steps) - self.max_buffer_size)
@@ -78,9 +76,6 @@ class StepBuffer:
         self.training_steps += 1
         return batch
 
-    def size(self) -> int:
-        return len(self.steps)
-
-    def clear(self):
-        self.steps.clear()
+    def size(self) -> int:  return len(self.steps)
+    def clear(self):        self.steps.clear()
 

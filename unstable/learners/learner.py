@@ -33,6 +33,10 @@ class Learner:
         ckpt_root: str = "checkpoints",
         save_every: int = 1,
         tracker=None,
+        activation_checkpointing: bool = True,
+        gradient_checkpointing: bool = True,
+        use_trainer_cache: bool = False,
+        max_train_len: Optional[int] = None
     ):
         """Async learner.
 
@@ -43,11 +47,6 @@ class Learner:
         batch_delay_buffer : how much larger the buffer has to be (× batch)
             before the first optimisation step – helps avoid early bias.
         """
-        self.activation_checkpointing = True # TODO add to init
-        self.gradient_checkpointing = True  # TODO add to init
-        self.use_trainer_cache = False
-        self.max_train_len = 4096 # TODO create a tabel with recommended amounts for different vram qtys
-
         self.algorithm = algorithm
         self.batch_size = batch_size
         self.grad_accum = gradient_accum_steps
@@ -72,13 +71,13 @@ class Learner:
 
         # if num_learners > 1: self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[0], output_device=0, find_unused_parameters=False) # Wrap in DDP (assumes learners launched with 1 GPU each)
         
-        if not self.use_trainer_cache:      self.model.config.use_cache = False
-        if self.gradient_checkpointing:     self.model.gradient_checkpointing_enable() # gradient checkpointing
-        if self.activation_checkpointing:   enable_full_activation_ckpt(self.model)
+        if not use_trainer_cache:      self.model.config.use_cache = False
+        if gradient_checkpointing:     self.model.gradient_checkpointing_enable() # gradient checkpointing
+        if activation_checkpointing:   enable_full_activation_ckpt(self.model)
         
         # algorithm and optimizer
         self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=learning_rate)
-        self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device, max_train_len=4096) # TODO pass
+        self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device, max_train_len=max_train_len) # TODO create a tabel with recommended amounts for different vram qtys
         
         self._step = 0; self._samples_seen = 0 # training counters
 

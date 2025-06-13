@@ -30,10 +30,15 @@ def gemma3_template(observation: str) -> str:
         "<start_of_turn>model\n"
     )
 
+def llama_template(observation: str) -> str:
+    return (
+        f"You are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
+        "\nPlease reason step by step, and put your final answer within \\boxed{}\n"
+        "Your answer:\n"
+    )
 
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
     matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
-    
     if matches:
         last_match = matches[-1].strip()
         if last_match:  # non-empty boxed
@@ -56,10 +61,13 @@ OBSERVATION_FORMATTING = {
     "qwen3-game": qwen3_template,
     "qwen3-zs": qwen3_template,
     "qwen3-reasoning": qwen3_template_reasoning,
-    "gemma3-zs": gemma3_template
+    "gemma3-zs": gemma3_template,
+    "llama-zs": llama_template
 }
 
 ACTION_EXTRACTION = {
     "default": extract_action_and_format_feedback,
     "qwen3-zs": extract_action_and_format_feedback,
+    "gemma3-zs": extract_action_and_format_feedback,
+    "llama-zs": extract_action_and_format_feedback,
 }

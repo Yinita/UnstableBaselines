@@ -136,9 +136,9 @@ class Collector:
             model = CallableActorWrapper(actor, lora_path, obs_format, extract_fn)
             game_action_seq = []
 
-            if opponent_uid is None: opponent = model
-            elif opponent_uid.startswith("ckpt-"): opponent = CallableActorWrapper(actor, opponent_path_or_name, obs_format, extract_fn)
-            else: opponent = ta.agents.OpenRouterAgent(opponent_path_or_name)
+            if opponent_uid is None:                opponent = model
+            elif opponent_uid.startswith("ckpt-"):  opponent = CallableActorWrapper(actor, opponent_path_or_name, obs_format, extract_fn)
+            else:                                   opponent = ta.agents.OpenRouterAgent(opponent_path_or_name)
 
             env = ta.make(env_id)
             env.reset(num_players=num_players, seed=seed)

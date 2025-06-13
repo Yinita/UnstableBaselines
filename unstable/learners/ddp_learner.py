@@ -1,7 +1,7 @@
 import time, pathlib, math, json
 from typing import Any, Dict, Optional, List
 
-import ray, torch, transformers
+import ray, torch, transformers, os
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
 
 # local imports
@@ -10,6 +10,14 @@ from unstable.core import BaseAlgo
 from unstable.model_pool import ModelPool
 from unstable.learners.utils import build_peft_model, make_checkpointing_filter
 
+# TODO check if all of this is necessary for other gpus (debugging on RTX6000 ada)
+# TODO also make this exectution optional (i.e. not on import)
+for k in ("NCCL_SOCKET_IFNAME", "NCCL_NET"):
+    os.environ.pop(k, None)
+os.environ.update(
+    NCCL_P2P_LEVEL="SYS", NCCL_SHM_DISABLE="0", NCCL_IB_DISABLE="1", NCCL_PLUGIN_DISABLE="1",
+    NCCL_DEBUG="INFO", TORCH_NCCL_BLOCKING_WAIT="1", TORCH_NCCL_ASYNC_ERROR_HANDLING="1",
+)
 
 @ray.remote
 class DDPLearner:
@@ -40,6 +48,8 @@ class DDPLearner:
         batch_delay_buffer : how much larger the buffer has to be (× batch)
             before the first optimisation step – helps avoid early bias.
         """
+        assert NotImplementedError("Not checked to be working reliably")
+        # TODO assert num learners
         self.activation_checkpointing = False # TODO add to init
         self.gradient_checkpointing = True  # TODO add to init
 

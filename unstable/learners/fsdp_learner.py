@@ -15,6 +15,7 @@ from unstable.model_pool import ModelPool
 from unstable.learners.utils import build_peft_model, make_checkpointing_filter, _json_safe
 
 
+# TODO check if all of this is necessary for other gpus (debugging on RTX6000 ada)
 for k in ("NCCL_SOCKET_IFNAME", "NCCL_NET"):
     os.environ.pop(k, None)
 os.environ.update(
@@ -46,6 +47,7 @@ class FSDPLearner:
         tracker=None,
         verbose: bool = True
     ):
+        assert NotImplementedError("Not checked to be working reliably")
 
         self.offload_activations_to_cpu = False
         self.mixed_precision_training = False

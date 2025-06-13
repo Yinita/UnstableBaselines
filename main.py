@@ -3,15 +3,17 @@ import unstable.reward_transformations as retra
 
 NUM_LEARNERS = 1
 NUM_ACTORS = 3
-COLLECTION_WORKERS = 128
-EVALUATION_WORKERS = 0
+COLLECTION_WORKERS = 256
+EVALUATION_WORKERS = 16
 ITERATIONS = 128
-MODEL_NAME = "Qwen/Qwen3-4B-base"
-BATCH_SIZE = 16
-BUFFER_SIZE = 16*2
-GRAD_ACCUM = 16
+# MODEL_NAME = "Qwen/Qwen3-4B-base"
+MODEL_NAME = "meta-llama/Llama-3.2-3B"
+BATCH_SIZE = 384
+BUFFER_SIZE = 384*2
+GRAD_ACCUM = 384
 LR = 1e-5
 GRAD_CLIP = 0.2
+MAX_TRAIN_SEQ_LEN = 4096
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
@@ -19,20 +21,30 @@ lora_config = {
 }
 vllm_config = {
     "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": 4096,
-    "max_parallel_seq": 32, "max_loras": 5, "lora_config": lora_config
+    "max_parallel_seq": 64, "max_loras": 5, "lora_config": lora_config,
+    "max_model_len": 8192
 }
 
-TRAINING_ENVS = [("SimpleTak-v0-train", 2, "qwen3-zs")]
-EVALUATION_ENVS= [("SimpleTak-v0-train", 2, "qwen3-zs")]
+TRAINING_ENVS = [
+    # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
+    ("SimpleTak-v0-train", 2, "llama-zs"), 
+    # ("Nim-v0-train", 2, "qwen3-zs"), 
+    # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
+    # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
+]
+EVALUATION_ENVS = [
+    # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
+    ("SimpleTak-v0-train", 2, "llama-zs"), 
+    # ("Nim-v0-train", 2, "qwen3-zs"), 
+    # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
+    # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
+]
 
 WANDB_RUN_NAME = f"Run--{MODEL_NAME.split('/')[-1]}-{int(time.time())}"
 
-# Ray init 
-# ray.init(log_to_driver=True, logging_level="DEBUG")
-ray.init(log_to_driver=True)
 
-# Tracker
-tracker = unstable.Tracker.options(name="Tracker").remote(run_name=WANDB_RUN_NAME, wandb_project="UnstableBaselines")
+ray.init(log_to_driver=True) # Ray init 
+tracker = unstable.Tracker.options(name="Tracker").remote(run_name=WANDB_RUN_NAME, wandb_project="UnstableBaselines") # Tracker
 
 # Data Buffer
 step_buffer = unstable.StepBuffer.remote(
@@ -57,8 +69,22 @@ collector = unstable.Collector.options(name="Collector").remote(
 algorithm = unstable.algorithms.Reinforce()
 
 learner = unstable.learners.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
-    num_learners=NUM_LEARNERS, tracker=tracker, model_name=MODEL_NAME, step_buffer=step_buffer, model_pool=model_pool, algorithm=algorithm, 
-    batch_size=BATCH_SIZE, gradient_accum_steps=GRAD_ACCUM, learning_rate=LR, grad_clip=GRAD_CLIP, batch_delay_buffer=1.5, lora_cfg=lora_config,
+    num_learners=NUM_LEARNERS, 
+    tracker=tracker, 
+    model_name=MODEL_NAME, 
+    step_buffer=step_buffer, 
+    model_pool=model_pool, 
+    algorithm=algorithm, 
+    batch_size=BATCH_SIZE, 
+    gradient_accum_steps=GRAD_ACCUM, 
+    learning_rate=LR, 
+    grad_clip=GRAD_CLIP, 
+    batch_delay_buffer=1.5, 
+    lora_cfg=lora_config,
+    activation_checkpointing=True,
+    gradient_checkpointing=True,
+    use_trainer_cache=False,
+    max_train_len=MAX_TRAIN_SEQ_LEN
 )
 
 try:

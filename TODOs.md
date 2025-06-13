@@ -1,7 +1,6 @@
 # 
 
 
-- add tracking for train seq len and truncation amount (both num trunc and trunc mag)
 - add a ddp trainer
 - add a fsdp trainer
 - change to specify the mini-batch size and batch size

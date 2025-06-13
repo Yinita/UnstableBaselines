@@ -5,8 +5,6 @@ from peft.tuners.lora import LoraLayer
 from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
 
 
-
-
 def _load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
     ckpt_dir = pathlib.Path(ckpt_dir)
     candidates = [ckpt_dir / "adapter_model.safetensors", ckpt_dir / "adapter_model.bin", ckpt_dir / "pytorch_model.bin",]
@@ -28,7 +26,7 @@ def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, A
             trust_remote_code=True,
             attn_implementation="flash_attention_2",
         )
-    base.config._attn_implementation = "flash_attention_2" # try forcing it
+    base.config._attn_implementation = "flash_attention_2" # try forcing it # TODO not really working I think
     if freeze_base:
         for p in base.parameters(): p.requires_grad_(False)
     lcfg = LoraConfig(
@@ -36,12 +34,6 @@ def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, A
         bias="none", task_type="CAUSAL_LM", target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]),
     )
     model = get_peft_model(base, lcfg).to(device)
-
-    print("\n[Debug] Attention module types:")
-    for name, module in model.named_modules():
-        # if "attn" in name.lower() or "attention" in name.lower():
-        if not "lora" in name.lower():
-            print(f"{name}: {type(module)}")
 
     if initial_lora_path:
         print(f"[Learner] Loading initial LoRA weights from {initial_lora_path}")
