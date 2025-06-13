@@ -1,7 +1,5 @@
+from unstable.learners.learner import Learner
 from unstable.learners.fsdp_learner import FSDPLearner
-from unstable.learners.standard_learner import Learner
-from unstable.learners.accelerator_learner import ACCLearner
-from unstable.learners.deepspeed_learner import DeepSpeedLearner
-from unstable.learners.ds_learning_function import train_func
+from unstable.learners.ddp_learner import DDPLearner
 
 

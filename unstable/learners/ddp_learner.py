@@ -12,7 +12,7 @@ from unstable.learners.utils import build_peft_model, make_checkpointing_filter
 
 
 @ray.remote
-class Learner:
+class DDPLearner:
     def __init__(
         self,
         model_name: str,

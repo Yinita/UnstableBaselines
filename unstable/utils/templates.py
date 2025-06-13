@@ -23,16 +23,13 @@ def qwen3_template_reasoning(observation: str) -> str:
         "<|im_start|>assistant\n"
     )
 
-"""
-<bos><start_of_turn>user
-knock knock<end_of_turn>
-<start_of_turn>model
-who is there<end_of_turn>
-<start_of_turn>user
-Gemma<end_of_turn>
-<start_of_turn>model
-Gemma who?<end_of_turn>
-"""
+def gemma3_template(observation: str) -> str:
+    return (
+        f"<bos><start_of_turn>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
+        "\nPlease reason step by step, and put your final answer within \\boxed{}.<end_of_turn>\n"
+        "<start_of_turn>model\n"
+    )
+
 
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
     matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
@@ -59,6 +56,7 @@ OBSERVATION_FORMATTING = {
     "qwen3-game": qwen3_template,
     "qwen3-zs": qwen3_template,
     "qwen3-reasoning": qwen3_template_reasoning,
+    "gemma3-zs": gemma3_template
 }
 
 ACTION_EXTRACTION = {
