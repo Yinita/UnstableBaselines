@@ -9,8 +9,8 @@ from vllm.lora.request import LoRARequest
 @ray.remote
 class VLLMActor:
     def __init__(self, vllm_config: Dict[str, Any], tracker, name: str):
-        gpu_ids = ray.get_gpu_ids()
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
+        self.gpu_ids = ray.get_gpu_ids()
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
         torch.cuda.set_device(0)
 
         engine_args = EngineArgs(
@@ -90,8 +90,10 @@ class VLLMActor:
     async def _report_loop(self):
         while True:
             if self.tracker is not None:
-                stats = {lora: {"queued" : self._queued[lora], "running": self._running[lora], "tok_s": self._tok_rate(lora)} for lora in set(self._queued) | set(self._running) | set(self._tok_hist)}
-                await self.tracker.log_inference.remote(actor=self.name, stats=stats)
+                lora_stats = {l: {"queued": self._queued[l], "running": self._running[l], "tok_s": self._tok_rate(l)} for l in set(self._queued)|set(self._running)|set(self._tok_hist)}
+                total_tok_s = sum(s["tok_s"] for s in lora_stats.values())
+                await self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, stats=lora_stats)
+                # await self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, tok_s=total_tok_s, stats=lora_stats)
             await asyncio.sleep(3.0)
 
     def _tok_rate(self, lora: str, window: float = 2.0) -> float:
