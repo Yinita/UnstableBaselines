@@ -7,7 +7,7 @@ from unstable.core import BaseTracker, Trajectory
 @ray.remote
 class Tracker(BaseTracker):
     COLLECT_FLUSH_EVERY: int = 64 # How often to push collection stats (in *trajectories*)
-    TOPK: int = 10 # Only keep the K most‑played match‑ups in the dashboard table
+    TOPK: int = 25 # Only keep the K most‑played match‑ups in the dashboard table
 
     def __init__(self, run_name: str, accum_strategy: str="ma", output_dir: Optional[str]=None, wandb_project: Optional[str]=None) -> None:
         super().__init__(run_name=run_name, output_dir=output_dir)
@@ -17,9 +17,10 @@ class Tracker(BaseTracker):
 
         # metric storage
         self._metrics: dict[str, Union[collections.deque, float]] = {}
+        self._inference: dict[str, dict[str, float]] = {}
+
         self._buffer: dict[str, Union[int, float, bool, "wandb.Table"]] = {}
         self._collect_counter: int = 0  # trajectories since last flush
-        self._inference: dict[str, dict[str, float]] = {}
 
         self._collection_snapshot: dict[str, float] = {}
         self._eval_snapshot: dict[str, float] = {}
@@ -32,8 +33,6 @@ class Tracker(BaseTracker):
 
         if self.wandb_project is not None:
             wandb.init(project=self.wandb_project, name=run_name)
-            wandb.define_metric("learner/step", step_metric="learner/step")
-            wandb.define_metric("env/episode", step_metric="env/episode")
 
     def _aggregate(self, prefix: str) -> dict[str, Union[int, float]]:
         """Collapse internal metric deques/emas into scalars for prefix """
@@ -46,7 +45,6 @@ class Tracker(BaseTracker):
     def _flush(self, force: bool = False):
         wandb.log(self._buffer)
         self._buffer.clear()
-        self._collect_counter = 0
 
     # metric bookkeeping
     def _update_metric(self, name: str, value: float | int | bool, prefix: str, env_id: str):
@@ -78,10 +76,9 @@ class Tracker(BaseTracker):
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str, prefix: str = "collection"):
         self._add_trajectory_to_metrics(trajectory, player_id, env_id, prefix)
+        self._buffer.update(self._aggregate(prefix))
         self._collect_counter += 1
-        if self._collect_counter % self.COLLECT_FLUSH_EVERY == 0:
-            self._buffer.update(self._aggregate(prefix))
-            self._flush()
+        if self._collect_counter % self.COLLECT_FLUSH_EVERY == 0: self._flush()
         self._collection_snapshot = self._aggregate("collection")
 
     def log_learner(self, info: dict):
@@ -121,7 +118,6 @@ class Tracker(BaseTracker):
         self._ts_snapshot = ts_dict
         self._match_counts = match_counts
         
-
     def log_inference(self, actor: str, gpu_ids: list[int], stats: dict[str, dict[str, float]]):
         self._inference[actor] = stats
         share = sum(meta.get("tok_s", 0.0) for meta in stats.values()) / max(1, len(gpu_ids))
@@ -131,11 +127,7 @@ class Tracker(BaseTracker):
             self._gpu_last_seen[gid] = now
 
         if self.wandb_project:
-            flat_stats = {}
-            for lora, values in stats.items():
-                for key, val in values.items():
-                    flat_stats[f"inference/{lora}/{key}"] = val
-            flat_stats["inference/actor"] = actor
+            flat_stats = {f"inference/{actor}/queued": sum(s["queued"] for s in stats.values()), f"inference/{actor}/running": sum(s["running"] for s in stats.values()), f"inference/{actor}/tokens_sec": sum(s["tok_s"] for s in stats.values())}
             self._buffer.update(flat_stats)
             self._flush()
 

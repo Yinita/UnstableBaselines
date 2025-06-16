@@ -6,14 +6,14 @@ NUM_ACTORS = 3
 COLLECTION_WORKERS = 128
 EVALUATION_WORKERS = 6
 ITERATIONS = 128
-MODEL_NAME = "Qwen/Qwen3-4B-base"
+MODEL_NAME = "Qwen/Qwen3-1.7B-base"
 # MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
-BATCH_SIZE = 16
+BATCH_SIZE = 64
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = 2500
+MAX_TRAIN_SEQ_LEN = 4000
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
@@ -74,8 +74,6 @@ collector = unstable.Collector.options(name="Collector").remote(
 
 # Algorithm and Learner
 algorithm = unstable.algorithms.Reinforce()
-# algorithm = unstable.algorithms.ReinforceWithOffloading()
-
 
 learner = unstable.StandardLearner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
     num_learners=NUM_LEARNERS, 
