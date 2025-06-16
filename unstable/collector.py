@@ -1,5 +1,6 @@
 import re, ray, random, itertools
 from typing import List, Dict, Tuple, Optional, Any, Callable
+from ray.exceptions import RayTaskError, RayActorError
 
 import textarena as ta 
 assert ta.__version__ == "0.6.9", f"You need to use TextArena version 0.6.9 (build from source). You are using: {textarena.__version__}"
@@ -99,9 +100,11 @@ class Collector:
         self.filter_opponent_invalid = filter_opponent_invalid
         self.action_extraction = action_extraction
 
-        actors = [VLLMActor.options(num_gpus=1).remote(vllm_config=vllm_config) for _ in range(num_actors)]
-        self.actor_iter = itertools.cycle(actors)
+        self.actors = [VLLMActor.options(num_gpus=1).remote(vllm_config=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(num_actors)]
+        self.actor_iter = itertools.cycle(self.actors)
 
+    def get_actors(self): return self.actors
+    
     def _sample_env(self, seed: int = 489, _type: str = "train") -> Tuple[str, int, int, Optional[str]]:
         """Samples a random environment from the training set."""
         env_id, num_players, prompt_template = random.Random(seed).choice(self.training_envs if _type=="train" else self.evaluation_envs)
@@ -118,7 +121,7 @@ class Collector:
         return dict(
             env_id=env_id, num_players=num_players, player_id=player_id, actor=actor, lora_path=lora_path,
             opponent_uid=opponent_uid, model_uid=current_model_uid, opponent_path_or_name=opponent_path_or_name,
-            prompt_template=prompt_template, seed=seed
+            prompt_template=prompt_template, action_extraction=self.action_extraction, seed=seed
         )
 
     def _build_eval_args(self, env_id, num_players, player_id, prompt_template, ckpt_uid, seed):
@@ -126,15 +129,15 @@ class Collector:
         actor = next(self.actor_iter)
         return dict(
             env_id=env_id, num_players=num_players, player_id=player_id, actor=actor, lora_path=lora_path,
-            opponent_name=self.evaluation_opponent, prompt_template=prompt_template, seed=seed
+            opponent_name=self.evaluation_opponent, prompt_template=prompt_template, action_extraction=self.action_extraction, seed=seed
         )
 
     def collect(self, num_workers: int, num_eval_workers: int):
         """ Main loop for collecting trajectories and evaluations concurrently """
         @ray.remote(num_cpus=0)
-        def run_game(env_id, num_players, player_id, actor, lora_path, opponent_uid, model_uid, opponent_path_or_name, prompt_template, seed: int = 489):
+        def run_game(env_id, num_players, player_id, actor, lora_path, opponent_uid, model_uid, opponent_path_or_name, prompt_template, action_extraction, seed: int = 489):
             obs_format = OBSERVATION_FORMATTING[prompt_template]
-            extract_fn = ACTION_EXTRACTION[self.action_extraction]
+            extract_fn = ACTION_EXTRACTION[action_extraction]
             model = CallableActorWrapper(actor, lora_path, obs_format, extract_fn)
             game_action_seq = []
 
@@ -174,8 +177,8 @@ class Collector:
             return traj, player_id, env_id, (info["end_by_invalid"] and pid != player_id), game_action_seq
 
         @ray.remote(num_cpus=0)
-        def run_eval_game(env_id, num_players, player_id, actor, lora_path, opponent_name, prompt_template, seed: int = 489):
-            model = CallableActorWrapper( actor, lora_path, OBSERVATION_FORMATTING[prompt_template], ACTION_EXTRACTION[self.action_extraction])
+        def run_eval_game(env_id, num_players, player_id, actor, lora_path, opponent_name, prompt_template, action_extraction, seed: int = 489):
+            model = CallableActorWrapper( actor, lora_path, OBSERVATION_FORMATTING[prompt_template], ACTION_EXTRACTION[action_extraction])
             opponent = ta.agents.OpenRouterAgent(opponent_name)
 
             env = ta.make(env_id)
@@ -223,6 +226,14 @@ class Collector:
             if not wait_pool: continue  # nothing running (should not happen)
             done_ref, _ = ray.wait(wait_pool, num_returns=1)
             finished = done_ref[0]
+
+            try: # TODO maybe move into the actual one below
+                result = ray.get(finished)
+            except (RayTaskError, RayActorError) as err:
+                # Log & replace the failed flight entry
+                logger.error("Game task failed: %s", err)
+                continue  # loop back – flight slot will be refilled next iteration
+
 
             idx = next((i for i, (f, _, _) in enumerate(train_flight) if f == finished), None)
             if idx is not None:

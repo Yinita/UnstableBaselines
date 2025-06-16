@@ -7,7 +7,7 @@ TEMPLATE_PARTS = {
     "default": {
         "user": lambda obs: f"You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{{}}.\nObservation: {obs}\n"
     },
-    "qwen3": {
+    "qwen3-zs": {
         "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
@@ -49,5 +49,5 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
 
 
 
-OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda obs: apply_template(key, obs))() for key in TEMPLATE_PARTS}
+OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda observation: apply_template(key, observation))() for key in TEMPLATE_PARTS}
 ACTION_EXTRACTION = {"default": extract_action_and_format_feedback}

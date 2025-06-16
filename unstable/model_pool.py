@@ -127,8 +127,8 @@ class ModelPool:
         if key not in self._unique_actions_seqs:
             self._unique_actions_seqs[key] = {
                 "unigrams": set(), "bigrams": set(), "trigrams": set(), "4-grams": set(), "5-grams": set(),
-                "total_counts": {"unigrams": 0, "bigrams": 0, "trigrams": 0, "4-grams": 0, "5-grams": 0,
-            }}
+                "total_counts": {"unigrams": 0, "bigrams": 0, "trigrams": 0, "4-grams": 0, "5-grams": 0}
+            }
 
         for n, name in [(1,"unigrams"), (2, "bigrams"), (3, "trigrams"), (4, "4-grams"), (5, "5-grams")]:
             for i in range(len(game_action_seq) - n + 1):
@@ -142,9 +142,10 @@ class ModelPool:
         if uid_me not in self._models or uid_opp not in self._models: return  # skip if either side is unknown
         self._update_ratings(uid_me=uid_me, uid_opp=uid_opp, final_reward=final_reward) # update ts
         self._register_game(uid_me=uid_me, uid_opp=uid_opp) # register the game for tracking
-        self._track_exploration(uid_me=uid_me, uid_opp=uid_opp, game_action_seq=game_action_seq) # tracke unique action seqs
-
-
+        # self._track_exploration(uid_me=uid_me, uid_opp=uid_opp, game_action_seq=game_action_seq) # tracke unique action seqs
+        self._track_exploration(uid_me, uid_opp, game_action_seq)
+        self.snapshot(self._step_counter)
+        
     def _exp_win(self, A, B):   return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
     def _activate(self, uid):   self._models[uid].active = True
     def _retire(self, uid):     self._models[uid].active = False
@@ -174,33 +175,21 @@ class ModelPool:
         for uid, opp in self._models.items():
             if opp.kind != "checkpoint": continue
             opp.active = (uid in keep)
-
     
     def _get_exploration_ratios(self):
         stats = {}
-        # for key, data in self._unique_actions_seqs.items():
-        #     ratios = {}
-        #     for ngram_type in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]:
-        #         total = data["total_counts"].get(ngram_type, 0)
-        #         unique = len(data.get(ngram_type, set()))
-        #         ratio = unique / total if total > 0 else 0.0
-        #         ratios[ngram_type] = ratio
-        #     stats[key] = ratios
-        
-        for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]:
-            stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
-
-        print(self._full_unique_actions_seqs)
-            
+        for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]: stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
         return stats
-
 
     def snapshot(self, iteration: int):
         self._step_counter = iteration
         self._tracker.log_model_pool.remote(
-            iteration=iteration, match_counts=dict(self._match_counts),
+            step=iteration, match_counts=dict(self._match_counts), 
             ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
-            exploration_ratios=self._get_exploration_ratios()
+            exploration=self._get_exploration_ratios(),
         )
 
-
+    def get_snapshot(self):
+        latest = self.latest_ckpt()
+        r = self._models[latest].rating if latest else self.TS.create_rating()
+        return {"num_ckpts": len(self._ckpt_log), "mu": r.mu, "sigma": r.sigma}

@@ -7,5 +7,7 @@ import unstable.algorithms
 from unstable.core import BaseTracker
 from unstable.trackers import Tracker
 
+from unstable.terminal_interface import TerminalInterface
 
-__all__ = ["Collector", "StepBuffer", "ModelPool", "StandardLearner", "MultiGPULearner", "Tracker"]
+
+__all__ = ["Collector", "StepBuffer", "ModelPool", "StandardLearner", "MultiGPULearner", "Tracker", "TerminalInterface"]
