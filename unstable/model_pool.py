@@ -142,9 +142,10 @@ class ModelPool:
         if uid_me not in self._models or uid_opp not in self._models: return  # skip if either side is unknown
         self._update_ratings(uid_me=uid_me, uid_opp=uid_opp, final_reward=final_reward) # update ts
         self._register_game(uid_me=uid_me, uid_opp=uid_opp) # register the game for tracking
-        self._track_exploration(uid_me=uid_me, uid_opp=uid_opp, game_action_seq=game_action_seq) # tracke unique action seqs
-
-
+        # self._track_exploration(uid_me=uid_me, uid_opp=uid_opp, game_action_seq=game_action_seq) # tracke unique action seqs
+        self._track_exploration(uid_me, uid_opp, game_action_seq)
+        self.snapshot(self._step_counter)
+        
     def _exp_win(self, A, B):   return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
     def _activate(self, uid):   self._models[uid].active = True
     def _retire(self, uid):     self._models[uid].active = False
@@ -177,14 +178,6 @@ class ModelPool:
     
     def _get_exploration_ratios(self):
         stats = {}
-        # for key, data in self._unique_actions_seqs.items():
-        #     ratios = {}
-        #     for ngram_type in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]:
-        #         total = data["total_counts"].get(ngram_type, 0)
-        #         unique = len(data.get(ngram_type, set()))
-        #         ratio = unique / total if total > 0 else 0.0
-        #         ratios[ngram_type] = ratio
-        #     stats[key] = ratios
         for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]: stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
         return stats
 
@@ -195,7 +188,6 @@ class ModelPool:
             ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
             exploration=self._get_exploration_ratios(),
         )
-
 
     def get_snapshot(self):
         latest = self.latest_ckpt()

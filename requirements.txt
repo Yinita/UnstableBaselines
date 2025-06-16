@@ -8,3 +8,4 @@ transformers
 peft
 textarena[datasets]
 trueskill
+nvitop

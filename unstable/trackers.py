@@ -1,4 +1,4 @@
-import os, ray, time, wandb, collections
+import os, re, ray, time, wandb, collections
 from typing import Optional, Union
 import numpy as np
 from unstable.core import BaseTracker, Trajectory
@@ -6,7 +6,7 @@ from unstable.core import BaseTracker, Trajectory
 
 @ray.remote
 class Tracker(BaseTracker):
-    COLLECT_FLUSH_EVERY: int = 256 # How often to push collection stats (in *trajectories*)
+    COLLECT_FLUSH_EVERY: int = 64 # How often to push collection stats (in *trajectories*)
     TOPK: int = 10 # Only keep the K most‑played match‑ups in the dashboard table
 
     def __init__(self, run_name: str, accum_strategy: str="ma", output_dir: Optional[str]=None, wandb_project: Optional[str]=None) -> None:
@@ -21,6 +21,11 @@ class Tracker(BaseTracker):
         self._collect_counter: int = 0  # trajectories since last flush
         self._inference: dict[str, dict[str, float]] = {}
 
+        self._collection_snapshot: dict[str, float] = {}
+        self._eval_snapshot: dict[str, float] = {}
+        self._ts_snapshot: dict[str, dict]  = {}
+        self._match_counts: dict[tuple[str, str], int] = {}
+
         self._gpu_tok_rate: dict[int, float] = collections.defaultdict(float)
         self._gpu_last_seen: dict[int, float] = collections.defaultdict(lambda: 0.0)
         self._gpu_timeout = 10.0   # seconds without update ⇒ show 0 toks/s
@@ -34,23 +39,14 @@ class Tracker(BaseTracker):
         """Collapse internal metric deques/emas into scalars for prefix """
         out: dict[str, Union[int, float]] = {}
         for name, val in self._metrics.items():
-            if not name.startswith(prefix): 
-                continue
+            if not name.startswith(prefix):  continue
             out[name] = (float(np.mean(val)) if val else 0.0) if isinstance(val, collections.deque) else val
         return out
 
     def _flush(self, force: bool = False):
-        if (force or self._collect_counter >= self.COLLECT_FLUSH_EVERY) and self.wandb_project and self._buffer:
-            try:
-                wandb.log(self._buffer)
-            except Exception as e:
-                # never crash the actor on WANDB issues
-                logger.error("wandb.log failed: %s", e)
+        wandb.log(self._buffer)
         self._buffer.clear()
         self._collect_counter = 0
-
-    def get_wandb_project(self):    return self.wandb_project
-    def get_run_name(self):         return self.run_name
 
     # metric bookkeeping
     def _update_metric(self, name: str, value: float | int | bool, prefix: str, env_id: str):
@@ -86,13 +82,12 @@ class Tracker(BaseTracker):
         if self._collect_counter % self.COLLECT_FLUSH_EVERY == 0:
             self._buffer.update(self._aggregate(prefix))
             self._flush()
+        self._collection_snapshot = self._aggregate("collection")
 
-    # learner updates
     def log_learner(self, info: dict):
         self._metrics.update({f"learner/{k}": v for k, v in info.items()})
         self._buffer.update(self._aggregate("learner"))
 
-    # evaluation episodes
     def _add_eval_episode_to_metrics(self, episode_info: dict, final_rewards: dict, player_id: int, env_id: str, prefix: str="evaluation") -> None:
         pairs = [("Game Length", len(episode_info)), ("Reward", final_rewards[player_id])]
         if len(final_rewards) == 2:
@@ -105,12 +100,11 @@ class Tracker(BaseTracker):
         self._add_eval_episode_to_metrics(episode_info, final_rewards, player_id, env_id, prefix)
         self._buffer.update(self._aggregate(prefix))
         self._flush()
+        self._eval_snapshot = self._aggregate("evaluation")
 
-    # model‑pool snapshots
     def log_model_pool(self, step: int, match_counts: dict, ts_dict: dict, exploration: dict) -> None:
-        # latest checkpoint = highest integer suffix
-        # print(ts_dict)
-        cur = max((uid for uid in ts_dict if uid.startswith("ckpt-")), key=lambda u: int(u.split("-")[1]), default=None)
+        ckpt_ids = [u for u in ts_dict if re.fullmatch(r"ckpt-\d+", u)]
+        cur = max(ckpt_ids, key=lambda u: int(u.split("-")[1]), default=None)
         if cur is not None:
             self._buffer["trueskill/mu"] = ts_dict[cur]["mu"]
             self._buffer["trueskill/sigma"] = ts_dict[cur]["sigma"]
@@ -124,31 +118,14 @@ class Tracker(BaseTracker):
         for n, c in exploration.items():
             self._buffer[f"pool/exploration/{n}"] = c
         self._flush(force=True)
+        self._ts_snapshot = ts_dict
+        self._match_counts = match_counts
+        
 
-    # tracker.py
-    def get_latest_learner_metrics(self):
-        # pull from _metrics; safe default values
-        return {k.split('/',1)[1]: v for k,v in self._buffer.items() if k.startswith('learner/')}
-
-    # def log_inference(self, actor: str, gpu_ids, stats: dict[str, dict[str, float]]):
-    #     self._inference[actor] = stats
-
-    #     # Optionally log to wandb
-    #     if self.wandb_project:
-    #         flat_stats = {}
-    #         for lora, values in stats.items():
-    #             for key, val in values.items():
-    #                 flat_stats[f"inference/{lora}/{key}"] = val
-    #         flat_stats["inference/actor"] = actor
-    #         self._buffer.update(flat_stats)
-    #         self._flush()
     def log_inference(self, actor: str, gpu_ids: list[int], stats: dict[str, dict[str, float]]):
         self._inference[actor] = stats
-
-        # NEW: update per-GPU cache
-        total_tok_s = sum(meta.get("tok_s", 0.0) for meta in stats.values())
-        share = total_tok_s / max(1, len(gpu_ids))
-        now   = time.monotonic()
+        share = sum(meta.get("tok_s", 0.0) for meta in stats.values()) / max(1, len(gpu_ids))
+        now = time.monotonic()
         for gid in gpu_ids:
             self._gpu_tok_rate[gid]  = share
             self._gpu_last_seen[gid] = now
@@ -162,16 +139,13 @@ class Tracker(BaseTracker):
             self._buffer.update(flat_stats)
             self._flush()
 
-    def get_latest_inference_metrics(self) -> dict[str, dict[str, float]]:
-        return self._inference
-
-    # def get_gpu_tok_rates(self) -> dict[int, float]:
-    #     return {gid: (rate if time.monotonic() - self._gpu_last_seen[gid] <= self._gpu_timeout else 0.0) for gid, rate in self._gpu_tok_rate.items()}
-
-    def get_gpu_tok_rates(self) -> dict[int, float]:
-        """Return cached tok/s per GPU (0 if no update in the last 10 s)."""
-        now = time.monotonic()
-        return {
-            gid: (rate if now - self._gpu_last_seen[gid] <= self._gpu_timeout else 0.0)
-            for gid, rate in self._gpu_tok_rate.items()
-        }
+    def get_latest_inference_metrics(self) -> dict[str, dict[str, float]]: return self._inference
+    def get_gpu_tok_rates(self) -> dict[int, float]: return {gid: (rate if time.monotonic() - self._gpu_last_seen[gid] <= self._gpu_timeout else 0.0) for gid, rate in self._gpu_tok_rate.items()}
+    def get_latest_learner_metrics(self): return {k.split('/',1)[1]: v for k,v in self._buffer.items() if k.startswith('learner/')}
+    
+    def get_collection_metrics(self):   return self._collection_snapshot
+    def get_eval_metrics(self):         return self._eval_snapshot
+    def get_ts_snapshot(self):          return self._ts_snapshot
+    def get_match_counts(self):         return self._match_counts
+    def get_wandb_project(self):        return self.wandb_project
+    def get_run_name(self):             return self.run_name

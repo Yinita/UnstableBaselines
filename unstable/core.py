@@ -65,6 +65,7 @@ class BaseTracker:
     def get_checkpoints_dir(self):  return self.output_dirs["checkpoints"]
     def get_train_dir(self):        return self.output_dirs["training_data"]
     def get_eval_dir(self):         return self.output_dirs["eval_data"]
+    
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str): raise NotImplementedError
     def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
     def log_lerner(self, info_dict: Dict): raise NotImplementedError

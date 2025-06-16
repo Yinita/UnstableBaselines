@@ -41,6 +41,9 @@ class VLLMActor:
         loop.create_task(self._batch_loop())
         loop.create_task(self._report_loop())
 
+        self._lora_ids: Dict[str, int] = {"base": 0}
+        self._next_lora_id = 1
+
     async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> str:
         fut = asyncio.Future()
         lora = lora_path or "base"
@@ -53,7 +56,7 @@ class VLLMActor:
             await asyncio.sleep(0.02)
             while self._queue:
                 prompt, path, fut = self._queue.popleft()
-                lora   = path or "base"
+                lora = path or "base"
                 req_id = str(self._next_id); self._next_id += 1
 
                 self._futures[req_id]  = fut
@@ -61,7 +64,13 @@ class VLLMActor:
                 self._queued[lora]    -= 1
                 self._running[lora]   += 1
 
-                lora_req = LoRARequest(path, path, abs(hash(path))) if path else None
+                if path:
+                    if path not in self._lora_ids:
+                        self._lora_ids[path] = self._next_lora_id
+                        self._next_lora_id += 1
+                    lora_req = LoRARequest(path, self._lora_ids[path], path)
+                else:
+                    lora_req = None
                 self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
 
             for out in self.engine.step():
@@ -93,7 +102,6 @@ class VLLMActor:
                 lora_stats = {l: {"queued": self._queued[l], "running": self._running[l], "tok_s": self._tok_rate(l)} for l in set(self._queued)|set(self._running)|set(self._tok_hist)}
                 total_tok_s = sum(s["tok_s"] for s in lora_stats.values())
                 await self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, stats=lora_stats)
-                # await self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, tok_s=total_tok_s, stats=lora_stats)
             await asyncio.sleep(3.0)
 
     def _tok_rate(self, lora: str, window: float = 2.0) -> float:

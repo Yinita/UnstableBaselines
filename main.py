@@ -21,7 +21,7 @@ lora_config = {
 }
 vllm_config = {
     "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": 4096,
-    "max_parallel_seq": 384, "max_loras": 5, "lora_config": lora_config,
+    "max_parallel_seq": 256, "max_loras": 5, "lora_config": lora_config,
     "max_model_len": 8192
 }
 
