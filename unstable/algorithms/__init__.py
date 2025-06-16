@@ -1,4 +1,4 @@
-from unstable.algorithms.reinforce import Reinforce
+from unstable.algorithms.reinforce import Reinforce, ReinforceWithOffloading
 
 
-__all__ = ["Reinforce"]
+__all__ = ["Reinforce", "ReinforceWithOffloading"]
