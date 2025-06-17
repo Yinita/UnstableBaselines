@@ -1,17 +1,16 @@
 
-import time, pathlib, math, json
+import time, pathlib, math, json, logging
 from typing import Any, Dict, Optional, List
 
 import ray, torch, transformers
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
 
 # local imports
 from unstable.buffer import StepBuffer
 from unstable.core import BaseAlgo
 from unstable.model_pool import ModelPool
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
+from unstable.utils.logging import setup_error_logger
 
-from transformers.models.qwen3.modeling_qwen3 import Qwen3DecoderLayer
 
 
 @ray.remote
@@ -21,6 +20,10 @@ class StandardLearner:
         grad_clip: float=1.0, batch_delay_buffer: float=1.5, lora_cfg: Dict[str,Any] = {}, initial_lora_path: Optional[str]=None, num_learners: int=1, ckpt_root: str="checkpoints",
         save_every: int = 1, tracker=None, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool=False, max_train_len: Optional[int]=None
     ):
+        # set up logging
+        log_dir = ray.get(tracker.get_log_dir.remote())
+        self.logger = setup_error_logger("learner", log_dir)
+
         # TODO docstring
         self.algorithm = algorithm
         self.batch_size = batch_size
@@ -55,7 +58,10 @@ class StandardLearner:
         while self._step < iterations:
             while (ray.get(self.step_buffer.size.remote()) < self.batch_size * self.batch_delay_buffer): time.sleep(0.2)
 
-            batch: List = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
+            # batch: List = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
+            try:                        batch: List = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
+            except Exception as exc:    self.logger.exception(f"could not fetch batch (step={self._step}) -\n\n{exc}\n\n"); raise
+
             assert len(batch) == self.batch_size
             self._samples_seen += len(batch)
             self.optimizer.zero_grad(set_to_none=True)
@@ -70,7 +76,10 @@ class StandardLearner:
                     metrics_acc[k] = metrics_acc.get(k, 0.0) + v
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
-            self.optimizer.step()
+            # self.optimizer.step()
+            try:                        self.optimizer.step()
+            except Exception as exc:    self.logger.exception(f"optimizer.step crashed on step {self._step} -\n\n{exc}\n\n"); raise
+
             self._step += 1
 
             # Logging
@@ -86,13 +95,16 @@ class StandardLearner:
 
             # save & register checkpoint every step
             if self._step % self.save_every == 0:
-                self._save_checkpoint()
+                try:                        self._save_checkpoint()
+                except Exception as exc:    self.logger.exception(f"failed to save checkpoint {ckpt_dir} -\n\n{exc}\n\n"); raise
+                # self._save_checkpoint()
                 if self.model_pool and self._last_ckpt:
                     self.model_pool.add_checkpoint.remote(str(self._last_ckpt), self._step)
                     print(f"[Learner] +registered -> {self._last_ckpt}")
                     self.model_pool.snapshot.remote(self._step)
 
         print("[Learner] training finished.")
+        self.step_buffer.stop()
         return {"final_step":self._step, "samples":self._samples}
 
     def _save_checkpoint(self):

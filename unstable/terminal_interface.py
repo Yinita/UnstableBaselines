@@ -226,10 +226,8 @@ class TerminalInterface:
                 self._latest_stats = await self._system_stats() # system + GPUs
                 # tracker-side snapshots
                 (self._coll, self._eval, self._ts, self._counts) = await asyncio.gather(
-                    self.tracker.get_collection_metrics.remote(),
-                    self.tracker.get_eval_metrics.remote(),
-                    self.tracker.get_ts_snapshot.remote(),
-                    self.tracker.get_match_counts.remote(),
+                    self.tracker.get_collection_metrics.remote(), self.tracker.get_eval_metrics.remote(),
+                    self.tracker.get_ts_snapshot.remote(), self.tracker.get_match_counts.remote(),
                 )
             except Exception as e:
                 self.console.log(f"[red]stat-fetch error: {e}")
@@ -259,12 +257,12 @@ class TerminalInterface:
         neigh = sorted(self._ts, key=_uid_sort_key)
         idx = neigh.index(cur)
         slice_ = neigh[max(0, idx - 2) : idx + 3]
-        BAR_FIELD = 50 # max width of the bar block
+        BAR_FIELD = 30 # max width of the bar block
         bars = []
         for u in slice_:
             mu, sig = self._ts[u]["mu"], self._ts[u]["sigma"]
             # build a left-aligned bar whose *start* column is identical everywhere
-            bar = "█" * min(int(mu), BAR_FIELD)
+            bar = "█" * min(int(mu//4), BAR_FIELD)
             bar_blk = f"{bar:<{BAR_FIELD}}"      # pad so every row = BAR_FIELD chars
             # final line: [UID][two spaces][BAR][μ/σ]
             line = (f"{_trim_uid(u):>30}  {bar_blk} μ {mu:5.2f} (σ={sig:.2f})")

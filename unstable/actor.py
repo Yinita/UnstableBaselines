@@ -6,9 +6,17 @@ import ray, torch
 from vllm import EngineArgs, LLMEngine, SamplingParams
 from vllm.lora.request import LoRARequest
 
+import logging, pathlib
+from unstable.utils.logging import setup_error_logger
+
+
 @ray.remote
 class VLLMActor:
     def __init__(self, vllm_config: Dict[str, Any], tracker, name: str):
+        # set up logging
+        log_dir = ray.get(tracker.get_log_dir.remote())
+        self.logger = setup_error_logger(f"actor-{name}", log_dir)
+
         self.gpu_ids = ray.get_gpu_ids()
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
         torch.cuda.set_device(0)
@@ -73,7 +81,10 @@ class VLLMActor:
                     lora_req = None
                 self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
 
-            for out in self.engine.step():
+            try:                outs = self.engine.step()
+            except Exception as exc:   self.logger.exception(f"engine.step() blew up; req={req_id}  lora={lora} -\n\n{exc}\n\n"); raise
+
+            for out in outs:
                 req_id = out.request_id
                 lora = self._req2lora.get(req_id, "base")
                 segment = out.outputs[-1]
@@ -99,9 +110,16 @@ class VLLMActor:
     async def _report_loop(self):
         while True:
             if self.tracker is not None:
-                lora_stats = {l: {"queued": self._queued[l], "running": self._running[l], "tok_s": self._tok_rate(l)} for l in set(self._queued)|set(self._running)|set(self._tok_hist)}
-                total_tok_s = sum(s["tok_s"] for s in lora_stats.values())
-                await self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, stats=lora_stats)
+                # lora_stats = {l: {"queued": self._queued[l], "running": self._running[l], "tok_s": self._tok_rate(l)} for l in set(self._queued)|set(self._running)|set(self._tok_hist)}
+                # total_tok_s = sum(s["tok_s"] for s in lora_stats.values())
+                # await self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, stats=lora_stats)
+                try:
+                    lora_stats = {l: {"queued": self._queued[l], "running": self._running[l], "tok_s": self._tok_rate(l)} for l in {*self._queued, *self._running, *self._tok_hist}}
+                    await self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, stats=lora_stats)
+                except Exception as exc:
+                    self.logger.exception(f"failed to push inference stats -\n\n{exc}\n\n")
+
+
             await asyncio.sleep(3.0)
 
     def _tok_rate(self, lora: str, window: float = 2.0) -> float:

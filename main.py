@@ -2,18 +2,19 @@ import time, ray, unstable
 import unstable.reward_transformations as retra
 
 NUM_LEARNERS = 1
-NUM_ACTORS = 3
-COLLECTION_WORKERS = 128
-EVALUATION_WORKERS = 6
-ITERATIONS = 128
-MODEL_NAME = "Qwen/Qwen3-1.7B-base"
+NUM_ACTORS = 2
+COLLECTION_WORKERS = 512
+EVALUATION_WORKERS = 0
+ITERATIONS = 200
+MODEL_NAME = "Qwen/Qwen3-4B-base"
 # MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
-BATCH_SIZE = 64
+BATCH_SIZE = 512
 MINI_BATCH_SIZE = 1
-BUFFER_SIZE = 384*2
+BUFFER_SIZE = 512*2
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = 4000
+MAX_TRAIN_SEQ_LEN = None
+SAMPLE_MODE = "fixed"
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
@@ -21,16 +22,16 @@ lora_config = {
 }
 vllm_config = {
     "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": 4096,
-    "max_parallel_seq": 256, "max_loras": 5, "lora_config": lora_config,
+    "max_parallel_seq": 128, "max_loras": 5, "lora_config": lora_config,
     "max_model_len": 8192
 }
 
 TRAINING_ENVS = [
-    # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
+    ("LiarsDice-v0-train", 2, "qwen3-zs"), 
     ("SimpleTak-v0-train", 2, "qwen3-zs"), 
-    # ("Nim-v0-train", 2, "qwen3-zs"), 
-    # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
-    # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
+    ("Nim-v0-train", 2, "qwen3-zs"), 
+    ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
+    ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 EVALUATION_ENVS = [
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
@@ -55,7 +56,7 @@ step_buffer = unstable.StepBuffer.options(name="StepBuffer").remote(
 )
 
 # Model Pool
-model_pool = unstable.ModelPool.options(name="ModelPool").remote(tracker=tracker, sample_mode="mirror", max_active_lora=5)
+model_pool = unstable.ModelPool.options(name="ModelPool").remote(tracker=tracker, sample_mode=SAMPLE_MODE, max_active_lora=5)
 ray.get(model_pool.add_checkpoint.remote(path=None, iteration="-1"))
 ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
 
@@ -74,7 +75,6 @@ collector = unstable.Collector.options(name="Collector").remote(
 
 # Algorithm and Learner
 algorithm = unstable.algorithms.Reinforce()
-
 learner = unstable.StandardLearner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
     num_learners=NUM_LEARNERS, 
     tracker=tracker, 

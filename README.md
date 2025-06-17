@@ -21,9 +21,6 @@
 * **LoRA‑first** fine‑tuning workflow for fast, lightweight updates.
 * **Composable reward transforms** at step, final, and sampling stages.
 
-## Collaboration
-
-Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).
 
 ## Installation
 
@@ -46,5 +43,9 @@ cd ..
 ## Quick Start
 
 ```bash
-python3 example.py
+python3 main.py
 ```
+
+## Collaboration
+
+Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).

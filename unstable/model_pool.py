@@ -1,10 +1,12 @@
 
-import trueskill, math, ray, random, time
+import trueskill, math, ray, random, time, logging
 from collections import defaultdict
 from typing import List
 
 # local imports
 from unstable.core import Opponent
+from unstable.utils.logging import setup_error_logger
+
 
 @ray.remote
 class ModelPool:
@@ -28,12 +30,16 @@ class ModelPool:
         self._step_counter = 0 # learner step snapshot id
         self._tracker = tracker
 
-    def current_uid(self):
-        return self._latest_uid
+        # set up logging
+        log_dir = ray.get(tracker.get_log_dir.remote())
+        self.logger = setup_error_logger("model_pool", log_dir)
+
+    def current_uid(self):      return self._latest_uid
+    def latest_ckpt(self):      return self._ckpt_log[-1] if self._ckpt_log else None
+    def ckpt_path(self, uid):   return None if uid is None else  self._models[uid].path_or_name
 
     def add_checkpoint(self, path: str, iteration: int):
         uid = f"ckpt-{iteration}"
-
         # inherit μ/σ if a previous checkpoint exists
         if self._latest_uid and self._latest_uid in self._models:
             init_rating = self.TS.Rating(mu=self._models[self._latest_uid].rating.mu, sigma=self._models[self._latest_uid].rating.sigma * 2)
@@ -49,13 +55,6 @@ class ModelPool:
         uid = f"fixed-{name}"
         if uid not in self._models:
             self._models[uid] = Opponent(uid, "fixed", name, rating=self.TS.create_rating(prior_mu))
-
-    def latest_ckpt(self):
-        return self._ckpt_log[-1] if self._ckpt_log else None
-
-    def ckpt_path(self, uid):
-        if uid is None: return None
-        return self._models[uid].path_or_name
 
     def sample(self, uid_me):
         match self.sample_mode:
@@ -181,13 +180,23 @@ class ModelPool:
         for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]: stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
         return stats
 
+    # def snapshot(self, iteration: int):
+    #     self._step_counter = iteration
+    #     self._tracker.log_model_pool.remote(
+    #         step=iteration, match_counts=dict(self._match_counts), 
+    #         ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
+    #         exploration=self._get_exploration_ratios(),
+    #     )
     def snapshot(self, iteration: int):
-        self._step_counter = iteration
-        self._tracker.log_model_pool.remote(
-            step=iteration, match_counts=dict(self._match_counts), 
-            ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
-            exploration=self._get_exploration_ratios(),
-        )
+        try:
+            self._tracker.log_model_pool.remote(
+                step=iteration, match_counts=dict(self._match_counts),
+                ts_dict={u: {"mu": o.rating.mu, "sigma": o.rating.sigma} for u, o in self._models.items()},
+                exploration=self._get_exploration_ratios(),
+            )
+        except Exception as exc:
+            self.logger.exception(f"failed pushing snapshot at iter={iteration}-\n\n{exc}\n\n")
+
 
     def get_snapshot(self):
         latest = self.latest_ckpt()

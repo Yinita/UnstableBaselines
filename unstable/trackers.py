@@ -1,8 +1,8 @@
-import os, re, ray, time, wandb, collections
+import os, re, ray, time, wandb, collections, logging
 from typing import Optional, Union
 import numpy as np
 from unstable.core import BaseTracker, Trajectory
-
+from unstable.utils.logging import setup_error_logger
 
 @ray.remote
 class Tracker(BaseTracker):
@@ -34,6 +34,11 @@ class Tracker(BaseTracker):
         if self.wandb_project is not None:
             wandb.init(project=self.wandb_project, name=run_name)
 
+        # set up logging
+        log_dir = self.get_log_dir()
+        self.logger = setup_error_logger("tracker", log_dir)
+
+
     def _aggregate(self, prefix: str) -> dict[str, Union[int, float]]:
         """Collapse internal metric deques/emas into scalars for prefix """
         out: dict[str, Union[int, float]] = {}
@@ -43,8 +48,13 @@ class Tracker(BaseTracker):
         return out
 
     def _flush(self, force: bool = False):
-        wandb.log(self._buffer)
-        self._buffer.clear()
+        # wandb.log(self._buffer)
+        # self._buffer.clear()
+        try:
+            wandb.log(self._buffer)
+            self._buffer.clear()
+        except Exception as exc:
+            self.logger.exception(f"wandb.log failed - buffer preserved ({len(self._buffer)})-\n\n{exc}\n\n")
 
     # metric bookkeeping
     def _update_metric(self, name: str, value: float | int | bool, prefix: str, env_id: str):
@@ -127,9 +137,13 @@ class Tracker(BaseTracker):
             self._gpu_last_seen[gid] = now
 
         if self.wandb_project:
-            flat_stats = {f"inference/{actor}/queued": sum(s["queued"] for s in stats.values()), f"inference/{actor}/running": sum(s["running"] for s in stats.values()), f"inference/{actor}/tokens_sec": sum(s["tok_s"] for s in stats.values())}
-            self._buffer.update(flat_stats)
-            self._flush()
+            try:
+                flat_stats = {f"inference/{actor}/queued": sum(s["queued"] for s in stats.values()), f"inference/{actor}/running": sum(s["running"] for s in stats.values()), f"inference/{actor}/tokens_sec": sum(s["tok_s"] for s in stats.values())}
+                self._buffer.update(flat_stats)
+                self._flush()
+            except Exception as exc:
+                self.logger.exception(f"failed logging inference stats-\n\n{exc}\n\n")
+
 
     def get_latest_inference_metrics(self) -> dict[str, dict[str, float]]: return self._inference
     def get_gpu_tok_rates(self) -> dict[int, float]: return {gid: (rate if time.monotonic() - self._gpu_last_seen[gid] <= self._gpu_timeout else 0.0) for gid, rate in self._gpu_tok_rate.items()}

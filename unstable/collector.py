@@ -1,4 +1,4 @@
-import re, ray, random, itertools
+import re, ray, random, itertools, logging, pathlib
 from typing import List, Dict, Tuple, Optional, Any, Callable
 from ray.exceptions import RayTaskError, RayActorError
 
@@ -9,6 +9,7 @@ assert ta.__version__ == "0.6.9", f"You need to use TextArena version 0.6.9 (bui
 from unstable.core import Trajectory, BaseTracker
 from unstable.actor import VLLMActor
 from unstable.utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
+from unstable.utils.logging import setup_error_logger
 
 
 class CallableActorWrapper:
@@ -88,6 +89,10 @@ class Collector:
             tracker (Optional[WandBTracker]): Tracker for logging metrics.
             filter_opponent_invalid (bool): whether to remove games ending with the opponent making an invalid move
         """
+        # set up logging
+        log_dir = ray.get(tracker.get_log_dir.remote())
+        self.logger = setup_error_logger("collector", log_dir)
+
         self.buffer = step_buffer
         self.model_pool = model_pool
         self.tracker = tracker
@@ -205,7 +210,7 @@ class Collector:
         iter_seed = 0
         eval_iter_seed = 0
 
-        while self.alive:
+        while ray.get(self.buffer.continue_collection.remote()):
             while len(train_flight) < num_workers:
                 env_id, n, pid, tmpl = self._sample_env(seed=iter_seed)
                 args = self._build_game_args(env_id, n, pid, tmpl, iter_seed)
@@ -227,13 +232,17 @@ class Collector:
             done_ref, _ = ray.wait(wait_pool, num_returns=1)
             finished = done_ref[0]
 
-            try: # TODO maybe move into the actual one below
+            # try: # TODO maybe move into the actual one below
+            #     result = ray.get(finished)
+            # except (RayTaskError, RayActorError) as err:
+            #     # Log & replace the failed flight entry
+            #     logger.error("Game task failed: %s", err)
+            #     continue  # loop back – flight slot will be refilled next iteration
+            try:
                 result = ray.get(finished)
             except (RayTaskError, RayActorError) as err:
-                # Log & replace the failed flight entry
-                logger.error("Game task failed: %s", err)
-                continue  # loop back – flight slot will be refilled next iteration
-
+                self.logger.exception("remote game/exam task failed -\n\n{err}\n\n")
+                continue  # flight slot will be refilled
 
             idx = next((i for i, (f, _, _) in enumerate(train_flight) if f == finished), None)
             if idx is not None:
@@ -254,5 +263,3 @@ class Collector:
             if self.tracker: self.tracker.add_eval_episode.remote(episode_info=ep_info, final_rewards=final_r, player_id=pid, env_id=env_id, iteration=ckpt_uid)
             print(f"[EVAL] ckpt={ckpt_uid} env={env_id} seed={seed} done")
 
-
-    def stop(self): self.alive = False

@@ -1,10 +1,12 @@
 
-import os, ray, random, csv
+import os, ray, csv, random, logging
 from typing import List, Dict, Optional, Tuple, Callable
 
 # local imports
 from unstable.core import Trajectory, Step, BaseTracker
+from unstable.utils.logging import setup_error_logger
 from unstable.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
+
 
 # TODO doc-strings
 
@@ -37,14 +39,23 @@ class StepBuffer:
         self.final_reward_transformation = final_reward_transformation
         self.step_reward_transformation = step_reward_transformation
         self.sampling_reward_transformation = sampling_reward_transformation
+        self.collect = True
 
         self.steps: List[Step] = []
         self.training_steps = 0
 
         self.tracker = tracker
 
+        # setup logging
+        log_dir = ray.get(tracker.get_log_dir.remote())
+        self.logger = setup_error_logger("step_buffer", log_dir)
+
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str):
-        transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) if self.final_reward_transformation is not None else trajectory.final_rewards
+        # transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) if self.final_reward_transformation is not None else trajectory.final_rewards
+        try:
+            transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) if self.final_reward_transformation else trajectory.final_rewards
+        except Exception as exc: self.logger.exception(f"reward-transformation blew up  env={env_id} -\n\n{exc}\n\n"); raise
+        
         n = len(trajectory.pid)
         for i in range(n): # these are already just steps by our model
             reward = transformed_rewards[trajectory.pid[i]]
@@ -53,14 +64,17 @@ class StepBuffer:
             self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward, env_id=env_id, step_info=step_info))
         print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 
-        excess_num_samples = int(len(self.steps) - self.max_buffer_size)
+        # excess_num_samples = int(len(self.steps) - self.max_buffer_size)
+        excess_num_samples = max(0, len(self.steps) - self.max_buffer_size)
         if excess_num_samples > 0:
             randm_sampled = random.sample(self.steps, excess_num_samples)
             for b in randm_sampled:
                 self.steps.remove(b)
 
     def get_batch(self, batch_size: int) -> List[Step]:
-        batch = random.sample(self.steps, batch_size)
+        # batch = random.sample(self.steps, batch_size)
+        try:                        batch = random.sample(self.steps, batch_size)
+        except ValueError as exc:   self.logger.error("requested %s samples – only %s in buffer", batch_size, len(self.steps)); raise
         for b in batch:
             self.steps.remove(b)
         batch = self.sampling_reward_transformation(batch) if self.sampling_reward_transformation is not None else batch
@@ -78,4 +92,6 @@ class StepBuffer:
 
     def size(self) -> int:  return len(self.steps)
     def clear(self):        self.steps.clear()
+    def stop(self):         self.collect = False
+    def continue_collection(self):      return self.collect
 
