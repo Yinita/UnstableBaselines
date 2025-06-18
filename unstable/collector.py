@@ -9,7 +9,7 @@ assert ta.__version__ == "0.6.9", f"You need to use TextArena version 0.6.9 (bui
 from unstable.core import Trajectory, BaseTracker
 from unstable.actor import VLLMActor
 from unstable.utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
-from unstable.utils.logging import setup_error_logger
+from unstable.utils.logging import setup_logger #setup_error_logger
 
 
 class CallableActorWrapper:
@@ -91,7 +91,7 @@ class Collector:
         """
         # set up logging
         log_dir = ray.get(tracker.get_log_dir.remote())
-        self.logger = setup_error_logger("collector", log_dir)
+        self.logger = setup_logger("collector", log_dir)
 
         self.buffer = step_buffer
         self.model_pool = model_pool
@@ -213,6 +213,7 @@ class Collector:
         while ray.get(self.buffer.continue_collection.remote()):
             while len(train_flight) < num_workers:
                 env_id, n, pid, tmpl = self._sample_env(seed=iter_seed)
+                self.logger.info(f"Adding collection game ({env_id}, {n}, {pid}, {tmpl}) - [number running collection games: {len(train_flight)}]")
                 args = self._build_game_args(env_id, n, pid, tmpl, iter_seed)
                 fut = run_game.remote(**args)
                 train_flight.append((fut, args["opponent_uid"], args["model_uid"]))
@@ -221,6 +222,7 @@ class Collector:
             latest_ckpt = ray.get(self.model_pool.latest_ckpt.remote())
             while (len(eval_flight) < num_eval_workers) and (ckpt_eval_game_count.get(latest_ckpt, 0) < self.max_eval_games_per_ckpt*len(self.evaluation_envs)):
                 env_id, n, pid, tmpl = self._sample_env(seed=eval_iter_seed, _type="eval")
+                self.logger.info(f"Adding evaluation game ({env_id}, {n}, {pid}, {tmpl}) - [number running evaluation games: {len(eval_flight)}]")
                 args = self._build_eval_args(env_id, n, pid, tmpl, latest_ckpt, eval_iter_seed)
                 fut = run_eval_game.remote(**args)
                 eval_flight.append((fut, env_id, pid, latest_ckpt, eval_iter_seed))
@@ -232,12 +234,6 @@ class Collector:
             done_ref, _ = ray.wait(wait_pool, num_returns=1)
             finished = done_ref[0]
 
-            # try: # TODO maybe move into the actual one below
-            #     result = ray.get(finished)
-            # except (RayTaskError, RayActorError) as err:
-            #     # Log & replace the failed flight entry
-            #     logger.error("Game task failed: %s", err)
-            #     continue  # loop back – flight slot will be refilled next iteration
             try:
                 result = ray.get(finished)
             except (RayTaskError, RayActorError) as err:
@@ -248,10 +244,12 @@ class Collector:
             if idx is not None:
                 fut, opp_uid, mdl_uid = train_flight.pop(idx)
                 traj, pid, env_id, end_by_opponent_invalid, game_action_seq = ray.get(fut)
+                self.logger.info(f"Collection game finished \n\t- trajectory length: {len(traj.pid)}\n\t- game_action_seq: {game_action_seq}\n\t- end_by_opponent_invalid: {end_by_opponent_invalid}\n\t- filter_opponent_invalid: {self.filter_opponent_invalid}")
                 if self.filter_opponent_invalid and end_by_opponent_invalid:
                     continue
 
                 self.buffer.add_trajectory.remote(traj, pid, env_id)
+                self.logger.info(f"Added episode to buffer ({env_id})")
                 if self.tracker: self.tracker.add_trajectory.remote(traj, pid, env_id)
                 if opp_uid is not None:
                     self.model_pool.push_game_outcome.remote(uid_me=mdl_uid, uid_opp=opp_uid, final_reward=traj.final_rewards[pid], game_action_seq=game_action_seq)
@@ -261,5 +259,5 @@ class Collector:
             fut, env_id, pid, ckpt_uid, seed = eval_flight.pop(idx)
             ep_info, _, _, final_r = ray.get(fut)
             if self.tracker: self.tracker.add_eval_episode.remote(episode_info=ep_info, final_rewards=final_r, player_id=pid, env_id=env_id, iteration=ckpt_uid)
-            print(f"[EVAL] ckpt={ckpt_uid} env={env_id} seed={seed} done")
+            self.logger.info(f"[EVAL] ckpt={ckpt_uid} env={env_id} seed={seed} done")
 

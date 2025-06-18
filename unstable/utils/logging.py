@@ -28,14 +28,3 @@ def setup_logger(name: str, log_dir: str, level: int = logging.INFO, to_console:
         logger.addHandler(ch)
 
     return logger
-
-def setup_error_logger(name: str, log_dir: str) -> logging.Logger:
-    """ File-only logger at ERROR level. Usage: self.logger = setup_error_logger("actor-3", log_dir) """
-    logger = logging.getLogger(name)
-    if logger.handlers:       # already configured in this process
-        return logger
-    logger.setLevel(logging.ERROR)
-    fh = logging.FileHandler(pathlib.Path(log_dir) / f"{name}.log", encoding="utf-8")
-    fh.setFormatter(logging.Formatter("%(asctime)s  %(levelname)s  %(message)s"))
-    logger.addHandler(fh)
-    return logger

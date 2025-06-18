@@ -4,7 +4,7 @@ from typing import List, Dict, Optional, Tuple, Callable
 
 # local imports
 from unstable.core import Trajectory, Step, BaseTracker
-from unstable.utils.logging import setup_error_logger
+from unstable.utils.logging import setup_logger
 from unstable.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
 
 
@@ -45,10 +45,11 @@ class StepBuffer:
         self.training_steps = 0
 
         self.tracker = tracker
+        self.local_storage_dir = ray.get(self.tracker.get_train_dir.remote())
 
         # setup logging
         log_dir = ray.get(tracker.get_log_dir.remote())
-        self.logger = setup_error_logger("step_buffer", log_dir)
+        self.logger = setup_logger("step_buffer", log_dir)
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str):
         # transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) if self.final_reward_transformation is not None else trajectory.final_rewards
@@ -62,25 +63,29 @@ class StepBuffer:
             step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) if self.step_reward_transformation is not None else reward
             step_info = {"raw_reward": trajectory.final_rewards[trajectory.pid[i]], "transformed_end_of_game_reward": transformed_rewards[trajectory.pid[i]], "step_reward": step_reward}
             self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward, env_id=env_id, step_info=step_info))
-        print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
+        self.logger.info(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 
         # excess_num_samples = int(len(self.steps) - self.max_buffer_size)
         excess_num_samples = max(0, len(self.steps) - self.max_buffer_size)
+        self.logger.info(f"Excess Num Samples: {excess_num_samples}")
         if excess_num_samples > 0:
+            self.logger.info(f"Downsampling buffer because of excess samples")
             randm_sampled = random.sample(self.steps, excess_num_samples)
             for b in randm_sampled:
                 self.steps.remove(b)
+            self.logger.info(f"Buffer size after downsampling: {len(self.steps)}")
 
     def get_batch(self, batch_size: int) -> List[Step]:
         # batch = random.sample(self.steps, batch_size)
         try:                        batch = random.sample(self.steps, batch_size)
-        except ValueError as exc:   self.logger.error("requested %s samples – only %s in buffer", batch_size, len(self.steps)); raise
+        except ValueError as exc:   self.logger.error("requested %s samples - only %s in buffer", batch_size, len(self.steps)); raise
         for b in batch:
             self.steps.remove(b)
         batch = self.sampling_reward_transformation(batch) if self.sampling_reward_transformation is not None else batch
+        self.logger.info(f"Sampling {len(batch)} samples from buffer.")
         try:
             if self.tracker:
-                filename = os.path.join(ray.get(self.tracker.get_train_dir.remote()), f"train_data_step_{self.training_steps}.csv")
+                filename = os.path.join(self.local_storage_dir, f"train_data_step_{self.training_steps}.csv")
                 write_training_data_to_file(batch=batch, filename=filename)
         except Exception as exc:
             print(f"EXCEPTION {exc}")
@@ -88,9 +93,12 @@ class StepBuffer:
         #     filename = os.path.join(self.args.output_dir_train, f"train_data_step_{self.training_steps}.csv")
         #     write_training_data_to_file(batch=batch, filename=filename)
         self.training_steps += 1
+        self.logger.info(f"returning batch")
         return batch
 
-    def size(self) -> int:  return len(self.steps)
+    def size(self) -> int:
+        self.logger.info(f"Getting size: {len(self.steps)}")
+        return len(self.steps)
     def clear(self):        self.steps.clear()
     def stop(self):         self.collect = False
     def continue_collection(self):      return self.collect

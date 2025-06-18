@@ -15,7 +15,7 @@ class Reinforce(BaseAlgo):
 
     def update(self, steps, scaling: float = 1.0):
         enc, advs, obs, avg_len, pct_truncated = self.prepare_batch(steps=steps) # unpack
-        print(f"TOKENS PER ITEM: {[len(ids) for ids in enc['input_ids']]}")
+        # print(f"TOKENS PER ITEM: {[len(ids) for ids in enc['input_ids']]}")
         out = self.model(**enc) # forward
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tgt_ids = enc.input_ids[:, 1:]

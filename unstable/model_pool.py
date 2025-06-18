@@ -5,7 +5,7 @@ from typing import List
 
 # local imports
 from unstable.core import Opponent
-from unstable.utils.logging import setup_error_logger
+from unstable.utils.logging import setup_logger
 
 
 @ray.remote
@@ -32,7 +32,7 @@ class ModelPool:
 
         # set up logging
         log_dir = ray.get(tracker.get_log_dir.remote())
-        self.logger = setup_error_logger("model_pool", log_dir)
+        self.logger = setup_logger("model_pool", log_dir)
 
     def current_uid(self):      return self._latest_uid
     def latest_ckpt(self):      return self._ckpt_log[-1] if self._ckpt_log else None
@@ -122,6 +122,7 @@ class ModelPool:
         self._match_counts[tuple(sorted((uid_me, uid_opp)))] += 1
 
     def _track_exploration(self, uid_me: str, uid_opp: str, game_action_seq: List[str]):
+        return # TODO skip for scaling runs
         key = tuple(sorted((uid_me, uid_opp)))
         if key not in self._unique_actions_seqs:
             self._unique_actions_seqs[key] = {
@@ -141,14 +142,12 @@ class ModelPool:
         if uid_me not in self._models or uid_opp not in self._models: return  # skip if either side is unknown
         self._update_ratings(uid_me=uid_me, uid_opp=uid_opp, final_reward=final_reward) # update ts
         self._register_game(uid_me=uid_me, uid_opp=uid_opp) # register the game for tracking
-        # self._track_exploration(uid_me=uid_me, uid_opp=uid_opp, game_action_seq=game_action_seq) # tracke unique action seqs
         self._track_exploration(uid_me, uid_opp, game_action_seq)
         self.snapshot(self._step_counter)
         
     def _exp_win(self, A, B):   return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
     def _activate(self, uid):   self._models[uid].active = True
     def _retire(self, uid):     self._models[uid].active = False
-
     def _maintain_active_pool(self):
         current = self.latest_ckpt()
         if current is None: return # nothing to do yet
@@ -180,17 +179,10 @@ class ModelPool:
         for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]: stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
         return stats
 
-    # def snapshot(self, iteration: int):
-    #     self._step_counter = iteration
-    #     self._tracker.log_model_pool.remote(
-    #         step=iteration, match_counts=dict(self._match_counts), 
-    #         ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
-    #         exploration=self._get_exploration_ratios(),
-    #     )
     def snapshot(self, iteration: int):
         try:
             self._tracker.log_model_pool.remote(
-                step=iteration, match_counts=dict(self._match_counts),
+                step=iteration, match_counts=dict(self._match_counts), 
                 ts_dict={u: {"mu": o.rating.mu, "sigma": o.rating.sigma} for u, o in self._models.items()},
                 exploration=self._get_exploration_ratios(),
             )

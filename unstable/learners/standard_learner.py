@@ -9,7 +9,7 @@ from unstable.buffer import StepBuffer
 from unstable.core import BaseAlgo
 from unstable.model_pool import ModelPool
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
-from unstable.utils.logging import setup_error_logger
+from unstable.utils.logging import setup_logger
 
 
 
@@ -22,7 +22,7 @@ class StandardLearner:
     ):
         # set up logging
         log_dir = ray.get(tracker.get_log_dir.remote())
-        self.logger = setup_error_logger("learner", log_dir)
+        self.logger = setup_logger("learner", log_dir)
 
         # TODO docstring
         self.algorithm = algorithm
@@ -54,9 +54,10 @@ class StandardLearner:
         self._step = 0; self._samples_seen = 0 # training counters
 
     def train(self, iterations: int):
-        print("[Learner] starting training loop …")
+        self.logger.info("Learner starting training loop …")
         while self._step < iterations:
             while (ray.get(self.step_buffer.size.remote()) < self.batch_size * self.batch_delay_buffer): time.sleep(0.2)
+            self.logger.info("Starting learning step")
 
             # batch: List = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
             try:                        batch: List = ray.get(self.step_buffer.get_batch.remote(self.batch_size))
@@ -68,18 +69,21 @@ class StandardLearner:
 
             metrics_acc: Dict[str, float] = {}
             num_steps=self.batch_size//self.mini_batch_size
+            self.logger.info(f"Got {len(batch)} many samples. Running for {num_steps} steps (i.e. mini batch size: {self.mini_batch_size})")
+            
             for i in range(num_steps):
                 sub = batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
                 with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                     update_metrics = self.algorithm.update(sub, scaling=num_steps)
                 for k, v in update_metrics.items():
                     metrics_acc[k] = metrics_acc.get(k, 0.0) + v
+                self.logger.info(f"Mini-step metrics: {update_metrics}")
+            self.logger.info(f"Step metrics: {metrics_acc}")
+            
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
-            # self.optimizer.step()
             try:                        self.optimizer.step()
             except Exception as exc:    self.logger.exception(f"optimizer.step crashed on step {self._step} -\n\n{exc}\n\n"); raise
-
             self._step += 1
 
             # Logging
@@ -91,7 +95,8 @@ class StandardLearner:
                 })
                 self.tracker.log_learner.remote(log)
             else:
-                if self._step % 10 == 0: print(f"[Learner] step {self._step:>5} | loss={metrics_acc.get('loss', 0):.4f}")
+                if self._step % 10 == 0: 
+                    self.logger.info(f"[Learner] step {self._step:>5} | loss={metrics_acc.get('loss', 0):.4f}")
 
             # save & register checkpoint every step
             if self._step % self.save_every == 0:
@@ -100,10 +105,10 @@ class StandardLearner:
                 # self._save_checkpoint()
                 if self.model_pool and self._last_ckpt:
                     self.model_pool.add_checkpoint.remote(str(self._last_ckpt), self._step)
-                    print(f"[Learner] +registered -> {self._last_ckpt}")
+                    self.logger.info(f"[Learner] +registered -> {self._last_ckpt}")
                     self.model_pool.snapshot.remote(self._step)
 
-        print("[Learner] training finished.")
+        self.logger.info("[Learner] training finished.")
         self.step_buffer.stop()
         return {"final_step":self._step, "samples":self._samples}
 
@@ -113,5 +118,5 @@ class StandardLearner:
         model = self.model.module if hasattr(self.model,'module') else self.model
         model.save_pretrained(ckpt_dir, save_adapter=True)
         self._last_ckpt = ckpt_dir
-        print(f"[Learner] saved -> {ckpt_dir}")
+        self.logger.info(f"[Learner] saved -> {ckpt_dir}")
 
