@@ -46,18 +46,29 @@ class CallableActorWrapper:
 
 
 def _iter_from_uid(uid: str) -> int:
-    """ Extracts numerical iteration from UID strings like 'ckpt-123'. Defaults to 0 if no number is found """
+    """Return integer suffix from “ckpt-42”; 0 if no match."""
     match = re.search(r"(\d+)$", uid)
     return int(match.group(1)) if match else 0
 
 def _extract_action(action: str) -> str:
+    """Return the **lower-cased** content inside the first ``[...]`` pair."""
     match = re.search(r"\[(.*?)\]", action)
     return match.group(1).strip().lower() if match else ""
 
 
 @ray.remote
 class Collector:
-    """Collects trajectories and evaluation episodes from environments using parallel VLLM actors."""
+    """
+    Orchestrates parallel rollout generation and evaluation. Two internal flight lists are kept:
+    * *train_flight* - active self-play games whose trajectories feed the 'StepBuffer'.
+    * *eval_flight* - games against a fixed large model for offline eval.
+
+    Attributes
+    ----------
+    actors (list[ray.ActorHandle]): Pool of VLLMActor's pinned to individual GPUs.
+    buffer (ray.ActorHandle): Remote 'StepBuffer' that stores Steps for the learner.
+    model_pool (ray.ActorHandle): Remote 'ModelPool'.
+    """
     def __init__(
         self,
         num_actors: int,
@@ -138,7 +149,14 @@ class Collector:
         )
 
     def collect(self, num_workers: int, num_eval_workers: int):
-        """ Main loop for collecting trajectories and evaluations concurrently """
+        """
+        Main infinite loop (returns only when 'StepBuffer.continue_collection' flips to "False").
+
+        Parameters
+        ----------
+        num_workers (int): Max number of concurrent training rollouts.
+        num_eval_workers (int): Max number of concurrent evaluation rollouts.
+        """
         @ray.remote(num_cpus=0)
         def run_game(env_id, num_players, player_id, actor, lora_path, opponent_uid, model_uid, opponent_path_or_name, prompt_template, action_extraction, seed: int = 489):
             obs_format = OBSERVATION_FORMATTING[prompt_template]

@@ -6,6 +6,7 @@ from unstable.utils.logging import setup_logger
 
 @ray.remote
 class Tracker(BaseTracker):
+    """ Multiplexes all experiment metrics to Weights-and-Biases *and* to the live terminal dashboard. """
     COLLECT_FLUSH_EVERY: int = 64 # How often to push collection stats (in *trajectories*)
     TOPK: int = 5 # Only keep the K most‑played match‑ups in the dashboard table
 

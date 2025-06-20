@@ -18,6 +18,10 @@ from unstable.learners.utils import build_peft_model, enable_full_activation_ckp
 
 @ray.remote
 class MultiGPULearner:
+    """
+    Distributed learner (FSDP or DDP) that shares a Ray worker **per rank**.
+    Only rank-0 writes checkpoints and registers them; other ranks synchronise via barriers around I/O.
+    """
     def __init__(
         self, rank: int, world_size: int, use_fsdp: bool, model_name: str, step_buffer: StepBuffer, model_pool: ModelPool,
         algorithm: BaseAlgo, batch_size: int=384, gradient_accum: int=32, lr: float=5e-6, grad_clip: float=1.0, delay_mult: float=1.5,

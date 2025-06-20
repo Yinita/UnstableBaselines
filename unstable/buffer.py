@@ -11,20 +11,32 @@ from unstable.reward_transformations import ComposeFinalRewardTransforms, Compos
 # TODO doc-strings
 
 def write_eval_data_to_file(episode_info, filename):
+    """Dump a list of dicts (one row per turn) to CSV `filename`."""
     with open(filename, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=list(episode_info[0].keys()))
         writer.writeheader()
         writer.writerows(episode_info)
 
 def write_training_data_to_file(batch, filename: str):
+    """Save a Step mini-batch as CSV for offline inspection."""
     with open(filename, mode='w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(['pid', 'obs', 'act', 'reward', "env_id", "step_info"])  # header
         for step in batch: writer.writerow([step.pid, step.obs, step.act, step.reward, step.env_id, step.step_info])
 
-
 @ray.remote
 class StepBuffer:
+    """
+    In-memory replay buffer that stores *Steps* until the learner samples them.
+    Supports optional reward-transformation hooks executed **on read** and/or **on write**.
+
+    Parameters
+    ----------
+    max_buffer_size (int): Hard cap on stored Steps. Older entries are dropped according to `buffer_strategy`.
+    final_reward_transformation, step_reward_transformation, sampling_reward_transformation Callables composed via the `reward_transformations.*` utilities.
+    buffer_strategy {"random", "sequential"}: How to evict when over capacity.
+    tracker (ray.ActorHandle or None): For auto-export of every sampled batch to CSV.
+    """
     def __init__(
         self,
         max_buffer_size: int,
@@ -52,6 +64,7 @@ class StepBuffer:
         self.logger = setup_logger("step_buffer", log_dir)
 
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str):
+        """ Decompose a finished trajectory into individual 'Step's and append. """
         # transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) if self.final_reward_transformation is not None else trajectory.final_rewards
         try:
             transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) if self.final_reward_transformation else trajectory.final_rewards
@@ -76,7 +89,10 @@ class StepBuffer:
             self.logger.info(f"Buffer size after downsampling: {len(self.steps)}")
 
     def get_batch(self, batch_size: int) -> List[Step]:
-        # batch = random.sample(self.steps, batch_size)
+        """
+        Random-sample a mini-batch and *remove* it from the buffer.
+        On each call the batch is optionally reweighted by `sampling_reward_transformation`.
+        """
         try:                        batch = random.sample(self.steps, batch_size)
         except ValueError as exc:   self.logger.error("requested %s samples - only %s in buffer", batch_size, len(self.steps)); raise
         for b in batch:

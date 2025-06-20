@@ -13,24 +13,21 @@ from unstable.utils.logging import setup_logger
 
 @ray.remote
 class VLLMActor:
-    def __init__(self, vllm_config: Dict[str, Any], tracker, name: str):
-        # CRITICAL: Add these CUDA environment variables to prevent deadlocks
-        os.environ["CUDA_LAUNCH_BLOCKING"] = "0"  # Disable blocking CUDA calls
-        os.environ["NCCL_ASYNC_ERROR_HANDLING"] = "1"  # Better error handling
-        os.environ["NCCL_TIMEOUT"] = "600"  # 10 minute timeout
-        os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # Consistent GPU ordering
-        
-        # Add CUDA memory management to prevent fragmentation deadlocks
-        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
-        
-        # set up logging
-        log_dir = ray.get(tracker.get_log_dir.remote())
-        self.logger = setup_logger(f"actor-{name}", log_dir)
+    """
+    Thin async wrapper around vLLM that can load *many* LoRA adapters without restarting the engine.
+    Every call to :py:meth:`submit_prompt` enqueues a request that the private `_batch_loop` picks up in ≤20 ms batches.
 
+    Parameters
+    ----------
+    vllm_config (dict): Keys: ``model_name``, ``max_loras``, ``lora_config`` (rank, …), ``max_parallel_seq``, ``max_model_len``, plus sampling kwargs.
+    tracker (ray.ActorHandle): Remote `Tracker` for periodic inference utilisation reporting.
+    name (str): Human-readable label used in logs and the dashboard.
+    """
+    def __init__(self, vllm_config: Dict[str, Any], tracker, name: str):
+        self.logger = setup_logger(f"actor-{name}", ray.get(tracker.get_log_dir.remote())) # set up logging
         self.gpu_ids = ray.get_gpu_ids()
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
         
-        # CRITICAL: Add explicit CUDA initialization and error checking
         try:
             import torch.cuda
             torch.cuda.set_device(0)
@@ -41,18 +38,9 @@ class VLLMActor:
             raise
 
         engine_args = EngineArgs(
-            model = vllm_config["model_name"], 
-            enable_lora = True, 
-            max_loras = vllm_config.get("max_loras", 5),
-            max_lora_rank = vllm_config["lora_config"]["lora_rank"], 
-            max_cpu_loras = vllm_config.get("max_loras", 5),
-            max_num_seqs = vllm_config["max_parallel_seq"], 
-            task = "generate", 
-            max_model_len = vllm_config.get("max_model_len", 8192),
-            # CRITICAL: Add these VLLM-specific deadlock prevention settings
-            disable_custom_all_reduce = True,  # Prevent NCCL deadlocks
-            enforce_eager = False,  # Allow lazy execution
-            disable_log_stats = True,  # Reduce logging overhead
+            model=vllm_config["model_name"], enable_lora=True, max_loras=vllm_config["max_loras"], max_lora_rank=vllm_config["lora_config"]["lora_rank"], 
+            max_cpu_loras=vllm_config["max_loras"], max_num_seqs=vllm_config["max_parallel_seq"], task="generate", max_model_len=vllm_config["max_model_len"],
+            disable_custom_all_reduce=True, enforce_eager=False, disable_log_stats=True,  # Reduce logging overhead
         )
         
         try:
@@ -68,7 +56,6 @@ class VLLMActor:
             max_tokens = vllm_config.get("max_tokens", 4096),
         )
 
-        # bookkeeping
         self._queue = deque()
         self._futures = {}
         self._next_id = 0
@@ -82,7 +69,6 @@ class VLLMActor:
         self._running = defaultdict(int)
         self._tok_hist = defaultdict(lambda: deque())
 
-        # CRITICAL: Add explicit event loop management
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -99,6 +85,18 @@ class VLLMActor:
         self._last_step_time = time.monotonic()
 
     async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> str:
+        """
+        Submit a *single* prompt and await the fully generated text.
+
+        Parameters
+        ----------
+        prompt (str): Plain text prompt (already templated).
+        lora_path (str or None): Directory of the adapter to apply. 'None' -> use base weights.
+
+        Returns
+        -------
+        (str) Text of the final generation segment.  
+        """
         fut = asyncio.Future()
         lora = lora_path or "base"
         self._queued[lora] += 1
@@ -110,7 +108,6 @@ class VLLMActor:
             try:
                 await asyncio.sleep(0.02)
                 
-                # CRITICAL: Add deadlock detection
                 now = time.monotonic()
                 if now - self._last_step_time > 30:  # 30 second deadlock detection
                     self.logger.error(f"Potential deadlock detected - no engine steps for {now - self._last_step_time:.1f} seconds")
@@ -122,10 +119,10 @@ class VLLMActor:
                     lora = path or "base"
                     req_id = str(self._next_id); self._next_id += 1
 
-                    self._futures[req_id]  = fut
+                    self._futures[req_id] = fut
                     self._req2lora[req_id] = lora
-                    self._queued[lora]    -= 1
-                    self._running[lora]   += 1
+                    self._queued[lora] -= 1
+                    self._running[lora] += 1
 
                     if path:
                         if path not in self._lora_ids:
@@ -140,13 +137,11 @@ class VLLMActor:
                         self.logger.debug(f"Added request {req_id} with lora {lora}")
                     except Exception as e:
                         self.logger.error(f"Failed to add request {req_id}: {e}")
-                        # Clean up the failed request
                         self._running[lora] -= 1
                         self._req2lora.pop(req_id, None)
                         fut.set_exception(e)
                         continue
 
-                # CRITICAL: Add timeout and better error handling to engine.step()
                 try:
                     step_start = time.monotonic()
                     outs = self.engine.step()
@@ -158,7 +153,6 @@ class VLLMActor:
                         
                 except Exception as exc:   
                     self.logger.exception(f"engine.step() failed - running: {dict(self._running)}")
-                    # Instead of raising (which kills the actor), try to recover
                     await asyncio.sleep(1.0)  # Brief pause before retry
                     continue
 
@@ -189,17 +183,17 @@ class VLLMActor:
                 self.logger.exception(f"Critical error in batch loop: {e}")
                 await asyncio.sleep(1.0)  # Prevent tight error loop
 
-    # Add health check method
     async def get_health_status(self):
-        """Health check method to detect if actor is responsive"""
+        """
+        Lightweight heartbeat for monitoring / deadlock detection.
+
+        Returns
+        -------
+        (dict) Keys: ``running_requests``, ``queued_requests``, ``time_since_last_step`` etc.
+        """
         return {
-            "name": self.name,
-            "running_requests": dict(self._running),
-            "queued_requests": dict(self._queued),
-            "last_step_time": self._last_step_time,
-            "time_since_last_step": time.monotonic() - self._last_step_time,
-            "futures_count": len(self._futures),
-            "engine_loaded": hasattr(self, 'engine') and self.engine is not None
+            "name": self.name, "running_requests": dict(self._running), "queued_requests": dict(self._queued), "last_step_time": self._last_step_time,
+            "time_since_last_step": time.monotonic()-self._last_step_time, "futures_count": len(self._futures), "engine_loaded": hasattr(self, 'engine') and self.engine is not None
         }
 
     async def _report_loop(self):

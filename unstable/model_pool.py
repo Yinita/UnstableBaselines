@@ -10,12 +10,26 @@ from unstable.utils.logging import setup_logger
 
 @ray.remote
 class ModelPool:
-    def __init__(self, sample_mode, max_active_lora, tracker=None, lag_range=(1,7), beta=4.0):
-        self.TS = trueskill.TrueSkill(beta=beta)
+    """
+    Central registry of all opponents (checkpoints or fixed baselines).
+    * Runs as a Ray actor.  Every public method is therefore implicitly remote-callable.
+    * Maintains a sliding "active-LoRA" window so that only a handful of past checkpoints stay loaded in memory on the inference side.
+    * Sampling behaviour is controlled via `sample_mode`.
+    """
+    def __init__(self, sample_mode, max_active_lora, tracker=None, lag_range=(1,7)):
+        """
+        Parameters
+        ----------
+        * sample_mode (str): One of {'fixed', 'mirror', 'lagged', 'random', 'match-quality', 'ts-dist', 'exploration'}.
+        * max_active_lora (int): Maximum number of checkpoint LoRAs kept 'active' (eligible to be sampled) at any moment. The newest checkpoint is always active.
+        * tracker (Optional[BaseTracker]): Remote 'Tracker' used for periodic logging.  May be 'None' when running local tests.
+        * lag_range (int, int): Range of checkpoint lag (low, high) considered eligible when 'sample_mode == "lagged"'.
+        """
+        self.TS = trueskill.TrueSkill(beta=4.0)
         self._models = {} # uid -> Opponent dataclass
         self._ckpt_log = [] # ordered list of checkpoint uids
         self.lag_lo, self.lag_hi = lag_range
-        self.sample_mode = sample_mode # "self-play", "lagged", "fixed", "adaptive-trueskill"
+        self.sample_mode = sample_mode
         self.max_active_lora = max_active_lora
         self._latest_uid = None
         self._last_ckpt = None
@@ -39,6 +53,16 @@ class ModelPool:
     def ckpt_path(self, uid):   return None if uid is None else  self._models[uid].path_or_name
 
     def add_checkpoint(self, path: str, iteration: int):
+        """
+        Register a newly-saved LoRA checkpoint.
+        The checkpoint is given an initial TrueSkill rating equal to the previous checkpoint's μ and doubled σ, or the default prior when none
+        exists. It is promoted to "current" and 'self._maintain_active_pool' is invoked to respect the active-LoRA budget.
+
+        Parameters
+        ----------
+        path (str): Filesystem directory that contains 'adapter_model.*' etc.
+        iteration (int): Learner step number (used to build the UID "ckpt-{iteration}").
+        """
         uid = f"ckpt-{iteration}"
         # inherit μ/σ if a previous checkpoint exists
         if self._latest_uid and self._latest_uid in self._models:
@@ -52,11 +76,26 @@ class ModelPool:
         self._maintain_active_pool() # update current ckpt pool
 
     def add_fixed(self, name, prior_mu=25.0):
+        """
+        Add a non-trainable baseline opponent.
+
+        Parameters
+        ----------
+        name (str): The OpenRouter name of the model.
+        prior_mu : float, default 25.0 Starting μ for its TrueSkill rating.
+        """
         uid = f"fixed-{name}"
         if uid not in self._models:
             self._models[uid] = Opponent(uid, "fixed", name, rating=self.TS.create_rating(prior_mu))
 
     def sample(self, uid_me):
+        """
+        Draw an opponent UID for 'uid_me' according to 'sample_mode'.
+
+        Returns
+        -------
+        str or None -> UID of the chosen opponent. 'None' means "self-play".
+        """
         match self.sample_mode:
             case "fixed":           return self._sample_fixed_opponent()                        # randomly sample one of the fixed opponents provided
             case "mirror":          return self.latest_ckpt()                                   # literally play against yourself
@@ -139,6 +178,15 @@ class ModelPool:
 
 
     def push_game_outcome(self, uid_me: str, uid_opp: str, final_reward: float, game_action_seq: List[str]):
+        """
+        Update ratings, match counts and exploration statistics after a game.
+
+        Parameters
+        ----------
+        uid_me, uid_opp (str): Player and opponent UIDs. 'uid_opp' can equal 'uid_me' in the self-play case.
+        final_reward (float): +1 if 'uid_me' won, -1 if lost, 0 for draw. 
+        game_action_seq (list[str]): Flat list of *submitted* actions (one per turn) used for n-gram exploration statistics.
+        """
         if uid_me not in self._models or uid_opp not in self._models: return  # skip if either side is unknown
         self._update_ratings(uid_me=uid_me, uid_opp=uid_opp, final_reward=final_reward) # update ts
         self._register_game(uid_me=uid_me, uid_opp=uid_opp) # register the game for tracking
