@@ -17,7 +17,7 @@ def setup_logger(name: str, log_dir: str, level: int = logging.INFO, to_console:
     logger.propagate = False          # keep noise out of the root logger
 
     # file (rotating) handler
-    fh = logging.handlers.RotatingFileHandler(path, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    fh = logging.handlers.RotatingFileHandler(path, maxBytes=10_000_000, backupCount=5, encoding="utf-8")
     fh.setFormatter(logging.Formatter(_LOG_FMT))
     logger.addHandler(fh)
 

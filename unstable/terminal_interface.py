@@ -63,7 +63,7 @@ class TerminalInterface:
             "Draw Rate": {"key": "collection-all/Draw Rate", "fmt": lambda v: f"{v*100:5.1f}%"},
             "Game Length": {"key": "collection-all/Game Length", "fmt": lambda v: f"{v:5.2f}"},
             "Avg. Reward": {"key": "collection-all/Reward", "fmt": lambda v: f"{v:6.3f}"},
-            "Has-Think %" :{"key": "collection-all/Format Success Rate - has_think", "fmt": lambda v: f"{v*100:5.1f}%"},
+            "Has-Think %": {"key": "collection-all/Format Success Rate - has_think", "fmt": lambda v: f"{v*100:5.1f}%"},
         }
         _COLL_BOUNDS = {"Win Rate": 100.0, "Loss Rate": 100.0, "Draw Rate": 100.0, "Has-Think %": 100.0, "Game Length": 25.0, "Avg. Reward": 1.0}
         graph_w, graph_h = int(self.console.size.width * 0.28), 4
@@ -90,6 +90,7 @@ class TerminalInterface:
             self.tok_graphs[gid] = BufferedHistoryGraph(1e4,  width=graph_w, height=3, format=lambda v: f"{v:.0f}", dynamic_bound=False, upsidedown=True)
             self.mem_graphs[gid] = BufferedHistoryGraph(100.0, width=graph_w, height=3, format=lambda v: f"{v:.0f}%", dynamic_bound=False)
 
+        self._coll = None
     async def _system_stats(self) -> Dict[str, Any]:
         # self.console.log(f"NVML ok? {bool(self.pynvml)}, GPUs seen: {self.gpu_count}")
         cpu = psutil.cpu_percent()
@@ -194,6 +195,8 @@ class TerminalInterface:
         return Panel(Text("\n\n").join(blocks), title=title, box=box.DOUBLE)
 
     def _collection_panel(self) -> Panel:
+        if not self._coll:
+            return Panel(Text("waiting …"), title=title, box=box.DOUBLE)
         # build / refresh each mini-panel
         mini: list[Panel] = []
         for pretty, meta in self._coll_metrics.items():

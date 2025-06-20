@@ -12,7 +12,7 @@ from unstable.utils.logging import setup_logger
 class ModelPool:
     def __init__(self, sample_mode, max_active_lora, tracker=None, lag_range=(1,7), beta=4.0):
         self.TS = trueskill.TrueSkill(beta=beta)
-        self._models   = {} # uid -> Opponent dataclass
+        self._models = {} # uid -> Opponent dataclass
         self._ckpt_log = [] # ordered list of checkpoint uids
         self.lag_lo, self.lag_hi = lag_range
         self.sample_mode = sample_mode # "self-play", "lagged", "fixed", "adaptive-trueskill"

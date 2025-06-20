@@ -48,6 +48,5 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     return action, format_feedback
 
 
-
 OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda observation: apply_template(key, observation))() for key in TEMPLATE_PARTS}
 ACTION_EXTRACTION = {"default": extract_action_and_format_feedback}

@@ -89,9 +89,6 @@ class StepBuffer:
                 write_training_data_to_file(batch=batch, filename=filename)
         except Exception as exc:
             print(f"EXCEPTION {exc}")
-        # if self.args.log_training_data: # store training data as csv file
-        #     filename = os.path.join(self.args.output_dir_train, f"train_data_step_{self.training_steps}.csv")
-        #     write_training_data_to_file(batch=batch, filename=filename)
         self.training_steps += 1
         self.logger.info(f"returning batch")
         return batch

@@ -2,11 +2,11 @@ import time, ray, unstable
 import unstable.reward_transformations as retra
 
 NUM_LEARNERS = 1
-NUM_ACTORS = 7
-COLLECTION_WORKERS = 768
+NUM_ACTORS = 2
+COLLECTION_WORKERS = 384
 EVALUATION_WORKERS = 0
-ITERATIONS = 600
-MODEL_NAME = "Qwen/Qwen3-4B-base"
+ITERATIONS = 200
+MODEL_NAME = "Qwen/Qwen3-1.7B-base"
 # MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 BATCH_SIZE = 384
 MINI_BATCH_SIZE = 1
@@ -18,9 +18,9 @@ SAMPLE_MODE = "mirror"
 
 
 # vRAM optimization
-ACTIVATION_CHECKPOINTING = False
-GRADIENT_CHECKPOINTING = False
-USE_TRAINER_CACHE = True 
+ACTIVATION_CHECKPOINTING = True
+GRADIENT_CHECKPOINTING = True
+USE_TRAINER_CACHE = False
 
 
 
@@ -35,9 +35,9 @@ vllm_config = {
 }
 
 TRAINING_ENVS = [
-    ("SimpleTak-v0-train", 2, "qwen3-zs"), 
+    # ("SimpleTak-v0-train", 2, "qwen3-zs"), 
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    # ("Nim-v0-train", 2, "qwen3-zs"), 
+    ("Nim-v0-train", 2, "qwen3-zs"), 
     # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
     # ("PigDice-v0-train", 2, "qwen3-zs")
@@ -59,7 +59,8 @@ EVALUATION_ENVS = [
     # ("GameOfPureStrategy-v0-train", 2, "qwen3-zs")
 ]
 
-WANDB_RUN_NAME = f"Sclaing-Laws-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
+# WANDB_RUN_NAME = f"Reward-Ablation--exp1-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
+WANDB_RUN_NAME = f"Debugging-run-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
 
 
 ray.init(namespace="unstable", log_to_driver=True) # Ray init 
