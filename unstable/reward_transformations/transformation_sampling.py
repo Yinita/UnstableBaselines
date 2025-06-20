@@ -41,6 +41,5 @@ class NormalizeRewardsByEnv(SamplingRewardTransform):
             else:               normed = r - mean
             for s, nr in zip(env_steps, normed): # write back
                 s.reward = float(nr)
-
         return steps
 

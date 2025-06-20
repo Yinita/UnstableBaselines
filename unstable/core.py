@@ -18,7 +18,7 @@ class Trajectory:
 @dataclass
 class Step:
     pid: int
-    obs: str
+    obs: str 
     act: str
     reward: float
     env_id: str
@@ -32,6 +32,33 @@ class Opponent:
     path_or_name: str # LoRA dir or OpenRouter model id
     rating: trueskill.Rating # trueskill.Rating(mu, sigma)
     active: bool = True
+
+
+@dataclass
+class EpisodeResult:
+    traj: Trajectory
+    end_by_opponent_invalid: bool
+    action_seq: List[str]
+    final_rewards: List[float]
+
+
+@dataclass(frozen=True)
+class PlaySpec:
+    env_id: str
+    num_players: int
+    player_id: int
+    agents: List[Agent]
+    seed: int
+
+
+@dataclass
+class TaskMeta:
+    type: str  # "train" | "eval"
+    env_id: str
+    player_id: int
+    seed: int
+    ckpt_uid: str | None = None
+    opponent_uid: str | None = None
 
 
 class BaseAlgo:
@@ -51,12 +78,12 @@ class BaseAlgo:
         raise NotImplementedError
 
 class BaseTracker:
-    def __init__(self, run_name: str, output_dir: Optional[str] = None):
+    def __init__(self, run_name: str):
         self.run_name = run_name 
-        self._build_output_dir(output_dir=output_dir)
+        self._build_output_dir()
 
-    def _build_output_dir(self, output_dir: Optional[str]):
-        self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.run_name) if not output_dir else output_dir
+    def _build_output_dir(self):
+        self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.run_name)
         os.makedirs(self.output_dir)
         self.output_dirs = {}
         for folder_name in ["training_data", "eval_data", "checkpoints", "logs"]: 

@@ -8,6 +8,19 @@ except ImportError: from torch.distributed.algorithms._checkpoint.checkpoint_wra
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
 
 def _load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
+    """
+    Load a LoRA adapter state-dict into an existing PEFT model.
+    The function searches *in order* for any of the following files inside `ckpt_dir`::
+        adapter_model.safetensors
+        adapter_model.bin
+        pytorch_model.bin
+    The first match is deserialised and applied via :pyfunc:`peft.set_peft_model_state_dict`.
+
+    Parameters
+    ----------
+    peft_model (peft.PeftModel): Instance returned by :func:`get_peft_model`.
+    ckpt_dir (str or pathlib.Path): Directory that contains the adapter weights.
+    """
     ckpt_dir = pathlib.Path(ckpt_dir)
     candidates = [ckpt_dir / "adapter_model.safetensors", ckpt_dir / "adapter_model.bin", ckpt_dir / "pytorch_model.bin",]
     for path in candidates:
@@ -52,7 +65,15 @@ def _json_safe(obj):
     raise TypeError # let json handle the rest
     
 def enable_full_activation_ckpt(model):
-    """ Wrap every leaf module in checkpoint_wrapper (skip LoRA layers). Equivalent to full-graph activation checkpointing """
+    """
+    Enable **full-graph activation checkpointing** on `model`. All leaf modules that do *not* contain a `LoraLayer` are wrapped with
+    ``checkpoint_wrapper`` in *no-reentrant* mode (saves GPU memory at the cost of extra compute).  
+    LoRA layers are excluded so their parameters remain visible to the optimizer.
+
+    Parameters
+    ----------
+    model (torch.nn.Module): PEFT model returned by :func:`get_peft_model`.
+    """
     def checkpoint_everything(mod):
         if isinstance(mod, LoraLayer): return False
         for _, child in mod.named_modules():

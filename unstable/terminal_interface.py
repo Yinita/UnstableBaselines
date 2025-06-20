@@ -1,175 +1,84 @@
-from __future__ import annotations
-import asyncio, psutil, time, collections, re
-from typing import Dict, Any, List
+import asyncio, psutil, time, collections, re, pynvml
+from typing import Dict, Any, Tuple
 from collections import deque
-
-import ray
+from itertools import zip_longest
 from rich.console import Console, Group
-from rich.live import Live
-from rich.layout import Layout
-from rich.panel import Panel
-from rich.text import Text
-from rich.columns import Columns
-from rich import box
-from rich.table import Table
-from rich.align import Align
-from rich.style import Style
-from rich.color import Color
 
 
-from nvitop.tui.library import BufferedHistoryGraph
+"""
+right (ts)
+left top exploration
+left bottom heatmap
+right bottom (format rate, invalid move rate, game_len, buffer_size)
 
-_CKPT_RE = re.compile(r"ckpt-(-?\d+)$")
-_SPARK_BARS = " ▁▂▃▄▅▆▇█"          # 8-level spark chars; first one is “blank”
 
-def _spark(vals: deque[float], width: int = 16) -> str:
-    """Return a fixed-width sparkline from the last `width` values."""
-    if not vals:
-        return " " * width
-    data = list(vals)[-width:]
-    lo, hi = min(data), max(data)
-    if hi == lo:
-        return _SPARK_BARS[-1] * len(data)  # flat line
-    rng = hi - lo
-    idx = lambda v: int((v - lo) / rng * (len(_SPARK_BARS) - 1))
-    return "".join(_SPARK_BARS[idx(v)] for v in data).rjust(width)
-
-def _ckpt_idx(uid: str) -> int | None:
-    """Return numeric index for 'ckpt-42' or 'ckpt--1'.  None otherwise."""
-    m = _CKPT_RE.match(uid)
-    return int(m.group(1)) if m else None
-
-def _uid_sort_key(uid: str):
-    """(0, idx) for checkpoints, (1, uid) for everything else."""
-    idx = _ckpt_idx(uid)
-    return (0, idx) if idx is not None else (1, uid)
-
-def _trim_uid(uid: str, max_len: int = 30) -> str:
-    """Keep the right-most `max_len` chars so ckpt numbers stay visible."""
-    return uid[-max_len:] if len(uid) > max_len else uid
-
+bottom gpu
+"""
+def _bar(pct: float, width: int) -> str: return "█" * int(pct / 100 * width)
 
 class TerminalInterface:
-    _COLL_KEEP = ("invalid_move", "Win Rate", "Loss Rate", "Draw Rate", "Game Length", "Reward")
-    _EVAL_KEEP = tuple(k for k in _COLL_KEEP if k != "invalid_move")
-    def __init__(self, tracker, model_pool, step_buffer=None) -> None:
-        self.tracker, self.model_pool, self.step_buffer = (tracker, model_pool, step_buffer)
-        self.console = Console()
-        self._latest_stats: Dict[str, Any] = {}
-        self._hist: dict[str, deque[float]] = collections.defaultdict(lambda: deque(maxlen=128))
-        self._coll_metrics = {
-            "Win Rate": {"key": "collection-all/Win Rate", "fmt": lambda v: f"{v*100:5.1f}%"},
-            "Loss Rate": {"key": "collection-all/Loss Rate", "fmt": lambda v: f"{v*100:5.1f}%"},
-            "Draw Rate": {"key": "collection-all/Draw Rate", "fmt": lambda v: f"{v*100:5.1f}%"},
-            "Game Length": {"key": "collection-all/Game Length", "fmt": lambda v: f"{v:5.2f}"},
-            "Avg. Reward": {"key": "collection-all/Reward", "fmt": lambda v: f"{v:6.3f}"},
-            "Has-Think %": {"key": "collection-all/Format Success Rate - has_think", "fmt": lambda v: f"{v*100:5.1f}%"},
-        }
-        _COLL_BOUNDS = {"Win Rate": 100.0, "Loss Rate": 100.0, "Draw Rate": 100.0, "Has-Think %": 100.0, "Game Length": 25.0, "Avg. Reward": 1.0}
-        graph_w, graph_h = int(self.console.size.width * 0.28), 4
-        self._coll_graphs = {name: BufferedHistoryGraph(_COLL_BOUNDS[name], width=graph_w, height=graph_h, format=lambda v: "", dynamic_bound=False, upsidedown=False) for name in self._coll_metrics}
+    def __init__(self, tracker, step_buffer):
+        self.tracker, self.step_buffer = tracker, step_buffer
+        self.console = Console() 
+        self._gpu_stats = None
+        self._general_stats = None
+        self._hist: dict[str, deque[float|int]] = collections.defaultdict(lambda: deque(maxlen=128))
+        self._max_tok_s: int = 1_000
 
-        try:
-            import pynvml
-            pynvml.nvmlInit()
-            self.pynvml    = pynvml
-            self.gpu_count = pynvml.nvmlDeviceGetCount()
-        except Exception:
-            self.pynvml, self.gpu_count = None, 0
+        pynvml.nvmlInit()
+        self.pynvml=pynvml
+        self.gpu_count=pynvml.nvmlDeviceGetCount()
 
-        # ── history graphs ──
-        self.power_graphs: Dict[int, BufferedHistoryGraph] = {}
-        self.tok_graphs: Dict[int, BufferedHistoryGraph] = {}
-        self.mem_graphs: Dict[int, BufferedHistoryGraph] = {}
-
-        full_w = self.console.size.width
-        graph_w = int(full_w) # * 0.75) # right-hand graph width
-
-        for gid in range(self.gpu_count):
-            self.power_graphs[gid] = BufferedHistoryGraph(100.0, width=graph_w, height=3, format=lambda v: f"{v:.0f}%", dynamic_bound=False)
-            self.tok_graphs[gid] = BufferedHistoryGraph(1e4,  width=graph_w, height=3, format=lambda v: f"{v:.0f}", dynamic_bound=False, upsidedown=True)
-            self.mem_graphs[gid] = BufferedHistoryGraph(100.0, width=graph_w, height=3, format=lambda v: f"{v:.0f}%", dynamic_bound=False)
-
-        self._coll = None
     async def _system_stats(self) -> Dict[str, Any]:
-        # self.console.log(f"NVML ok? {bool(self.pynvml)}, GPUs seen: {self.gpu_count}")
-        cpu = psutil.cpu_percent()
-        vm = psutil.virtual_memory()
-
-        buf = 0
-        if self.step_buffer:
-            try:                buf = await self.step_buffer.size.remote()
-            except Exception:   pass
-
         gpus = []
         if self.pynvml:
             for gid in range(self.gpu_count):
                 h = self.pynvml.nvmlDeviceGetHandleByIndex(gid)
                 power = self.pynvml.nvmlDeviceGetPowerUsage(h) / 1000.0
                 limit = self.pynvml.nvmlDeviceGetEnforcedPowerLimit(h) / 1000.0
-                pct = power / limit * 100 if limit else 0.0
                 m = self.pynvml.nvmlDeviceGetMemoryInfo(h)
-                gpus.append({"id": gid, "used": m.used/1e9, "total": m.total/1e9, "power": power, "limit": limit, "pct": pct})
+                gpus.append({"id": gid, "used": m.used/1e9, "total": m.total/1e9, "mem_pct": (m.used/1e9)/(m.total/1e9), "power": power, "limit": limit, "power_pct": power/limit*100 if limit else 0.0})
+        return gpus
 
-        try:    gpu_tok = await self.tracker.get_gpu_tok_rates.remote()
-        except Exception:
-            gpu_tok = {}
+    async def _fetch_loop(self, interval: float = 1.0):
+        while True:
+            try:
+                self._gpu_stats = await self._system_stats() # system + GPUs
+                self._buffer_size = await self.step_buffer.size.remote()
+                self._tracker_stats = await self.tracker.get_interface_info() # remaining stats (includes gpus)
+            except Exception as e:
+                self.console.log(f"[red]stat-fetch error: {e}")
 
-        return {"cpu": cpu, "ram_used": vm.used/1e9, "ram_pct": vm.percent, "buffer": buf, "gpus": gpus, "gpu_tok": gpu_tok}
+            # TODO track all histories
+            await asyncio.sleep(interval)
 
     def _colour_for_util(self, pct: float) -> str: return "green" if pct >= 80 else "yellow" if pct >= 40 else "red"
-
-    def _gpu_block(self, g: Dict[str, float], tok_rate: float | None) -> Panel:
-        gid = g["id"]
-        mem_pct = g["used"] / g["total"] * 100
-        util_pct = g["pct"]
-        role = "Actor" if tok_rate else "Learner"
-        colour = self._colour_for_util(util_pct)
-
-        # update graphs
-        self.power_graphs[gid].add(util_pct)
-        if tok_rate: self.tok_graphs[gid].add(tok_rate)
-        else:        self.mem_graphs[gid].add(mem_pct)
-
-        # build left-hand info (≈ 15 %)
-        info_lines = [f"GPU{gid}", role, f"Memory  {mem_pct:>3.0f}%", f"Power    {util_pct:>3.0f}%",]
-        left = Panel(Text("\n".join(info_lines)), box=box.MINIMAL, padding=(0,1))
-
-        # right-hand graphs
-        width_cut = int(self.console.size.width * 0.70)
-        lower_str  = "\n".join(line[-width_cut:] for line in self.tok_graphs[gid].graph) if tok_rate else "\n".join(line[-width_cut:] for line in self.mem_graphs[gid].graph)
-        graphs = Group(
-            Text(f"{util_pct:3.0f}% Power util.", style=colour), 
-            Text("\n".join(line[-width_cut:] for line in self.power_graphs[gid].graph), style=colour), 
-            Text("-" * width_cut, style="dim"), 
-            Text(lower_str, style=colour),
-            Text(f"{tok_rate:5.0f} tok/s" if tok_rate else f"{mem_pct:3.0f}% Memory", style=colour), 
-        )
+    def _gpu_panel(self) -> Panel:
+        gpu_panels = []
+        bar_w = max(10, int(self.console.size.width * 0.45))
+        for gpu_d in self._gpu_stats:
+            tok_s = self._tracker_stats.get(gpu_d["id"], 0)
+            self._max_tok_s = self._max_tok_s if tok_s<self._max_tok_s else tok_s
+            tok_pct = tok_s/self._max_tok_s
+            role = "Actor" if tok and tok > 0 else "Learner"
+            line1 = Text.assemble(("PWR ", "dim"), Text(_bar(gpu_d['power_pct'],bar_w), style=self._colour_for_util(gpu_d['power_pct'])), f" {gpu_d['power_pct']:5.1f}%")
+            line2 = Text.assemble(("MEM ", "dim"), Text(_bar(gpu_d['mem_pct'],bar_w), style=self._colour_for_util(1-gpu_d['mem_pct'])), f" {gpu_d['mem_pct']:5.1f}%")
+            line2 = Text.assemble(("TOK ", "dim"), Text(_bar(tok_pct,bar_w), style=self._colour_for_util(tok_pct)), f" {tok:5.0f} tok/s")
+        gpu_panel.append(Panel(Group(line1, line2, line3), title=f"GPU{g['id']} - {role}", box=box.SQUARE, padding=(0, 1)))
         
-        body = Columns([left, graphs], expand=True, equal=False, align="left")
-        return Panel(body, title=f"GPU{gid}", box=box.SQUARE, style=colour)
-
-    def _gpu_panel(self, sys: Dict[str, Any]) -> Panel:
-        gpus = sys["gpus"]
-        gpu_tok = sys["gpu_tok"]
-        if not gpus: return Panel(Text("no GPUs"), title="GPU Performance", box=box.DOUBLE)
-        term_w, term_h = self.console.size
-        full_height = 7 * len(gpus) + 2
-        use_full = (term_w >= 240 and full_height <= term_h)
-        if use_full:
-            blocks = [self._gpu_block(g, gpu_tok.get(g["id"], 0.0)) for g in gpus]
-            return Panel(Group(*blocks), title="GPU Performance", box=box.DOUBLE)
-
-        compact_blocks = [self._compact_gpu_panel(g, gpu_tok.get(g["id"], None)) for g in gpus]
         # build a 2-column grid (rows = ceil(N/2))
         tbl = Table.grid(expand=True, padding=0)
         tbl.add_column(ratio=1)
         tbl.add_column(ratio=1)
-        from itertools import zip_longest
-        blank = Panel("")        # filler for odd counts
-        for a, b in zip_longest(compact_blocks[0::2], compact_blocks[1::2], fillvalue=blank):
-            tbl.add_row(a, b)
+        for a, b in zip_longest(compact_blocks[0::2], compact_blocks[1::2], fillvalue=Panel("")): tbl.add_row(a, b) # filler for odd counts
         return Panel(tbl, title="GPU Performance", box=box.DOUBLE)
+
+    def _base_stats(self) -> Panel:
+        format_success = self.tracker_stats["Format Success Rate - \\boxed"] # TODO fix
+        inv_move_rate = self.tracker_stats["Format Success Rate - Invalid Move"] # TODO fix
+        game_len = self.tracker_stats["Game Length"]
+        buffer_size = self.buffer_size
+
 
 
     def _filter_panel(self, metrics: dict[str, float], keep: tuple[str], title: str) -> Panel:
@@ -299,26 +208,6 @@ class TerminalInterface:
             tbl.add_row(*row)
         return Panel(tbl, title="Match Frequencies", box=box.SQUARE)
 
-    def _compact_gpu_panel(self, g: Dict[str, float], tok: float | None) -> Panel:
-        mem_pct = g["used"] / g["total"] * 100
-        power_pct = g["pct"]
-        role = "Actor" if tok and tok > 0 else "Learner"
-        bar_w = max(10, int(self.console.size.width * 0.48))  # never smaller
-        def _bar(pct: float, width: int = bar_w) -> str: return "█" * int(pct / 100 * width)
-        bar_pwr = Text(_bar(power_pct), style=self._colour_for_util(power_pct))
-        bar_mem = Text(_bar(mem_pct),   style="green" if mem_pct < 80 else "red")
-        if role == "Actor": # map tok/s to 0–100 % for a bar; 10 k tok/s saturates the bar
-            tok_pct = min(tok / 5_000 * 100, 100) if tok else 0
-            bar_tok = Text(_bar(tok_pct), style="yellow")
-        if role == "Actor":
-            line1 = Text.assemble(("PWR ", "dim"), bar_pwr, f" {power_pct:5.1f}%")
-            line2 = Text.assemble(("TOK ", "dim"), bar_tok, f" {tok:5.0f} tok/s")
-        else:  # Learner
-            line1 = Text.assemble(("PWR ", "dim"), bar_pwr, f" {power_pct:5.1f}%")
-            line2 = Text.assemble(("MEM ", "dim"), bar_mem, f" {mem_pct:5.1f}%")
-        body = Group(line1, line2)
-        return Panel(body, title=f"GPU{g['id']} - {role}", box=box.SQUARE, padding=(0, 1))
-
 
     async def run(self):
         layout = Layout()
@@ -333,7 +222,11 @@ class TerminalInterface:
         with Live(layout): #, refresh_per_second=2.0):
             while True:
                 if self._latest_stats:
-                    layout["gpu"].update(self._gpu_panel(self._latest_stats)) # GPU panel (bottom)
+                    layout["gpu"].update(self._gpu_panel()) # GPU panel (bottom)
+                    layout["bs"].update(self._base_stats())
+                    layout["ts"].update(self._ts_panel())
+
+
                     layout["collection"].update(self._collection_panel())
                     layout["evaluation"].update(self._filter_panel(self._eval, self._EVAL_KEEP, "Evaluation"))
                     layout["pool"].update(self._ts_panel()) # model-pool TrueSkill snapshot
