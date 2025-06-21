@@ -22,10 +22,11 @@ def write_training_data_to_file(batch, filename: str):
 @ray.remote
 class StepBuffer:
     def __init__(
-        self, max_buffer_size: int, tracker: BaseTracker, buffer_strategy: str = "random", 
+        self, max_buffer_size: int, tracker: BaseTracker, 
         final_reward_transformation: Optional[ComposeFinalRewardTransforms], 
         step_reward_transformation: Optional[ComposeStepRewardTransforms], 
         sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms], 
+        buffer_strategy: str = "random"
     ):
         self.max_buffer_size, self.buffer_strategy = max_buffer_size, buffer_strategy
         self.final_reward_transformation = final_reward_transformation
