@@ -15,13 +15,13 @@ class ComposeStepRewardTransforms:
             base_reward = t(trajectory, step_index, base_reward)
         return base_reward
 
-class RewardForThinkTags(StepRewardTransform):
+class RewardForFormat(StepRewardTransform):
     def __init__(self, reward: float=0, penalty: float=0):
         self.reward = reward
         self.penalty = penalty
     def __call__(self, trajectory: Trajectory, step_index: int, base_reward: float) -> float:
-        if trajectory.format_feedbacks[step_index].get("has_think"):    base_reward += self.reward
-        else:                                                           base_reward += self.penalty
+        if trajectory.format_feedbacks[step_index].get("correct_answer_format"):    base_reward += self.reward
+        else:                                                                       base_reward += self.penalty
         return base_reward
 
 class PenaltyForInvalidMove(StepRewardTransform):

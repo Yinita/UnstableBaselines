@@ -52,26 +52,11 @@ class ModelPool:
         self._maintain_active_pool() # update current ckpt pool
 
     def add_fixed(self, name, prior_mu=25.0):
-        """
-        Add a non-trainable baseline opponent.
-
-        Parameters
-        ----------
-        name (str): The OpenRouter name of the model.
-        prior_mu : float, default 25.0 Starting μ for its TrueSkill rating.
-        """
         uid = f"fixed-{name}"
         if uid not in self._models:
             self._models[uid] = Opponent(uid, "fixed", name, rating=self.TS.create_rating(prior_mu))
 
     def sample(self, uid_me):
-        """
-        Draw an opponent UID for 'uid_me' according to 'sample_mode'.
-
-        Returns
-        -------
-        str or None -> UID of the chosen opponent. 'None' means "self-play".
-        """
         match self.sample_mode:
             case "fixed":           return self._sample_fixed_opponent()                        # randomly sample one of the fixed opponents provided
             case "mirror":          return self.latest_ckpt()                                   # literally play against yourself
@@ -87,7 +72,6 @@ class ModelPool:
     def _sample_random_opponent(self):  return random.choice([u for u,m in self._models.items() if m.kind=="fixed"]+[u for u,m in self._models.items() if (m.kind=="checkpoint" and m.active==True)])
 
     def _sample_match_quality_opponent(self, uid_me: str) -> str:
-        """ Pick an opponent with probability ∝ TrueSkill match-quality """
         cand, weights = [], []
         for uid, opp in self._models.items():
             if uid == uid_me or not opp.active:
@@ -102,7 +86,6 @@ class ModelPool:
         return random.choices(cand, weights=weights, k=1)[0]
 
     def _sample_ts_dist_opponent(self, uid_me: str) -> str:
-        """Sample by *absolute* TrueSkill μ-distance (closer ⇒ higher prob)."""
         cand, weights = [], []
         for uid, opp in self._models.items():
             if uid == uid_me or not opp.active:

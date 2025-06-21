@@ -47,7 +47,7 @@ class PlaySpec:
     env_id: str
     num_players: int
     player_id: int
-    agents: List[Agent]
+    agents: List
     seed: int
 
 
