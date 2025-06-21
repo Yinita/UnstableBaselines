@@ -4,8 +4,7 @@ from typing import Dict, List, Tuple, Union, Optional
 FINAL_REWARDS_FORMAT = Dict[int, Union[float, int]]
 
 class FinalRewardTransform:
-    def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: Optional[str] = None) -> FINAL_REWARDS_FORMAT:
-        raise NotImplementedError
+    def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: Optional[str] = None) -> FINAL_REWARDS_FORMAT: raise NotImplementedError
 
 class ComposeFinalRewardTransforms:
     def __init__(self, transforms: List[FinalRewardTransform]): self.transforms = transforms
@@ -33,8 +32,7 @@ class WinDrawLossFormatter(FinalRewardTransform):
 
 class RoleAdvantageFormatter(FinalRewardTransform):
     def __init__(self, role_advantage: Dict[int, float]={0:0.0, 1:0.0}, tau: float=0.001):
-        self.role_advantage = role_advantage
-        self.tau = tau
+        self.role_advantage = role_advantage; self.tau = tau
     
     def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: Optional[str] = None) -> FINAL_REWARDS_FORMAT:
         x = x.copy()
@@ -46,8 +44,7 @@ class RoleAdvantageFormatter(FinalRewardTransform):
 
 class RoleAdvantageByEnvFormatter(FinalRewardTransform):
     def __init__(self, role_advantage: Dict[int, float]={0:0.0, 1:0.0}, tau: float=0.001):
-        self.default_role_advantage = role_advantage
-        self.role_advantage_dict = {}
+        self.default_role_advantage = role_advantage; self.role_advantage_dict = {}
         self.tau = tau
     
     def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: Optional[str] = None) -> FINAL_REWARDS_FORMAT:

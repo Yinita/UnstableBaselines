@@ -52,7 +52,7 @@ tracker = unstable.Tracker.options(name="Tracker").remote(run_name=WANDB_RUN_NAM
 step_buffer = unstable.StepBuffer.options(name="StepBuffer").remote(
     max_buffer_size=BUFFER_SIZE, tracker=tracker,
     final_reward_transformation=retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()]),
-    step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForThinkTags(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
+    step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
     sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
 )
 

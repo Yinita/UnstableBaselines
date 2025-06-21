@@ -1,13 +1,9 @@
 from unstable.collector import Collector 
 from unstable.buffer import StepBuffer
+from unstable.trackers import Tracker
 from unstable.model_pool import ModelPool
-from unstable.learners import MultiGPULearner, StandardLearner
+from unstable.learners import StandardLearner
+from unstable.terminal_interface import TerminalInterface
 import unstable.algorithms
 
-from unstable.core import BaseTracker
-from unstable.trackers import Tracker
-
-from unstable.terminal_interface import TerminalInterface
-
-
-__all__ = ["Collector", "StepBuffer", "ModelPool", "StandardLearner", "MultiGPULearner", "Tracker", "TerminalInterface"]
+__all__ = ["Collector", "StepBuffer", "ModelPool", "StandardLearner", "Tracker", "TerminalInterface"]

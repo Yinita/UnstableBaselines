@@ -56,7 +56,7 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
         action = raw_action
         has_think = 0
 
-    format_feedback = {"has_think": bool(has_think), "has_answer": False, "order_correct": False}
+    format_feedback = {"correct_answer_format": bool(has_think)}
     return action, format_feedback
 
 

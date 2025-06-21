@@ -1,6 +1,5 @@
 import torch
 from unstable.core import BaseAlgo
-from typing import Dict, Any, List, Tuple
 
 class Reinforce(BaseAlgo):
     def prepare_batch(self, steps):
