@@ -22,7 +22,6 @@ GRADIENT_CHECKPOINTING = True
 USE_TRAINER_CACHE = False
 
 
-
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
     "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]
@@ -62,7 +61,7 @@ EVALUATION_ENVS = [
 WANDB_RUN_NAME = f"Debugging-run-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
 
 
-ray.init(namespace="unstable") #, log_to_driver=True) # Ray init 
+ray.init(namespace="unstable") # Ray init 
 tracker = unstable.Tracker.options(name="Tracker").remote(run_name=WANDB_RUN_NAME, wandb_project="UnstableBaselines") # Tracker
 
 # Data Buffer

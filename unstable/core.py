@@ -46,7 +46,6 @@ class PlaySpec:
     agent_specs: List
     seed: int
 
-
 @dataclass(frozen=True)
 class AgentSpec:
     kind: str # "checkpoint" | "openrouter"
@@ -100,16 +99,14 @@ class BaseTracker:
     def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
     def log_lerner(self, info_dict: Dict): raise NotImplementedError
 
-
-
 class ExplorationTracker:
     def __init__(self, window: int = 512, ngram_sizes: Tuple[int, ...] = (1, 2, 3, 4)):
         self.window = window
         self.ngram_sizes = ngram_sizes
         self._iter = 0
-        self.counter: Dict[str, Dict[int, Counter]] = defaultdict(lambda: defaultdict(Counter)) # env → n → Counter
-        self.total: Dict[str, Dict[int, int]] = defaultdict(lambda: defaultdict(int)) # env → n → int
-        self.games: Dict[str, Dict[int, deque]] = defaultdict(lambda: defaultdict(deque)) # env → n → deque
+        self.counter: Dict[str, Dict[int, Counter]] = defaultdict(lambda: defaultdict(Counter)) # env -> n -> Counter
+        self.total: Dict[str, Dict[int, int]] = defaultdict(lambda: defaultdict(int)) # env -> n -> int
+        self.games: Dict[str, Dict[int, deque]] = defaultdict(lambda: defaultdict(deque)) # env -> n -> deque
 
     def _ngrams(self, toks: List[str], n: int) -> List[int]:    return [hash(tuple(toks[i : i + n])) for i in range(len(toks) - n + 1)]
     def pct_unique(self, env_id: str, n: int) -> float:         return len(self.counter[env_id][n]) / self.total[env_id][n] if self.total[env_id][n] else 0.0

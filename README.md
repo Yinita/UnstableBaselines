@@ -25,23 +25,22 @@
 ## Installation
 
 ```bash
-# clone the repo
-git clone https://github.com/LeonGuertler/unstable-baselines.git
-cd unstable-baselines
-
-# install Python dependencies
-pip install -r requirements.txt
-
 # build TextArena v0.6.9 (until it’s on PyPI)
 git clone https://github.com/LeonGuertler/TextArena.git
 cd TextArena
 git checkout v0.6.9
 pip install -e .
 cd ..
+
+# clone the repo
+git clone https://github.com/LeonGuertler/UnstableBaselines.git
+cd UnstableBaselines
+
+# install Python dependencies
+pip install -r requirements.txt
 ```
 
 ## Quick Start
-
 Starting the main script:
 ```bash
 python3 main.py
@@ -49,7 +48,7 @@ python3 main.py
 
 If you want to monitor key metrics (in addition to logging them via W&B) you can run the following in a seperate terminal:
 ```bash
-python3 monitor.py
+python3 -m unstable.terminal_interface
 ```
 
 

@@ -1,4 +1,4 @@
-import asyncio, psutil, time, collections, re, pynvml
+import ray, asyncio, psutil, time, collections, re, pynvml
 from typing import Dict, Any, Tuple
 from collections import deque
 from itertools import zip_longest
@@ -173,3 +173,10 @@ class TerminalInterface:
                 layout["heatmap"].update(self._heatmap_panel); layout["exploration"].update(self._exploration_panel)
                 live.refresh()
                 await asyncio.sleep(2)
+
+
+if __name__ == "__main__":
+    ray.init(address="auto", namespace="unstable")   # connect to existing cluster (usually same node)
+    tracker = ray.get_actor("Tracker"); step_buffer = ray.get_actor("StepBuffer")
+    term = TerminalInterface(tracker=tracker, step_buffer=step_buffer)
+    asyncio.run(term.run())
