@@ -24,10 +24,10 @@ class Tracker(BaseTracker):
     def _agg(self, p: str) -> dict[str, Scalar]: return {k: float(np.mean(dq)) for k, dq in self._m.items() if k.startswith(p)}
     def _flush_if_due(self):
         if time.monotonic()-self._last_flush >= self.FLUSH_EVERY:
-            if self._buf and self.use_wandb:
-                try: wandb.log(self._buf)
+            if self._buffer and self.use_wandb:
+                try: wandb.log(self._buffer)
                 except Exception as e: self.logger.warning(f"wandb.log failed: {e}")
-            self._buf.clear(); self._last_flush=time.monotonic()
+            self._buffer.clear(); self._last_flush=time.monotonic()
 
     def add_trajectory(self, traj: Trajectory, player_id: int, env_id: str):
         try:
@@ -43,7 +43,7 @@ class Tracker(BaseTracker):
                 self._put(f"collection-{env_id}/Respone Length (char)", len(traj.actions[idx]))
                 self._put(f"collection-{env_id}/Observation Length (char)", len(traj.obs[idx]))
                 for k, v in traj.format_feedbacks[idx].items(): self._put(f"collection-{env_id}/Format Success Rate - {k}", v)
-            self._buffer.update(self._agg('collection-')); self._n += 1
+            self._buffer.update(self._agg('collection-')); self._n += 1; self._flush_if_due()
         except Exception as exc:
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
 
@@ -64,17 +64,15 @@ class Tracker(BaseTracker):
         self._interface_stats.update({"TS": ts_dict, "exploration": exploration, "match_counts": match_counts})
 
     def log_inference(self, actor: str, gpu_ids: list[int], stats: dict[str, float]):
-        self.logger.info(f"log_inference received stats: {stats}")
         for key in stats: self._put(f"inference/{actor}/{key}", stats[key])
         for gpu_id in gpu_ids: self._interface_stats["gpu_tok_s"][gpu_id] = stats["tok_s"]
         self._buffer.update(self._agg('inference'))
     
     def log_learner(self, info: dict):
         self._m.update({f"learner/{k}": v for k, v in info.items()})
-        self._buffer.update(self._agg("learner"))
+        self._buffer.update(self._agg("learner")); self._flush_if_due()
 
     def get_interface_info(self): 
-        self.logger.info(f"curren _m dict: {self._m}")
         for inf_key in ["Game Length", "Format Success Rate - correct_answer_format", "Format Success Rate - invalid_move"]: 
             self._interface_stats[inf_key] = np.mean([float(np.mean(dq)) for k,dq in self._m.items() if inf_key in k])
         return self._interface_stats

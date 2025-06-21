@@ -42,8 +42,16 @@ class PlaySpec:
     env_id: str
     num_players: int
     player_id: int
-    agents: List
+    agent_specs: List
     seed: int
+
+
+@dataclass(frozen=True)
+class AgentSpec:
+    kind: str # "checkpoint" | "openrouter"
+    model: str | None = None  # LoRA dir or OpenRouter model name
+    prompt_template: str = "default" # prompt template key
+    action_extraction_fn: str = "default"
 
 @dataclass
 class TaskMeta:

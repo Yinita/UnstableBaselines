@@ -42,9 +42,16 @@ cd ..
 
 ## Quick Start
 
+Starting the main script:
 ```bash
 python3 main.py
 ```
+
+If you want to monitor key metrics (in addition to logging them via W&B) you can run the following in a seperate terminal:
+```bash
+python3 monitor.py
+```
+
 
 ## Collaboration
 

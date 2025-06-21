@@ -9,7 +9,7 @@ from ray.exceptions import RayActorError, RayTaskError
 
 # local imports
 from unstable.actor import VLLMActor
-from unstable.core import BaseTracker, Trajectory, EpisodeResult, PlaySpec, TaskMeta, AgentSpec
+from unstable.core import BaseTracker, Trajectory, EpisodeResult, PlaySpec, TaskMeta
 from unstable.utils.logging import setup_logger
 from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING
 
@@ -33,19 +33,13 @@ def _iter_from_uid(uid: str) -> int: return int(m.group(1)) if (m := re.search(r
 def _extract_action(action: str) -> str: return (m.group(1).strip().lower() if (m := re.search(r"\[(.*?)\]", action)) else "")
 
 @ray.remote(num_cpus=0)
-def play_episode(spec: PlaySpec, actor: VLLMActor) -> EpisodeResult:
-    def _build_agent(agent_spec: AgentSpec):
-        match agent_spec.kind:
-            case "checkpoint": return CallableActorWrapper(actor=actor, lora_path=agent_spec.model, obs_fmt_fn=OBSERVATION_FORMATTING[agent_spec.prompt_template], extract_fn=ACTION_EXTRACTION[agent_spec.action_extraction_fn])
-            case "openrouter": return ta.agents.OpenRouterAgent(agent_spec.model)
-            case _: raise ValueError(f"unknown kind {agent_spec.kind!r}")
-    agents = {pid: _build_agent(spec.agent_specs[pid]) for pid in range(spec.num_players)}
+def play_episode(spec: PlaySpec) -> EpisodeResult:
     env=ta.make(spec.env_id); env.reset(num_players=spec.num_players, seed=spec.seed); env.state.error_allowance=0
     traj = Trajectory(); turn = 0; action_seq: List[str] = []
     while True:
         pid, obs = env.get_observation()
-        if pid == spec.player_id: raw, extracted, prompt, format_feedback = agents[pid].act_full(obs)
-        else: extracted = agents[pid](obs)
+        if pid == spec.player_id: raw, extracted, prompt, format_feedback = spec.agents[pid].act_full(obs)
+        else: extracted = spec.agents[pid](obs)
         done, info = env.step(extracted)
         if pid == spec.player_id:  # Only track the learner’s internal details.
             traj.pid.append(pid); traj.obs.append(prompt); traj.actions.append(raw); traj.extracted_actions.append(extracted)
@@ -77,15 +71,27 @@ class Collector:
         self.flight: Dict[ray.ObjectRef, TaskMeta] = {}
         self.eval_counter: Dict[str, int] = {}
 
-    def _next_actor(self):                          return next(self._actor_iter)
-    def _obs_extract(self, tmpl):                   return OBSERVATION_FORMATTING[tmpl], ACTION_EXTRACTION[self.extract_key]
-    def _num_running(self, typ: str) -> int:        return sum(meta.type == typ for meta in self.flight.values())
-    def _make_learner_spec(self, lora_path, tmpl):  return AgentSpec(kind="checkpoint", model=lora_path, prompt_template=tmpl, action_extraction_fn=self.extract_key)
-    def _make_opponent_spec(self, opp_path, opp_type, tmpl):  return AgentSpec(kind=("checkpoint" if (opp_type=="checkpoint") else "openrouter"), model=opp_path, prompt_template=tmpl, action_extraction_fn=self.extract_key)
+    def _next_actor(self):                   return next(self._actor_iter)
+    def _obs_extract(self, tmpl):            return OBSERVATION_FORMATTING[tmpl], ACTION_EXTRACTION[self.extract_key]
+    def _num_running(self, typ: str) -> int: return sum(meta.type == typ for meta in self.flight.values())
+
     def _sample_env(self, rng: random.Random, envs):
         env_id, n, tmpl = rng.choice(envs)
-        return env_id, n, rng.randrange(n), tmpl
- 
+        pid = rng.randrange(n)
+        return env_id, n, pid, tmpl
+
+    def _make_learner(self, lora_path, tmpl):
+        self.logger.info(f"making learner: {lora_path}")
+        obs_fmt, ext = self._obs_extract(tmpl)
+        return CallableActorWrapper(self._next_actor(), lora_path, obs_fmt, ext)
+
+    def _make_opponent(self, opp_path, tmpl):
+        self.logger.info(f"making opponent: {opp_path}")
+        if not opp_path or opp_path.startswith("ckpt-"):
+            obs_fmt, ext = self._obs_extract(tmpl)
+            return CallableActorWrapper(self._next_actor(), opp_path, obs_fmt, ext)
+        return ta.agents.OpenRouterAgent(opp_path)
+
     def collect(self, num_workers: int, num_eval_workers: int):
         while ray.get(self.buffer.continue_collection.remote()):
             self._launch_jobs(num_workers, num_eval_workers)
@@ -104,22 +110,24 @@ class Collector:
         self.logger.info(f"Submitting new train env (start of func)")
         env_id, n, pid, tmpl = self._sample_env(self.rng_train, self.train_envs)
         current_uid = ray.get(self.model_pool.latest_ckpt.remote())
-        lora_path, _ = ray.get(self.model_pool.ckpt_path.remote(current_uid))
+        lora_path = ray.get(self.model_pool.ckpt_path.remote(current_uid))
         opp_uid = ray.get(self.model_pool.sample.remote(uid_me=current_uid))
-        opp_path, opp_type = ray.get(self.model_pool.ckpt_path.remote(opp_uid))
-        spec = PlaySpec(env_id, n, pid, [self._make_learner_spec(lora_path, tmpl) if i == pid else self._make_opponent_spec(opp_path, opp_type, tmpl) for i in range(n)], seed=self.rng_train.getrandbits(32))
+        opp_path = ray.get(self.model_pool.ckpt_path.remote(opp_uid))
+        learner = self._make_learner(lora_path, tmpl)
+        opponent = self._make_opponent(opp_path, tmpl)
+        spec = PlaySpec(env_id, n, pid, [learner if i == pid else opponent for i in range(n)], self.rng_train.getrandbits(32))
         self.logger.info(f"Submitting new train env (spec = {spec})")
-        actor = self._next_actor()
-        ref = play_episode.remote(spec, actor)
+        ref = play_episode.remote(spec)
         self.flight[ref] = TaskMeta("train", env_id, pid, spec.seed, current_uid, opp_uid)
         self.logger.debug(f"↪ train {_iter_from_uid(current_uid)} {env_id} pid={pid}")
 
     def _submit_eval(self, ckpt_uid):
         env_id, n, pid, tmpl = self._sample_env(self.rng_eval, self.eval_envs)
-        lora_path, _ = ray.get(self.model_pool.ckpt_path.remote(ckpt_uid))
-        spec = PlaySpec(env_id, n, pid, [self._make_learner_spec(lora_path, tmpl) if i == pid else self._make_opponent_spec(self.eval_opponent, "fixed", tmpl) for i in range(n)], seed=self.rng_eval.getrandbits(32))
-        actor = self._next_actor()
-        ref = play_episode.remote(spec, actor)
+        lora_path = ray.get(self.model_pool.ckpt_path.remote(ckpt_uid))
+        learner = self._make_learner(lora_path, tmpl)
+        opponent = self._make_opponent(self.eval_opponent, tmpl)
+        spec = PlaySpec(env_id, n, pid, [learner if i == pid else opponent for i in range(n)], self.rng_eval.getrandbits(32))
+        ref = play_episode.remote(spec)
         self.flight[ref] = TaskMeta("eval", env_id, pid, spec.seed, ckpt_uid)
         self.eval_counter[ckpt_uid] = self.eval_counter.get(ckpt_uid, 0) + 1
         self.logger.debug(f"↪ eval {_iter_from_uid(ckpt_uid)} {env_id} pid={pid}")

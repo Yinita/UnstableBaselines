@@ -18,7 +18,7 @@ _HIST_BARS = " ▁▂▃▄▅▆▇█"
 _UID_FIELD = 22
 
 def _bar(pct: float, width: int) -> str: return "█" * int(pct / 100 * width)
-def _trim_uid(uid: str, width: int = _UID_FIELD) -> str: return uid if len(uid) <= width else f"{uid[:width//2-1]}…{uid[-width-(width//2-1)-3:]}"
+def _trim_uid(uid: str, width: int = _UID_FIELD) -> str: return uid if len(uid) <= width else f"…{uid[-width-2:]}"#f"{uid[:width//2-1]}…{uid[-(width//2-1)-3:]}"
 def _scaled_hist(hist: deque[float|int], width: int) -> str:
     if not hist: return " " * width
     step = max(1, len(hist) // width)
@@ -44,6 +44,13 @@ class TerminalInterface:
         self.pynvml=pynvml
         self.gpu_count=pynvml.nvmlDeviceGetCount()
 
+        # Initialize panel attributes with placeholder panels
+        self._gpu_panel = Panel(Text("waiting …"), title="GPU", box=box.SQUARE)
+        self._base_stats_panel = Panel(Text("waiting …"), title="Collection Stats.", box=box.SQUARE)
+        self._ts_panel = Panel(Text("waiting …"), title="TrueSkill", box=box.DOUBLE)
+        self._heatmap_panel = Panel(Text("waiting …"), title="Match Frequencies", box=box.SQUARE)
+        self._exploration_panel = Panel(Text("Not Implemented"), title="Exploration", box=box.DOUBLE)
+
     async def _system_stats(self) -> Dict[str, Any]:
         gpus = []
         if self.pynvml:
@@ -55,17 +62,25 @@ class TerminalInterface:
                 gpus.append({"id": gid, "used": m.used/1e9, "total": m.total/1e9, "mem_pct": (m.used/1e9)/(m.total/1e9)*100, "power": power, "limit": limit, "power_pct": power/limit*100 if limit else 0.0})
         return gpus
 
-    async def _fetch_loop(self, interval: float = 1.0):
+    async def _fetch_loop(self, interval: float = 2.0):
         while True:
             try:
-                self._gpu_stats = await self._system_stats() # system + GPUs
+                # Fetch all stats
+                self._gpu_stats = await self._system_stats()
                 self._buffer_size = await self.step_buffer.size.remote()
-                self._tracker_stats = await self.tracker.get_interface_info.remote() # remaining stats (includes gpus)
-            except Exception as e: self.console.log(f"[red]stat-fetch error: {e}")
+                self._tracker_stats = await self.tracker.get_interface_info.remote()
+                # Update all panels with new data
+                self._gpu_panel = self._gpu()
+                self._base_stats_panel = self._base_stats()
+                self._ts_panel = self._ts()
+                self._heatmap_panel = self._heatmap()
+                self._exploration_panel = self._exploration()
+            except Exception as e:
+                self.console.log(f"[red]stat-fetch error: {e}")
             await asyncio.sleep(interval)
 
     def _colour_for_util(self, pct: float) -> str: return "green" if pct >= 75 else "yellow" if pct >= 40 else "red"
-    def _gpu_panel(self) -> Panel:
+    def _gpu(self) -> Panel:
         if not self._gpu_stats or not self._tracker_stats: return Panel(Text("waiting …"), title="GPU", box=box.SQUARE)
         gpu_panels = []
         bar_w = max(10, int(self.console.size.width * 0.48 - 20))
@@ -75,7 +90,7 @@ class TerminalInterface:
             tok_pct = tok_s/self._max_tok_s * 100
             role = "Actor" if tok_s and tok_s > 0 else "Learner"
             line1 = Text.assemble(("PWR ", "dim"), Text(_bar(gpu_d['power_pct'], bar_w), style=self._colour_for_util(gpu_d['power_pct'])),   f" {gpu_d['power_pct']:5.1f}%")
-            line2 = Text.assemble(("MEM ", "dim"), Text(_bar(gpu_d['mem_pct'], bar_w),   style=self._colour_for_util(1-gpu_d['mem_pct'])),   f" {gpu_d['mem_pct']:5.1f}%")
+            line2 = Text.assemble(("MEM ", "dim"), Text(_bar(gpu_d['mem_pct'], bar_w),   style=self._colour_for_util(100-gpu_d['mem_pct'])),   f" {gpu_d['mem_pct']:5.1f}%")
             line3 = Text.assemble(("TOK ", "dim"), Text(_bar(tok_pct, bar_w),            style=self._colour_for_util(tok_pct)),              f" {tok_s:5.0f} tok/s")
             gpu_panels.append(Panel(Group(line1, line2, line3), title=f"GPU{gpu_d['id']} - {role}", box=box.SQUARE, padding=(0, 1)))
         
@@ -89,18 +104,10 @@ class TerminalInterface:
     def _base_stats(self) -> Panel:
         if not self._tracker_stats: return Panel(Text("waiting …"), title="Collection Stats.", box=box.SQUARE)
         try:
-            format_success = self._tracker_stats["Format Success Rate - correct_answer_format"] # TODO fix
-            inv_move_rate = self._tracker_stats["Format Success Rate - invalid_move"] # TODO fix
-            game_len = self._tracker_stats["Game Length"]
-            buffer_size = self._buffer_size
-
-            # add to history and visualize with proper scaling
-            self._hist["format_success"].append(format_success)
-            self._hist["inv_move_rate"].append(inv_move_rate)
-            self._hist["game_len"].append(game_len)
-            self._hist["buffer_size"].append(buffer_size)
-
-            # plot hist for all
+            self._hist["format_success"].append(self._tracker_stats["Format Success Rate - correct_answer_format"]*100)
+            self._hist["inv_move_rate"].append(self._tracker_stats["Format Success Rate - invalid_move"]*100)
+            self._hist["game_len"].append(self._tracker_stats["Game Length"])
+            self._hist["buffer_size"].append(self._buffer_size)
             bar_w = max(10, int(self.console.size.width * 0.48 - 35))
             line1 = Text.assemble(("Format Success: ", "dim"), Text(_scaled_hist(self._hist["format_success"], bar_w),  style="dim"), f" {self._hist['format_success'][-1]:5.2f}%")
             line2 = Text.assemble(("Inv. Move Rate: ", "dim"), Text(_scaled_hist(self._hist["inv_move_rate"], bar_w),   style="dim"), f" {self._hist['inv_move_rate'][-1]:5.2f}%")
@@ -109,9 +116,10 @@ class TerminalInterface:
             return Panel(Group(line1, line2, line3, line4), title=f"Collection Stats.", box=box.SQUARE, padding=(0, 1))
         except Exception as exc:
             return Panel(Text(f"Exception: {exc}"), title="Collection Stats.", box=box.SQUARE)
-    def _ts_panel(self) -> Panel:
+    
+    def _ts(self) -> Panel:
         if not self._tracker_stats or not self._tracker_stats.get("TS"): return Panel(Text("waiting …"), title="TrueSkill", box=box.DOUBLE)
-        bar_field = max(10, int(self.console.size.width * 0.20))
+        bar_field = max(10, int(self.console.size.width * 0.45)-50)
         max_rows = max(3, int(self.console.size.height * 0.35))
         entries = [(uid, v["mu"], v["sigma"]) for uid, v in self._tracker_stats["TS"].items()]
         entries.sort(key=lambda x: x[1], reverse=True) # by μ desc
@@ -123,11 +131,11 @@ class TerminalInterface:
         for uid, mu, sigma in entries:
             bar = "█" * int((mu/max_mu if max_mu else 0.0) * bar_field)
             bar_text = f"{bar:<{bar_field}}"  # pad to fixed width
-            bar_lines.append(Text.assemble((_trim_uid(uid), "bold"), "  ", Text(bar_text, style="cyan"), f"  μ {mu:6.2f}  σ {sigma:4.2f}"))
+            bar_lines.append(Text.assemble((f"[{self._ts_idx[uid]}] {_trim_uid(uid):<25}", "bold"), "  ", Text(bar_text, style="cyan"), f"  μ {mu:6.2f}  σ {sigma:4.2f}"))
         title = f"TrueSkill (μ, σ)  – {len(self._tracker_stats['TS'])} models"
         return Panel(Group(*bar_lines), title=title, box=box.SQUARE, padding=(0, 1))
 
-    def _heatmap_panel(self) -> Panel: 
+    def _heatmap(self) -> Panel: 
         if not self._tracker_stats or not self._tracker_stats.get("match_counts") or not getattr(self, "_ts_idx", None): return Panel(Text("waiting …"), title="Match Frequencies", box=box.SQUARE)
         uid_by_row = sorted(self._ts_idx, key=self._ts_idx.__getitem__)
         max_rows = max(3, int(self.console.size.height * 0.35))
@@ -150,7 +158,7 @@ class TerminalInterface:
             tbl.add_row(*row_cells)
         return Panel(tbl, title="Match Frequencies", box=box.SQUARE)
 
-    def _exploration_panel(self) -> Panel: return Panel(Text("Not Implemented"), title="Exploration", box=box.DOUBLE) 
+    def _exploration(self) -> Panel: return Panel(Text("Not Implemented"), title="Exploration", box=box.DOUBLE) 
 
     async def run(self):
         layout = Layout()
@@ -158,9 +166,10 @@ class TerminalInterface:
         layout["grid"].split_row(Layout(name="col1"), Layout(name="col2"))
         layout["col1"].split_column(Layout(name="exploration"), Layout(name="heatmap"))
         layout["col2"].split_column(Layout(name="ts"), Layout(name="bs", size=6))
-        asyncio.create_task(self._fetch_loop()) # start background fetcher
-        with Live(layout):
+        asyncio.create_task(self._fetch_loop())  # Start background fetcher
+        with Live(layout, console=self.console, auto_refresh=False) as live:
             while True:
-                layout["gpu"].update(self._gpu_panel()); layout["bs"].update(self._base_stats()); layout["ts"].update(self._ts_panel())
-                layout["heatmap"].update(self._heatmap_panel()); layout["exploration"].update(self._exploration_panel())
-                await asyncio.sleep(0.5)
+                layout["gpu"].update(self._gpu_panel); layout["bs"].update(self._base_stats_panel); layout["ts"].update(self._ts_panel)
+                layout["heatmap"].update(self._heatmap_panel); layout["exploration"].update(self._exploration_panel)
+                live.refresh()
+                await asyncio.sleep(2)

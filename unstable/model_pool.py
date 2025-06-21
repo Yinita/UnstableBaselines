@@ -31,7 +31,7 @@ class ModelPool:
 
     def current_uid(self):      return self._latest_uid
     def latest_ckpt(self):      return self._ckpt_log[-1] if self._ckpt_log else None
-    def ckpt_path(self, uid):   return None if uid is None else  self._models[uid].path_or_name
+    def ckpt_path(self, uid):   return None if uid is (None, "ckpt") else (self._models[uid].path_or_name, self._models[uid].kind)
 
     def add_checkpoint(self, path: str, iteration: int):
         uid = f"ckpt-{iteration}"
@@ -156,7 +156,7 @@ class ModelPool:
 
     def snapshot(self, iteration: int):
         try: self._tracker.log_model_pool.remote(
-            step=iteration, match_counts=dict(self._match_counts), exploration=self._get_exploration_ratios(),
+            match_counts=dict(self._match_counts), exploration=self._get_exploration_ratios(),
             ts_dict={u: {"mu": o.rating.mu, "sigma": o.rating.sigma} for u, o in self._models.items()},
         )
         except Exception as exc: self.logger.exception(f"failed pushing snapshot at iter={iteration}-\n\n{exc}\n\n")
