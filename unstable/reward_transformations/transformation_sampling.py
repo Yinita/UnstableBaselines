@@ -1,13 +1,10 @@
 import numpy as np
 from typing import List, Optional
 from collections import defaultdict
-
 from unstable.core import Step
 
-# Sampling reward Transformations
 class SamplingRewardTransform:
-    def __call__(self, x: List[Step], env_id: Optional[str] = None) -> List[Step]:
-        raise NotImplementedError
+    def __call__(self, x: List[Step], env_id: Optional[str] = None) -> List[Step]: raise NotImplementedError
 
 class ComposeSamplingRewardTransforms:
     def __init__(self, transforms: List[SamplingRewardTransform]):  self.transforms = transforms
@@ -41,6 +38,5 @@ class NormalizeRewardsByEnv(SamplingRewardTransform):
             else:               normed = r - mean
             for s, nr in zip(env_steps, normed): # write back
                 s.reward = float(nr)
-
         return steps
 

@@ -1,281 +1,146 @@
-import re, ray, random, itertools, logging, pathlib
-from typing import List, Dict, Tuple, Optional, Any, Callable
-from ray.exceptions import RayTaskError, RayActorError
+import re, random, logging, itertools
+from pathlib import Path
+from dataclasses import asdict, dataclass, field
+from typing import Any, Callable, Dict, List, Tuple, Protocol
 
-import textarena as ta 
-assert ta.__version__ == "0.6.9", f"You need to use TextArena version 0.6.9 (build from source). You are using: {textarena.__version__}"
+import ray
+import textarena as ta
+from ray.exceptions import RayActorError, RayTaskError
 
 # local imports
-from unstable.core import Trajectory, BaseTracker
 from unstable.actor import VLLMActor
-from unstable.utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
-from unstable.utils.logging import setup_logger #setup_error_logger
+from unstable.core import BaseTracker, Trajectory, EpisodeResult, PlaySpec, TaskMeta, AgentSpec
+from unstable.utils.logging import setup_logger
+from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING
 
+assert ta.__version__ == "0.6.9", f"TextArena 0.6.9 required, currently {ta.__version__}"
 
 class CallableActorWrapper:
-    """A wrapper around VLLMActor to format observations, extract actions, and interact with remote actor."""
+    def __init__(self, actor: VLLMActor, lora_path: str|Path, obs_fmt_fn: Callable[[str],str], extract_fn: Callable[[str], Tuple[str, Dict[str, Any]]]) -> None:
+        self._actor, self._lora, self._fmt, self._extract = actor, lora_path, obs_fmt_fn, extract_fn
 
-    def __init__(self, actor: VLLMActor, lora_path: str, obs_formatting_fn: Callable, action_extraction_fn: Callable):
-        """
-        Initializes the CallableActorWrapper.
+    def __call__(self, observation: str) -> str: 
+        _, extracted, _, _ = self.act_full(observation)
+        return extracted
 
-        Args:
-            actor (VLLMActor): Remote actor handling the prompt submission.
-            lora_path (str): Path to the LoRA weights for inference.
-            obs_formatting_fn (Callable): Function to format observations before prompting.
-            action_extraction_fn (Callable): Function to extract actionable information from raw responses.
-        """
-        self.actor = actor
-        self.lora_path = lora_path
-        self.obs_formatting_fn = obs_formatting_fn
-        self.action_extraction_fn = action_extraction_fn
+    def act_full(self, observation: str) -> Tuple[str, str, str, dict]:
+        prompt = self._fmt(observation=observation)
+        raw = ray.get(self._actor.submit_prompt.remote(prompt=prompt, lora_path=self._lora))
+        extracted, format_feedback = self._extract(raw_action=raw)
+        return raw, extracted, prompt, format_feedback
 
-    def __call__(self, observation: str) -> str:
-        """ Formats observation, gets a response from actor, and extracts action """
-        formatted_prompt = self.obs_formatting_fn(observation=observation)
-        raw_action = ray.get(self.actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=self.lora_path))
-        extracted_action, _ = self.action_extraction_fn(raw_action=raw_action)
-        return extracted_action
+def _iter_from_uid(uid: str) -> int: return int(m.group(1)) if (m := re.search(r"(\d+)$", uid)) else 0
+def _extract_action(action: str) -> str: return (m.group(1).strip().lower() if (m := re.search(r"\[(.*?)\]", action)) else "")
 
-    def get_full_response(self, observation: str) -> Tuple[str, str, Dict[str, Any], str]:
-        """ Returns raw response, extracted action, feedback, and formatted prompt """
-        formatted_prompt = self.obs_formatting_fn(observation=observation)
-        raw_action = ray.get(self.actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=self.lora_path))
-        extracted_action, format_feedback = self.action_extraction_fn(raw_action=raw_action)
-        return raw_action, extracted_action, format_feedback, formatted_prompt
-
-
-def _iter_from_uid(uid: str) -> int:
-    """Return integer suffix from “ckpt-42”; 0 if no match."""
-    match = re.search(r"(\d+)$", uid)
-    return int(match.group(1)) if match else 0
-
-def _extract_action(action: str) -> str:
-    """Return the **lower-cased** content inside the first ``[...]`` pair."""
-    match = re.search(r"\[(.*?)\]", action)
-    return match.group(1).strip().lower() if match else ""
-
+@ray.remote(num_cpus=0)
+def play_episode(spec: PlaySpec, actor: VLLMActor) -> EpisodeResult:
+    def _build_agent(agent_spec: AgentSpec):
+        match agent_spec.kind:
+            case "checkpoint": return CallableActorWrapper(actor=actor, lora_path=agent_spec.model, obs_fmt_fn=OBSERVATION_FORMATTING[agent_spec.prompt_template], extract_fn=ACTION_EXTRACTION[agent_spec.action_extraction_fn])
+            case "openrouter": return ta.agents.OpenRouterAgent(agent_spec.model)
+            case _: raise ValueError(f"unknown kind {agent_spec.kind!r}")
+    agents = {pid: _build_agent(spec.agent_specs[pid]) for pid in range(spec.num_players)}
+    env=ta.make(spec.env_id); env.reset(num_players=spec.num_players, seed=spec.seed); env.state.error_allowance=0
+    traj = Trajectory(); turn = 0; action_seq: List[str] = []
+    while True:
+        pid, obs = env.get_observation()
+        if pid == spec.player_id: raw, extracted, prompt, format_feedback = agents[pid].act_full(obs)
+        else: extracted = agents[pid](obs)
+        done, info = env.step(extracted)
+        if pid == spec.player_id:  # Only track the learner’s internal details.
+            traj.pid.append(pid); traj.obs.append(prompt); traj.actions.append(raw); traj.extracted_actions.append(extracted)
+            traj.infos.append(info); format_feedback["invalid_move"] = 0; traj.format_feedbacks.append(format_feedback)
+        if done: break
+        action_seq.append(_extract_action(extracted))
+        turn += 1
+    traj.final_rewards = env.close(); traj.num_turns = turn
+    end_by_opp_inv = info["end_by_invalid"] and pid != spec.player_id
+    if info["end_by_invalid"] and pid == spec.player_id: traj.format_feedbacks[-1]["invalid_move"] = 1
+    return EpisodeResult(traj=traj, end_by_opponent_invalid=end_by_opp_inv, action_seq=action_seq, final_rewards=traj.final_rewards)
 
 @ray.remote
 class Collector:
-    """
-    Orchestrates parallel rollout generation and evaluation. Two internal flight lists are kept:
-    * *train_flight* - active self-play games whose trajectories feed the 'StepBuffer'.
-    * *eval_flight* - games against a fixed large model for offline eval.
-
-    Attributes
-    ----------
-    actors (list[ray.ActorHandle]): Pool of VLLMActor's pinned to individual GPUs.
-    buffer (ray.ActorHandle): Remote 'StepBuffer' that stores Steps for the learner.
-    model_pool (ray.ActorHandle): Remote 'ModelPool'.
-    """
     def __init__(
-        self,
-        num_actors: int,
-        step_buffer: Any,
-        model_pool: Any,
-        vllm_config: Dict[str, Any],
-        training_envs: List[Tuple[str, int, Optional[str]]],
-        evaluation_envs: List[Tuple[str, int, Optional[str]]],
-        evaluation_opponent: str = "google/gemini-2.0-flash-lite-001",
-        max_eval_games_per_ckpt: int = 32,
-        eval_every_n_steps: int = 5,
-        tracker: Optional[BaseTracker] = None,
-        filter_opponent_invalid: bool = False,
-        action_extraction: str = "default"
-    ):
-        """
-        Initializes the Collector.
+        self, num_actors: int, step_buffer, model_pool, tracker: BaseTracker, vllm_config: Dict[str, Any], training_envs: List[tuple[str, int, str|None]], evaluation_envs: List[tuple[str, int, str|None]], 
+        evaluation_opponent: str="google/gemini-2.0-flash-lite-001", max_eval_games_per_ckpt: int=32, filter_opponent_invalid: bool=False, action_extraction: str="default",
+    ) -> None:
+        self.logger = setup_logger("collector", ray.get(tracker.get_log_dir.remote()))
+        self.buffer, self.model_pool, self.tracker = step_buffer, model_pool, tracker
+        self.train_envs, self.eval_envs = training_envs, evaluation_envs
+        self.eval_opponent = evaluation_opponent
+        self.max_eval = max_eval_games_per_ckpt
+        self.filter_invalid = filter_opponent_invalid
+        self.extract_key = action_extraction
+        self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(num_actors)]
+        self._actor_iter = itertools.cycle(self.actors)
+        self.rng_train, self.rng_eval = random.Random(489), random.Random(977)
+        self.flight: Dict[ray.ObjectRef, TaskMeta] = {}
+        self.eval_counter: Dict[str, int] = {}
 
-        Args:
-            num_actors (int): Number of parallel actors.
-            step_buffer (Any): Buffer to store collected trajectories.
-            model_pool (Any): Pool managing model checkpoints and ratings.
-            vllm_config (Dict[str, Any]): Configuration for VLLM inference.
-            training_envs (List[Tuple[str, int, Optional[str]]]): List of training environments.
-            evaluation_envs (List[Tuple[str, int, Optional[str]]]): List of evaluation environments.
-            evaluation_opponent (str): Opponent for evaluation.
-            max_eval_games_per_ckpt (int): Max number of eval games per checkpoint.
-            eval_every_n_steps (int): Frequency of evaluations.
-            tracker (Optional[WandBTracker]): Tracker for logging metrics.
-            filter_opponent_invalid (bool): whether to remove games ending with the opponent making an invalid move
-        """
-        # set up logging
-        log_dir = ray.get(tracker.get_log_dir.remote())
-        self.logger = setup_logger("collector", log_dir)
-
-        self.buffer = step_buffer
-        self.model_pool = model_pool
-        self.tracker = tracker
-        self.alive = True
-        self.training_envs = training_envs
-        self.evaluation_envs = evaluation_envs
-        self.evaluation_opponent = evaluation_opponent
-        self.max_eval_games_per_ckpt = max_eval_games_per_ckpt
-        self.eval_every_n_steps = eval_every_n_steps
-        self.filter_opponent_invalid = filter_opponent_invalid
-        self.action_extraction = action_extraction
-
-        self.actors = [VLLMActor.options(num_gpus=1).remote(vllm_config=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(num_actors)]
-        self.actor_iter = itertools.cycle(self.actors)
-
-    def get_actors(self): return self.actors
-    
-    def _sample_env(self, seed: int = 489, _type: str = "train") -> Tuple[str, int, int, Optional[str]]:
-        """Samples a random environment from the training set."""
-        env_id, num_players, prompt_template = random.Random(seed).choice(self.training_envs if _type=="train" else self.evaluation_envs)
-        player_id = random.Random(seed + 1).randrange(num_players)
-        return env_id, num_players, player_id, prompt_template
-
-    def _build_game_args(self, env_id, num_players, player_id, prompt_template, seed) -> Dict[str, Any]:
-        """Builds arguments for initiating a game run."""
-        actor = next(self.actor_iter)
-        current_model_uid = ray.get(self.model_pool.latest_ckpt.remote())
-        lora_path = ray.get(self.model_pool.ckpt_path.remote(current_model_uid))
-        opponent_uid = ray.get(self.model_pool.sample.remote(uid_me=current_model_uid))
-        opponent_path_or_name = ray.get(self.model_pool.ckpt_path.remote(opponent_uid))
-        return dict(
-            env_id=env_id, num_players=num_players, player_id=player_id, actor=actor, lora_path=lora_path,
-            opponent_uid=opponent_uid, model_uid=current_model_uid, opponent_path_or_name=opponent_path_or_name,
-            prompt_template=prompt_template, action_extraction=self.action_extraction, seed=seed
-        )
-
-    def _build_eval_args(self, env_id, num_players, player_id, prompt_template, ckpt_uid, seed):
-        lora_path = ray.get(self.model_pool.ckpt_path.remote(ckpt_uid))
-        actor = next(self.actor_iter)
-        return dict(
-            env_id=env_id, num_players=num_players, player_id=player_id, actor=actor, lora_path=lora_path,
-            opponent_name=self.evaluation_opponent, prompt_template=prompt_template, action_extraction=self.action_extraction, seed=seed
-        )
-
+    def _next_actor(self):                          return next(self._actor_iter)
+    def _obs_extract(self, tmpl):                   return OBSERVATION_FORMATTING[tmpl], ACTION_EXTRACTION[self.extract_key]
+    def _num_running(self, typ: str) -> int:        return sum(meta.type == typ for meta in self.flight.values())
+    def _make_learner_spec(self, lora_path, tmpl):  return AgentSpec(kind="checkpoint", model=lora_path, prompt_template=tmpl, action_extraction_fn=self.extract_key)
+    def _make_opponent_spec(self, opp_path, opp_type, tmpl):  return AgentSpec(kind=("checkpoint" if (opp_type=="checkpoint") else "openrouter"), model=opp_path, prompt_template=tmpl, action_extraction_fn=self.extract_key)
+    def _sample_env(self, rng: random.Random, envs):
+        env_id, n, tmpl = rng.choice(envs)
+        return env_id, n, rng.randrange(n), tmpl
+ 
     def collect(self, num_workers: int, num_eval_workers: int):
-        """
-        Main infinite loop (returns only when 'StepBuffer.continue_collection' flips to "False").
-
-        Parameters
-        ----------
-        num_workers (int): Max number of concurrent training rollouts.
-        num_eval_workers (int): Max number of concurrent evaluation rollouts.
-        """
-        @ray.remote(num_cpus=0)
-        def run_game(env_id, num_players, player_id, actor, lora_path, opponent_uid, model_uid, opponent_path_or_name, prompt_template, action_extraction, seed: int = 489):
-            obs_format = OBSERVATION_FORMATTING[prompt_template]
-            extract_fn = ACTION_EXTRACTION[action_extraction]
-            model = CallableActorWrapper(actor, lora_path, obs_format, extract_fn)
-            game_action_seq = []
-
-            if opponent_uid is None:                opponent = model
-            elif opponent_uid.startswith("ckpt-"):  opponent = CallableActorWrapper(actor, opponent_path_or_name, obs_format, extract_fn)
-            else:                                   opponent = ta.agents.OpenRouterAgent(opponent_path_or_name)
-
-            env = ta.make(env_id)
-            env.reset(num_players=num_players, seed=seed)
-            env.state.error_allowance = 0
-
-            traj, turn = Trajectory(), 0
-            while True:
-                pid, obs = env.get_observation()
-                if pid == player_id:
-                    raw_act, act, fb, prompt = model.get_full_response(obs)
-                    done, info = env.step(act)
-                    traj.pid.append(pid)
-                    traj.obs.append(prompt)
-                    traj.actions.append(raw_act)
-                    fb["invalid_move"] = 0
-                    traj.extracted_actions.append(act)
-                    traj.infos.append(info)
-                    traj.format_feedbacks.append(fb)
-                else:
-                    act = opponent(obs)
-                    done, info = env.step(act)
-                turn += 1
-                if done:
-                    break
-
-                game_action_seq.append(_extract_action(act))
-            traj.final_rewards = env.close()
-            traj.num_turns = turn
-            if info["end_by_invalid"] and pid==player_id:  
-                traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
-            return traj, player_id, env_id, (info["end_by_invalid"] and pid != player_id), game_action_seq
-
-        @ray.remote(num_cpus=0)
-        def run_eval_game(env_id, num_players, player_id, actor, lora_path, opponent_name, prompt_template, action_extraction, seed: int = 489):
-            model = CallableActorWrapper( actor, lora_path, OBSERVATION_FORMATTING[prompt_template], ACTION_EXTRACTION[action_extraction])
-            opponent = ta.agents.OpenRouterAgent(opponent_name)
-
-            env = ta.make(env_id)
-            env.reset(num_players=num_players, seed=seed)
-            env.state.error_allowance = 0
-
-            episode_info, turn = [], 0
-            while True:
-                pid, obs = env.get_observation()
-                if pid == player_id:    full, act, fb, prompt = model.get_full_response(obs); name = "current_ckpt"
-                else:                   full = act = opponent(obs); name = opponent_name
-
-                done, info = env.step(act)
-                turn += 1
-                episode_info.append({"pid": pid, "model_name": name, "observation": obs, "full_action": full, "submitted_action": act, "done": done, "info": info, "step": turn})
-                if done:
-                    break
-
-            return episode_info, player_id, env_id, env.close()
-
-        train_flight: List[Tuple] = []
-        eval_flight: List[Tuple] = []
-        ckpt_eval_game_count: Dict[str, int] = {}
-        iter_seed = 0
-        eval_iter_seed = 0
-
         while ray.get(self.buffer.continue_collection.remote()):
-            while len(train_flight) < num_workers:
-                env_id, n, pid, tmpl = self._sample_env(seed=iter_seed)
-                self.logger.info(f"Adding collection game ({env_id}, {n}, {pid}, {tmpl}) - [number running collection games: {len(train_flight)}]")
-                args = self._build_game_args(env_id, n, pid, tmpl, iter_seed)
-                fut = run_game.remote(**args)
-                train_flight.append((fut, args["opponent_uid"], args["model_uid"]))
-                iter_seed += 1
+            self._launch_jobs(num_workers, num_eval_workers)
+            if not self.flight: continue
+            done_ref, _ = ray.wait(list(self.flight), num_returns=1)
+            self._handle_finished(done_ref[0])
 
-            latest_ckpt = ray.get(self.model_pool.latest_ckpt.remote())
-            while (len(eval_flight) < num_eval_workers) and (ckpt_eval_game_count.get(latest_ckpt, 0) < self.max_eval_games_per_ckpt*len(self.evaluation_envs)):
-                env_id, n, pid, tmpl = self._sample_env(seed=eval_iter_seed, _type="eval")
-                self.logger.info(f"Adding evaluation game ({env_id}, {n}, {pid}, {tmpl}) - [number running evaluation games: {len(eval_flight)}]")
-                args = self._build_eval_args(env_id, n, pid, tmpl, latest_ckpt, eval_iter_seed)
-                fut = run_eval_game.remote(**args)
-                eval_flight.append((fut, env_id, pid, latest_ckpt, eval_iter_seed))
-                eval_iter_seed += 1
-                ckpt_eval_game_count[latest_ckpt] = ckpt_eval_game_count.get(latest_ckpt, 0) + 1 
+    def _launch_jobs(self, max_train: int, max_eval: int):
+        while self._num_running("train") < max_train: self._submit_train()
+        latest_ckpt = ray.get(self.model_pool.latest_ckpt.remote())
+        if self.eval_counter.get(latest_ckpt, 0) < self.max_eval * len(self.eval_envs):
+            while self._num_running("eval") < max_eval: 
+                self._submit_eval(latest_ckpt)
 
-            wait_pool = ([f for f, *_ in train_flight] + [f for f, *_ in eval_flight])
-            if not wait_pool: continue  # nothing running (should not happen)
-            done_ref, _ = ray.wait(wait_pool, num_returns=1)
-            finished = done_ref[0]
+    def _submit_train(self):
+        self.logger.info(f"Submitting new train env (start of func)")
+        env_id, n, pid, tmpl = self._sample_env(self.rng_train, self.train_envs)
+        current_uid = ray.get(self.model_pool.latest_ckpt.remote())
+        lora_path, _ = ray.get(self.model_pool.ckpt_path.remote(current_uid))
+        opp_uid = ray.get(self.model_pool.sample.remote(uid_me=current_uid))
+        opp_path, opp_type = ray.get(self.model_pool.ckpt_path.remote(opp_uid))
+        spec = PlaySpec(env_id, n, pid, [self._make_learner_spec(lora_path, tmpl) if i == pid else self._make_opponent_spec(opp_path, opp_type, tmpl) for i in range(n)], seed=self.rng_train.getrandbits(32))
+        self.logger.info(f"Submitting new train env (spec = {spec})")
+        actor = self._next_actor()
+        ref = play_episode.remote(spec, actor)
+        self.flight[ref] = TaskMeta("train", env_id, pid, spec.seed, current_uid, opp_uid)
+        self.logger.debug(f"↪ train {_iter_from_uid(current_uid)} {env_id} pid={pid}")
 
-            try:
-                result = ray.get(finished)
-            except (RayTaskError, RayActorError) as err:
-                self.logger.exception("remote game/exam task failed -\n\n{err}\n\n")
-                continue  # flight slot will be refilled
+    def _submit_eval(self, ckpt_uid):
+        env_id, n, pid, tmpl = self._sample_env(self.rng_eval, self.eval_envs)
+        lora_path, _ = ray.get(self.model_pool.ckpt_path.remote(ckpt_uid))
+        spec = PlaySpec(env_id, n, pid, [self._make_learner_spec(lora_path, tmpl) if i == pid else self._make_opponent_spec(self.eval_opponent, "fixed", tmpl) for i in range(n)], seed=self.rng_eval.getrandbits(32))
+        actor = self._next_actor()
+        ref = play_episode.remote(spec, actor)
+        self.flight[ref] = TaskMeta("eval", env_id, pid, spec.seed, ckpt_uid)
+        self.eval_counter[ckpt_uid] = self.eval_counter.get(ckpt_uid, 0) + 1
+        self.logger.debug(f"↪ eval {_iter_from_uid(ckpt_uid)} {env_id} pid={pid}")
+        
+    def _handle_finished(self, ref):
+        meta = self.flight.pop(ref)
+        try: res: EpisodeResult = ray.get(ref)
+        except (RayTaskError, RayActorError) as err:
+            self.logger.error(f"Remote episode failed for {meta.type} task: env={meta.env_id}, player_id={meta.player_id}, seed={meta.seed}, ckpt_uid={meta.ckpt_uid}, opponent_uid={meta.opponent_uid or 'N/A'}: {err}", exc_info=True); return
+        match meta.type:
+            case "train":   self._post_train(meta, res)
+            case "eval":    self._post_eval(meta, res)
+            case _:         self.logger.warning(f"Unknown task type {meta.type}")
 
-            idx = next((i for i, (f, _, _) in enumerate(train_flight) if f == finished), None)
-            if idx is not None:
-                fut, opp_uid, mdl_uid = train_flight.pop(idx)
-                traj, pid, env_id, end_by_opponent_invalid, game_action_seq = ray.get(fut)
-                self.logger.info(f"Collection game finished \n\t- trajectory length: {len(traj.pid)}\n\t- game_action_seq: {game_action_seq}\n\t- end_by_opponent_invalid: {end_by_opponent_invalid}\n\t- filter_opponent_invalid: {self.filter_opponent_invalid}")
-                if self.filter_opponent_invalid and end_by_opponent_invalid:
-                    continue
+    def _post_train(self, meta: TaskMeta, res: EpisodeResult):
+        self.logger.info("train_done", extra=dict(env=meta.env_id, ckpt=meta.ckpt_uid, length=len(res.traj.pid), invalid=res.end_by_opponent_invalid))
+        if self.filter_invalid and res.end_by_opponent_invalid: return
+        self.buffer.add_trajectory.remote(res.traj, meta.player_id, meta.env_id)
+        self.tracker.add_trajectory.remote(res.traj, meta.player_id, meta.env_id)
+        if meta.opponent_uid: self.model_pool.push_game_outcome.remote(uid_me=meta.ckpt_uid, uid_opp=meta.opponent_uid, final_reward=res.traj.final_rewards[meta.player_id], game_action_seq=res.action_seq, env_id=meta.env_id)
 
-                self.buffer.add_trajectory.remote(traj, pid, env_id)
-                self.logger.info(f"Added episode to buffer ({env_id})")
-                if self.tracker: self.tracker.add_trajectory.remote(traj, pid, env_id)
-                if opp_uid is not None:
-                    self.model_pool.push_game_outcome.remote(uid_me=mdl_uid, uid_opp=opp_uid, final_reward=traj.final_rewards[pid], game_action_seq=game_action_seq)
-                continue  # back to top of loop
-
-            idx = next(i for i, (f, *_) in enumerate(eval_flight) if f == finished)
-            fut, env_id, pid, ckpt_uid, seed = eval_flight.pop(idx)
-            ep_info, _, _, final_r = ray.get(fut)
-            if self.tracker: self.tracker.add_eval_episode.remote(episode_info=ep_info, final_rewards=final_r, player_id=pid, env_id=env_id, iteration=ckpt_uid)
-            self.logger.info(f"[EVAL] ckpt={ckpt_uid} env={env_id} seed={seed} done")
-
+    def _post_eval(self, meta: TaskMeta, res: EpisodeResult):
+        self.tracker.add_eval_episode.remote(episode_info=None, final_rewards=res.final_rewards, player_id=meta.player_id, env_id=meta.env_id, iteration=meta.ckpt_uid)
+        self.logger.info("eval_done", extra=dict(env=meta.env_id, ckpt=meta.ckpt_uid, seed=meta.seed, reward=res.final_rewards[meta.player_id]))

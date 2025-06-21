@@ -2,59 +2,29 @@ import os, time, asyncio
 from collections import defaultdict, deque
 from typing import Optional, Dict, Any
 
-import ray, torch
+import ray
 from vllm import EngineArgs, LLMEngine, SamplingParams
 from vllm.lora.request import LoRARequest
 
-import logging, pathlib
 from unstable.utils.logging import setup_logger
-
 
 
 @ray.remote
 class VLLMActor:
-    """
-    Thin async wrapper around vLLM that can load *many* LoRA adapters without restarting the engine.
-    Every call to :py:meth:`submit_prompt` enqueues a request that the private `_batch_loop` picks up in ≤20 ms batches.
-
-    Parameters
-    ----------
-    vllm_config (dict): Keys: ``model_name``, ``max_loras``, ``lora_config`` (rank, …), ``max_parallel_seq``, ``max_model_len``, plus sampling kwargs.
-    tracker (ray.ActorHandle): Remote `Tracker` for periodic inference utilisation reporting.
-    name (str): Human-readable label used in logs and the dashboard.
-    """
-    def __init__(self, vllm_config: Dict[str, Any], tracker, name: str):
+    def __init__(self, cfg: Dict[str, Any], tracker, name: str):
         self.logger = setup_logger(f"actor-{name}", ray.get(tracker.get_log_dir.remote())) # set up logging
         self.gpu_ids = ray.get_gpu_ids()
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
         
-        try:
-            import torch.cuda
-            torch.cuda.set_device(0)
-            torch.cuda.empty_cache()  # Clear any existing memory
-            self.logger.info(f"CUDA initialized on device {torch.cuda.current_device()}")
-        except Exception as e:
-            self.logger.error(f"CUDA initialization failed: {e}")
-            raise
-
         engine_args = EngineArgs(
-            model=vllm_config["model_name"], enable_lora=True, max_loras=vllm_config["max_loras"], max_lora_rank=vllm_config["lora_config"]["lora_rank"], 
-            max_cpu_loras=vllm_config["max_loras"], max_num_seqs=vllm_config["max_parallel_seq"], task="generate", max_model_len=vllm_config["max_model_len"],
+            model=cfg["model_name"], enable_lora=True, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"], 
+            max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], task="generate", max_model_len=cfg["max_model_len"],
             disable_custom_all_reduce=True, enforce_eager=False, disable_log_stats=True,  # Reduce logging overhead
         )
-        
-        try:
-            self.engine = LLMEngine.from_engine_args(engine_args)
-            self.logger.info("VLLM engine initialized successfully")
-        except Exception as e:
-            self.logger.error(f"VLLM engine initialization failed: {e}")
-            raise
+        try: self.engine = LLMEngine.from_engine_args(engine_args); self.logger.info("VLLM engine initialized successfully")
+        except Exception as e: self.logger.error(f"VLLM engine initialization failed: {e}"); raise
             
-        self.sampling_params = SamplingParams(
-            temperature = vllm_config.get("temperature", 0.7), 
-            top_p = vllm_config.get("top_p", 0.95), 
-            max_tokens = vllm_config.get("max_tokens", 4096),
-        )
+        self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096))
 
         self._queue = deque()
         self._futures = {}
@@ -65,41 +35,18 @@ class VLLMActor:
         self.tracker = tracker
         self.name = name
 
-        self._queued = defaultdict(int)
-        self._running = defaultdict(int)
-        self._tok_hist = defaultdict(lambda: deque())
-
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        self._batch_task = loop.create_task(self._batch_loop())
-        self._report_task = loop.create_task(self._report_loop())
-
+        self._queued = 0
+        self._running = 0
+        self._tok_hist = deque()
+        self._batch_task = asyncio.create_task(self._batch_loop())
+        self._report_task = asyncio.create_task(self._report_loop())
         self._lora_ids: Dict[str, int] = {"base": 0}
         self._next_lora_id = 1
-        
-        # Add health check flag
-        self._last_step_time = time.monotonic()
+        self._last_step_time = time.monotonic()  # Add health check flag
 
     async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> str:
-        """
-        Submit a *single* prompt and await the fully generated text.
-
-        Parameters
-        ----------
-        prompt (str): Plain text prompt (already templated).
-        lora_path (str or None): Directory of the adapter to apply. 'None' -> use base weights.
-
-        Returns
-        -------
-        (str) Text of the final generation segment.  
-        """
         fut = asyncio.Future()
-        lora = lora_path or "base"
-        self._queued[lora] += 1
+        self._queued += 1
         self._queue.append((prompt, lora_path, fut))
         return await fut
 
@@ -107,22 +54,15 @@ class VLLMActor:
         while True:
             try:
                 await asyncio.sleep(0.02)
-                
-                now = time.monotonic()
-                if now - self._last_step_time > 30:  # 30 second deadlock detection
-                    self.logger.error(f"Potential deadlock detected - no engine steps for {now - self._last_step_time:.1f} seconds")
-                    self.logger.error(f"Running requests: {dict(self._running)}")
-                    self.logger.error(f"Queue size: {len(self._queue)}")
-                
+                if time.monotonic() - self._last_step_time > 30: self.logger.error(f"Potential deadlock detected - no engine steps for {now - self._last_step_time:.1f} seconds\nRunning requests: {dict(self._running)}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
                 while self._queue:
                     prompt, path, fut = self._queue.popleft()
                     lora = path or "base"
                     req_id = str(self._next_id); self._next_id += 1
-
                     self._futures[req_id] = fut
                     self._req2lora[req_id] = lora
-                    self._queued[lora] -= 1
-                    self._running[lora] += 1
+                    self._queued -= 1
+                    self._running += 1
 
                     if path:
                         if path not in self._lora_ids:
@@ -131,29 +71,23 @@ class VLLMActor:
                         lora_req = LoRARequest(path, self._lora_ids[path], path)
                     else:
                         lora_req = None
-                        
                     try:
                         self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
                         self.logger.debug(f"Added request {req_id} with lora {lora}")
                     except Exception as e:
                         self.logger.error(f"Failed to add request {req_id}: {e}")
-                        self._running[lora] -= 1
+                        self._running -= 1
                         self._req2lora.pop(req_id, None)
                         fut.set_exception(e)
                         continue
-
                 try:
                     step_start = time.monotonic()
                     outs = self.engine.step()
                     step_duration = time.monotonic() - step_start
                     self._last_step_time = time.monotonic()
-                    
-                    if step_duration > 5.0:  # Log slow steps
-                        self.logger.warning(f"Slow engine step: {step_duration:.1f}s")
-                        
+                    if step_duration > 5.0: self.logger.warning(f"Slow engine step: {step_duration:.1f}s") # Log slow steps
                 except Exception as exc:   
-                    self.logger.exception(f"engine.step() failed - running: {dict(self._running)}")
-                    await asyncio.sleep(1.0)  # Brief pause before retry
+                    self.logger.exception(f"engine.step() failed - running: {dict(self._running)}"); await asyncio.sleep(1.0)  # Brief pause before retry
                     continue
 
                 for out in outs:
@@ -167,54 +101,27 @@ class VLLMActor:
                     self._prev_tok_cnt[req_id] = len(tok_ids)
 
                     now = time.monotonic()
-                    for _ in range(new_tok):
-                        self._tok_hist[lora].append(now)
-
+                    for _ in range(new_tok): self._tok_hist.append(now)
                     if segment.finish_reason is not None:
                         fut = self._futures.pop(req_id, None)
                         if fut and not fut.done():
                             fut.set_result(segment.text)
-
-                        self._running[lora] -= 1
+                        self._running -= 1
                         self._req2lora.pop(req_id, None)
                         self._prev_tok_cnt.pop(req_id, None)
-                        
-            except Exception as e:
-                self.logger.exception(f"Critical error in batch loop: {e}")
-                await asyncio.sleep(1.0)  # Prevent tight error loop
-
-    async def get_health_status(self):
-        """
-        Lightweight heartbeat for monitoring / deadlock detection.
-
-        Returns
-        -------
-        (dict) Keys: ``running_requests``, ``queued_requests``, ``time_since_last_step`` etc.
-        """
-        return {
-            "name": self.name, "running_requests": dict(self._running), "queued_requests": dict(self._queued), "last_step_time": self._last_step_time,
-            "time_since_last_step": time.monotonic()-self._last_step_time, "futures_count": len(self._futures), "engine_loaded": hasattr(self, 'engine') and self.engine is not None
-        }
+            except Exception as e: self.logger.exception(f"Critical error in batch loop: {e}"); await asyncio.sleep(1.0)  # Prevent tight error loop
 
     async def _report_loop(self):
+        self.logger.info("Starting _report_loop")
         while True:
-            if self.tracker is not None:
-                try:
-                    lora_stats = {}
-                    for l in {*self._queued, *self._running, *self._tok_hist}:
-                        tok_s = self._tok_rate(l)
-                        lora_stats[l] = {"queued": self._queued[l], "running": self._running[l], "tok_s": tok_s}
-                        self.logger.info(f"Lora: [{l}]\n\t- Queued: {self._queued[l]}\n\t- Running: {self._running[l]}\n\t- Token/second: {tok_s}")
-                    await self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, stats=lora_stats)
-                except Exception as exc:
-                    self.logger.exception(f"failed to push inference stats -\n\n{exc}\n\n")
+            await asyncio.sleep(5.0) # only send every 5 sec
+            stats = {"queued": self._queued, "running": self._running, "tok_s": self._tok_rate()}
+            self.logger.info(f"inside while loop _report_loop stats: {stats}")
+            try: ray.get(self.tracker.log_inference.remote(actor=self.name, gpu_ids=self.gpu_ids, stats=stats))
+            except Exception as e: self.logger.warning(f"tracker logging failed: {e}")
 
-            await asyncio.sleep(3.0)
-
-    def _tok_rate(self, lora: str, window: float = 2.0) -> float:
-        """Rolling average tokens/sec over the last <window> seconds."""
+    def _tok_rate(self, window: float = 2.0) -> float:
         now  = time.monotonic()
-        hist = self._tok_hist[lora]
-        while hist and now - hist[0] > window:
-            hist.popleft()
-        return len(hist) / window
+        while self._tok_hist and now - self._tok_hist[0] > window:
+            self._tok_hist.popleft()
+        return len(self._tok_hist) / window

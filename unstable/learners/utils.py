@@ -47,12 +47,10 @@ def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, A
     return model, tok
 
 def _json_safe(obj):
-    if isinstance(obj, set):
-        return list(obj) # turn sets into lists
+    if isinstance(obj, set): return list(obj) # turn sets into lists
     raise TypeError # let json handle the rest
     
 def enable_full_activation_ckpt(model):
-    """ Wrap every leaf module in checkpoint_wrapper (skip LoRA layers). Equivalent to full-graph activation checkpointing """
     def checkpoint_everything(mod):
         if isinstance(mod, LoraLayer): return False
         for _, child in mod.named_modules():

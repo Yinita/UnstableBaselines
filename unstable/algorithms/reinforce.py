@@ -1,6 +1,5 @@
 import torch
 from unstable.core import BaseAlgo
-from typing import Dict, Any, List, Tuple
 
 class Reinforce(BaseAlgo):
     def prepare_batch(self, steps):
@@ -14,16 +13,15 @@ class Reinforce(BaseAlgo):
         return enc, advs, obs, avg_len, pct_truncated
 
     def update(self, steps, scaling: float = 1.0):
-        enc, advs, obs, avg_len, pct_truncated = self.prepare_batch(steps=steps) # unpack
-        # print(f"TOKENS PER ITEM: {[len(ids) for ids in enc['input_ids']]}")
-        out = self.model(**enc) # forward
+        enc, advs, obs, avg_len, pct_truncated = self.prepare_batch(steps=steps)
+        out = self.model(**enc)
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tgt_ids = enc.input_ids[:, 1:]
         tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
         mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device) # build prompt mask
         for i, o in enumerate(obs): mask[i, :len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
         mask = mask[:, 1:]
-        seq_logp = (tok_logp * mask).sum(1) / 4096 #mask.sum(1).clamp(min=1)
+        seq_logp = (tok_logp * mask).sum(1) / 4096
         loss = -(advs * seq_logp).mean() / scaling
         loss.backward()
         torch.cuda.empty_cache()

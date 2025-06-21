@@ -6,6 +6,4 @@ ray[air]
 torch
 transformers
 peft
-textarena[datasets]
 trueskill
-nvitop
