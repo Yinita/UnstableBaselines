@@ -58,6 +58,7 @@ def play_episode(spec: PlaySpec, actor: VLLMActor) -> EpisodeResult:
     if info["end_by_invalid"] and pid == spec.player_id: traj.format_feedbacks[-1]["invalid_move"] = 1
     return EpisodeResult(traj=traj, end_by_opponent_invalid=end_by_opp_inv, action_seq=action_seq, final_rewards=traj.final_rewards)
 
+
 @ray.remote
 class Collector:
     def __init__(
@@ -142,5 +143,7 @@ class Collector:
         if meta.opponent_uid: self.model_pool.push_game_outcome.remote(uid_me=meta.ckpt_uid, uid_opp=meta.opponent_uid, final_reward=res.traj.final_rewards[meta.player_id], game_action_seq=res.action_seq, env_id=meta.env_id)
 
     def _post_eval(self, meta: TaskMeta, res: EpisodeResult):
-        self.tracker.add_eval_episode.remote(episode_info=None, final_rewards=res.final_rewards, player_id=meta.player_id, env_id=meta.env_id, iteration=meta.ckpt_uid)
+        # self.tracker.add_eval_episode.remote(episode_info=None, rewards=res.final_rewards, player_id=meta.player_id, env_id=meta.env_id, iteration=meta.ckpt_uid)
+        self.logger.info(res.traj)
+        self.tracker.add_eval_episode.remote(rewards=res.final_rewards, player_id=meta.player_id, env_id=meta.env_id)
         self.logger.info("eval_done", extra=dict(env=meta.env_id, ckpt=meta.ckpt_uid, seed=meta.seed, reward=res.final_rewards[meta.player_id]))

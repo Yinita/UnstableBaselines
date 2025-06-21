@@ -49,6 +49,43 @@ The runtime can be thought of as three asynchronous loops:
  │ MODEL    │◀────────────────── │    MODEL POOL    │◀──────────────────────┘
  │  POOL    │    sample_opponent └──────────────────┘
  └──────────┘
+
+      ┌───────────────┐
+      │               │
+      │   Collector   │
+      │               │
+      └───────────────┘
+             │ ▲
+    Maintain │ │ 
+     pool of │ │ return 
+  n parallel │ │ Trajectory
+     workers │ │
+             ▼ │
+       ┌─────────────┐
+       │   run_game  │
+       │  train\eval │
+       └─────────────┘
+
+
+
+
+┌───────────────┐   Sample Opponent    ┌───────────────┐                      
+│               │─────────────────────▶│               │                      
+│   Model Pool  │                      │   Collector   │                      
+│               │◀─────────────────────│               │                      
+└───────────────┘   update TrueSkill   └───────────────┘                      
+                                             ▲ │                      
+                                             │ │ Maintain     
+                                      return │ │ Pool of 
+                                  Trajectory │ │ n parallel      
+                                             │ │ workers   
+                                             │ ▼
+                                       ┌─────────────┐
+                                       │   run_game  │
+                                       │  train\eval │
+                                       └─────────────┘
+
+
 ```
 
 * **Collector** instances roll games with the latest learner checkpoint vs. opponents sampled by the **Model Pool**.

@@ -23,8 +23,11 @@ class VLLMActor:
         )
         try: self.engine = LLMEngine.from_engine_args(engine_args); self.logger.info("VLLM engine initialized successfully")
         except Exception as e: self.logger.error(f"VLLM engine initialization failed: {e}"); raise
+        self.logger.info(f"vLLM model path or name: {engine_args.model}")
+        self.logger.info(f"Model architecture: {self.engine.model_config.__dict__}")
             
         self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096))
+        # self.engine.lora_manager.unload_all_loras()
 
         self._queue = deque()
         self._futures = {}
@@ -50,6 +53,8 @@ class VLLMActor:
         self._queue.append((prompt, lora_path, fut))
         return await fut
 
+        
+
     async def _batch_loop(self):
         while True:
             try:
@@ -69,6 +74,7 @@ class VLLMActor:
                             self._lora_ids[path] = self._next_lora_id
                             self._next_lora_id += 1
                         lora_req = LoRARequest(path, self._lora_ids[path], path)
+                        self.logger.info(lora_req)
                     else:
                         lora_req = None
                     try:
