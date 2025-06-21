@@ -34,7 +34,7 @@ def _scaled_hist(hist: deque[float|int], width: int) -> str:
 class TerminalInterface:
     def __init__(self, tracker, step_buffer):
         self.tracker, self.step_buffer = tracker, step_buffer
-        self.console = Console() 
+        self.console = Console(color_system="truecolor") 
         self._gpu_stats = None
         self._general_stats = None
         self._tracker_stats = None
@@ -98,7 +98,7 @@ class TerminalInterface:
         tbl = Table.grid(expand=True, padding=0)
         tbl.add_column(ratio=1)
         tbl.add_column(ratio=1)
-        for a, b in zip_longest(gpu_panels[0::2], gpu_panels[1::2], fillvalue=Panel("")): tbl.add_row(a, b) # filler for odd counts
+        for a, b in zip_longest(gpu_panels[0::2], gpu_panels[1::2], fillvalue=Panel("\n\n")): tbl.add_row(a, b) # filler for odd counts
         return Panel(tbl, title="GPU Performance", box=box.DOUBLE)
 
     def _base_stats(self) -> Panel:
@@ -131,7 +131,7 @@ class TerminalInterface:
         for uid, mu, sigma in entries:
             bar = "█" * int((mu/max_mu if max_mu else 0.0) * bar_field)
             bar_text = f"{bar:<{bar_field}}"  # pad to fixed width
-            bar_lines.append(Text.assemble((f"[{self._ts_idx[uid]}] {_trim_uid(uid):<25}", "bold"), "  ", Text(bar_text, style="cyan"), f"  μ {mu:6.2f}  σ {sigma:4.2f}"))
+            bar_lines.append(Text.assemble((f"[{self._ts_idx[uid]:<3}] {_trim_uid(uid):<25}", "bold"), "  ", Text(bar_text, style="cyan"), f"  μ {mu:6.2f}  σ {sigma:4.2f}"))
         title = f"TrueSkill (μ, σ)  – {len(self._tracker_stats['TS'])} models"
         return Panel(Group(*bar_lines), title=title, box=box.SQUARE, padding=(0, 1))
 
@@ -142,7 +142,7 @@ class TerminalInterface:
         uid_by_row = uid_by_row[:max_rows]
         def _cnt(a: str, b: str) -> int: return self._tracker_stats["match_counts"].get(tuple(sorted((a, b))), 0)
         max_cnt = max((_cnt(a, b) for a in uid_by_row for b in uid_by_row), default=1)
-        light_rgb = (255, 243, 224)    # ≈ #FFF3E0
+        light_rgb = (0, 43, 54) # TODO somehow set this to be the users terminal color
         dark_rgb  = (255,  87,  34)    # ≈ #FF5722
         def _bg_style(pct: float) -> Style: return Style(bgcolor=Color.from_rgb(int(light_rgb[0]+pct*(dark_rgb[0]-light_rgb[0])), int(light_rgb[1]+pct*(dark_rgb[1]-light_rgb[1])), int(light_rgb[2]+pct*(dark_rgb[2]-light_rgb[2]))))
 
@@ -156,7 +156,7 @@ class TerminalInterface:
                 c = _cnt(ua, ub)
                 row_cells.append(Text(f"{c:3}", style=_bg_style(c / max_cnt if max_cnt else 0.0)))
             tbl.add_row(*row_cells)
-        return Panel(tbl, title="Match Frequencies", box=box.SQUARE)
+        return Panel(tbl, title="Match Counts", box=box.SQUARE)
 
     def _exploration(self) -> Panel: return Panel(Text("Not Implemented"), title="Exploration", box=box.DOUBLE) 
 
@@ -164,7 +164,7 @@ class TerminalInterface:
         layout = Layout()
         layout.split_column(Layout(name="grid"), Layout(name="gpu", size=5*((self.gpu_count+self.gpu_count%2)//2)+2))
         layout["grid"].split_row(Layout(name="col1"), Layout(name="col2"))
-        layout["col1"].split_column(Layout(name="exploration"), Layout(name="heatmap"))
+        layout["col1"].split_column(Layout(name="exploration",ratio=1), Layout(name="heatmap", ratio=2))
         layout["col2"].split_column(Layout(name="ts"), Layout(name="bs", size=6))
         asyncio.create_task(self._fetch_loop())  # Start background fetcher
         with Live(layout, console=self.console, auto_refresh=False) as live:

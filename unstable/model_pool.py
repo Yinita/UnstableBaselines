@@ -1,10 +1,10 @@
 
-import trueskill, math, ray, random, time, logging
+import trueskill, math, ray, copy, random, time, logging
 from collections import defaultdict
 from typing import List
 
 # local imports
-from unstable.core import Opponent
+from unstable.core import Opponent, ExplorationTracker
 from unstable.utils.logging import setup_logger
 
 @ray.remote
@@ -20,11 +20,8 @@ class ModelPool:
 
         # for tracking
         self._match_counts = defaultdict(int) # (uid_a, uid_b) -> games played
-        self._unique_actions_seqs = {}
-        self._full_unique_actions_seqs = {
-            "unigrams": set(), "bigrams": set(), "trigrams": set(), "4-grams": set(), "5-grams": set(),
-            "total_counts": {"unigrams": 0, "bigrams": 0, "trigrams": 0, "4-grams": 0, "5-grams": 0,
-        }}
+        self._exploration_tracker: dict[str, ExplorationTracker] = {}
+        self._exploration_metrics: dict[str, dict[str, dict[str, float]]] = {}
         self._step_counter = 0 # learner step snapshot id
         self._tracker = tracker
         self.logger = setup_logger("model_pool", ray.get(tracker.get_log_dir.remote())) # set up logging
@@ -38,6 +35,7 @@ class ModelPool:
         # inherit μ/σ if a previous checkpoint exists
         if self._latest_uid and self._latest_uid in self._models: init_rating = self.TS.Rating(mu=self._models[self._latest_uid].rating.mu, sigma=self._models[self._latest_uid].rating.sigma * 2)
         else: init_rating = self.TS.create_rating()   # default prior
+        if self._latest_uid and self._latest_uid in self._exploration_metrics: self._exploration_metrics[uid] = copy.deepcopy(self._exploration_metrics[self._latest_uid]) # initialize with prev ckpt exploration metrics
         self._models[uid] = Opponent(uid, "checkpoint", path, rating=init_rating)
         self._ckpt_log.append(uid)
         self._latest_uid = uid # promote to “current”
@@ -107,26 +105,21 @@ class ModelPool:
         pair = tuple(sorted((uid_me, uid_opp)))
         self._match_counts[tuple(sorted((uid_me, uid_opp)))] += 1
 
-    def _track_exploration(self, uid_me: str, uid_opp: str, game_action_seq: List[str]):
-        return # TODO skip for scaling runs
-        key = tuple(sorted((uid_me, uid_opp)))
-        if key not in self._unique_actions_seqs:
-            self._unique_actions_seqs[key] = {
-                "unigrams": set(), "bigrams": set(), "trigrams": set(), "4-grams": set(), "5-grams": set(),
-                "total_counts": {"unigrams": 0, "bigrams": 0, "trigrams": 0, "4-grams": 0, "5-grams": 0}
-            }
-        for n, name in [(1,"unigrams"), (2, "bigrams"), (3, "trigrams"), (4, "4-grams"), (5, "5-grams")]:
-            for i in range(len(game_action_seq) - n + 1):
-                self._unique_actions_seqs[key][name].add(tuple(game_action_seq[i:i+n]))
-                self._unique_actions_seqs[key]["total_counts"][name] += 1
-                self._full_unique_actions_seqs[name].add(tuple(game_action_seq[i:i+n]))
-                self._full_unique_actions_seqs["total_counts"][name] += 1
+    def _track_exploration(self, uid_me: str, uid_opp: str, game_action_seq: List[str], env_id: str):
+        for uid in [uid_me, uid_opp]:
+            if uid not in self._exploration_tracker: self._exploration_tracker[uid] = ExplorationTracker()
+            self._exploration_tracker[uid].add_game(action_seq=game_action_seq, env_id=env_id)
 
-    def push_game_outcome(self, uid_me: str, uid_opp: str, final_reward: float, game_action_seq: List[str]):
+            if uid not in self._exploration_metrics: self._exploration_metrics[uid] = {}
+            if env_id not in self._exploration_metrics[uid]: self._exploration_metrics[uid][env_id] = {}
+            for ngram_size in self._exploration_tracker[uid].ngram_sizes:
+                self._exploration_metrics[uid][env_id][f"{ngram_size}-gram"] = self._exploration_tracker[uid].pct_unique(env_id=env_id, n=ngram_size)
+
+    def push_game_outcome(self, uid_me: str, uid_opp: str, final_reward: float, game_action_seq: List[str], env_id: str):
         if uid_me not in self._models or uid_opp not in self._models: return  # skip if either side is unknown
         self._update_ratings(uid_me=uid_me, uid_opp=uid_opp, final_reward=final_reward) # update ts
         self._register_game(uid_me=uid_me, uid_opp=uid_opp) # register the game for tracking
-        self._track_exploration(uid_me, uid_opp, game_action_seq)
+        self._track_exploration(uid_me, uid_opp, game_action_seq, env_id)
         self.snapshot(self._step_counter)
         
     def _exp_win(self, A, B):   return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
@@ -149,14 +142,9 @@ class ModelPool:
             if opp.kind != "checkpoint": continue
             opp.active = (uid in keep)
     
-    def _get_exploration_ratios(self):
-        stats = {}
-        for key in ["unigrams", "bigrams", "trigrams", "4-grams", "5-grams"]: stats[f"unique-counts-{key}"] = len(self._full_unique_actions_seqs[key])
-        return stats
-
     def snapshot(self, iteration: int):
         try: self._tracker.log_model_pool.remote(
-            match_counts=dict(self._match_counts), exploration=self._get_exploration_ratios(),
+            match_counts=dict(self._match_counts), exploration=self._exploration_metrics[self._latest_uid],
             ts_dict={u: {"mu": o.rating.mu, "sigma": o.rating.sigma} for u, o in self._models.items()},
         )
         except Exception as exc: self.logger.exception(f"failed pushing snapshot at iter={iteration}-\n\n{exc}\n\n")

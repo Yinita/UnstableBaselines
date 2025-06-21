@@ -2,10 +2,10 @@ import time, ray, unstable
 import unstable.reward_transformations as retra
 
 NUM_LEARNERS = 1
-NUM_ACTORS = 3
-COLLECTION_WORKERS = 256
+NUM_ACTORS = 2
+COLLECTION_WORKERS = 384
 EVALUATION_WORKERS = 0
-ITERATIONS = 600
+ITERATIONS = 200
 MODEL_NAME = "Qwen/Qwen3-1.7B-base"
 # MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 BATCH_SIZE = 384
@@ -13,8 +13,14 @@ MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = 4000
+MAX_TRAIN_SEQ_LEN = None
 SAMPLE_MODE = "mirror"
+
+# vRAM optimization
+ACTIVATION_CHECKPOINTING = True
+GRADIENT_CHECKPOINTING = True
+USE_TRAINER_CACHE = False
+
 
 
 lora_config = {
@@ -23,29 +29,40 @@ lora_config = {
 }
 vllm_config = {
     "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": 4096,
-    "max_parallel_seq": 64, "max_loras": 8, "lora_config": lora_config,
+    "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_config,
     "max_model_len": 8192
 }
 
 TRAINING_ENVS = [
-    ("LiarsDice-v0-train", 2, "qwen3-zs"), 
     # ("SimpleTak-v0-train", 2, "qwen3-zs"), 
-    # ("Nim-v0-train", 2, "qwen3-zs"), 
+    # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
+    ("Nim-v0-train", 2, "qwen3-zs"), 
     # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
+    # ("PigDice-v0-train", 2, "qwen3-zs")
+    # ("Othello-v0-train", 2, "qwen3-zs")
+    # ("Snake-v0-train", 2, "qwen3-zs")
+    # ("Chopsticks-v0-train", 2, "qwen3-zs")
+    # ("GameOfPureStrategy-v0-train", 2, "qwen3-zs")
 ]
 EVALUATION_ENVS = [
+    # ("SimpleTak-v0-train", 2, "qwen3-zs"), 
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    ("SimpleTak-v0-train", 2, "qwen3-zs"), 
     # ("Nim-v0-train", 2, "qwen3-zs"), 
     # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
+    # ("PigDice-v0-train", 2, "qwen3-zs")
+    # ("Othello-v0-train", 2, "qwen3-zs")
+    # ("Snake-v0-train", 2, "qwen3-zs")
+    # ("Chopsticks-v0-train", 2, "qwen3-zs")
+    # ("GameOfPureStrategy-v0-train", 2, "qwen3-zs")
 ]
 
-WANDB_RUN_NAME = f"Run--{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
+# WANDB_RUN_NAME = f"Reward-Ablation--exp1-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
+WANDB_RUN_NAME = f"Debugging-run-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
 
 
-ray.init(namespace="unstable", log_to_driver=True) # Ray init 
+ray.init(namespace="unstable") #, log_to_driver=True) # Ray init 
 tracker = unstable.Tracker.options(name="Tracker").remote(run_name=WANDB_RUN_NAME, wandb_project="UnstableBaselines") # Tracker
 
 # Data Buffer
@@ -89,9 +106,9 @@ learner = unstable.StandardLearner.options(num_gpus=NUM_LEARNERS, name="Learner"
     grad_clip=GRAD_CLIP, 
     batch_delay_buffer=1.5, 
     lora_cfg=lora_config,
-    activation_checkpointing=True,
-    gradient_checkpointing=True,
-    use_trainer_cache=False,
+    activation_checkpointing=ACTIVATION_CHECKPOINTING,
+    gradient_checkpointing=GRADIENT_CHECKPOINTING,
+    use_trainer_cache=USE_TRAINER_CACHE,
     max_train_len=MAX_TRAIN_SEQ_LEN,
 )
 

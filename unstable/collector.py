@@ -139,7 +139,7 @@ class Collector:
         if self.filter_invalid and res.end_by_opponent_invalid: return
         self.buffer.add_trajectory.remote(res.traj, meta.player_id, meta.env_id)
         self.tracker.add_trajectory.remote(res.traj, meta.player_id, meta.env_id)
-        if meta.opponent_uid: self.model_pool.push_game_outcome.remote(uid_me=meta.ckpt_uid, uid_opp=meta.opponent_uid, final_reward=res.traj.final_rewards[meta.player_id], game_action_seq=res.action_seq)
+        if meta.opponent_uid: self.model_pool.push_game_outcome.remote(uid_me=meta.ckpt_uid, uid_opp=meta.opponent_uid, final_reward=res.traj.final_rewards[meta.player_id], game_action_seq=res.action_seq, env_id=meta.env_id)
 
     def _post_eval(self, meta: TaskMeta, res: EpisodeResult):
         self.tracker.add_eval_episode.remote(episode_info=None, final_rewards=res.final_rewards, player_id=meta.player_id, env_id=meta.env_id, iteration=meta.ckpt_uid)
