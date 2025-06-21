@@ -2,7 +2,6 @@ import os, ray, torch, datetime, trueskill
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
 
-
 @dataclass
 class Trajectory:
     pid: List[int] = field(default_factory=list)
@@ -14,7 +13,6 @@ class Trajectory:
     num_turns: int = field(default_factory=int)
     format_feedbacks: List[Dict] = field(default_factory=list)
 
-
 @dataclass
 class Step:
     pid: int
@@ -24,7 +22,6 @@ class Step:
     env_id: str
     step_info: Dict
 
-
 @dataclass
 class Opponent:
     uid: str # “ckpt-1234” or “gemini-flash”
@@ -33,14 +30,12 @@ class Opponent:
     rating: trueskill.Rating # trueskill.Rating(mu, sigma)
     active: bool = True
 
-
 @dataclass
 class EpisodeResult:
     traj: Trajectory
     end_by_opponent_invalid: bool
     action_seq: List[str]
     final_rewards: List[float]
-
 
 @dataclass(frozen=True)
 class PlaySpec:
@@ -50,7 +45,6 @@ class PlaySpec:
     agents: List
     seed: int
 
-
 @dataclass
 class TaskMeta:
     type: str  # "train" | "eval"
@@ -59,7 +53,6 @@ class TaskMeta:
     seed: int
     ckpt_uid: str | None = None
     opponent_uid: str | None = None
-
 
 class BaseAlgo:
     def initialize(self, model, tokenizer, device, max_train_len: Optional[int]= None, accelerator=None):

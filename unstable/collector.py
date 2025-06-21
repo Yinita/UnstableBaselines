@@ -16,7 +16,6 @@ from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING
 assert ta.__version__ == "0.6.9", f"TextArena 0.6.9 required, currently {ta.__version__}"
 
 class CallableActorWrapper:
-    """ Thin synchronous wrapper around a remote ``VLLMActor`` that can return either just the extracted action or the *full* reasoning string + formatted prompt """
     def __init__(self, actor: VLLMActor, lora_path: str|Path, obs_fmt_fn: Callable[[str],str], extract_fn: Callable[[str], Tuple[str, Dict[str, Any]]]) -> None:
         self._actor, self._lora, self._fmt, self._extract = actor, lora_path, obs_fmt_fn, extract_fn
 

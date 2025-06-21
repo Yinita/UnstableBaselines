@@ -3,7 +3,7 @@ from unstable.reward_transformations.transformation_step import ComposeStepRewar
 from unstable.reward_transformations.transformation_sampling import ComposeSamplingRewardTransforms, NormalizeRewards, NormalizeRewardsByEnv
 
 __all__ = [
-    "ComposeFinalRewardTransforms", "WinDrawLossFormatter", "RoleAdvantageFormatter", "RoleAdvantageByEnvFormatter",
+    "ComposeFinalRewardTransforms", "WinDrawLossFormatter", "RoleAdvantageFormatter", "RoleAdvantageByEnvFormatter", 
     "ComposeStepRewardTransforms", "RewardForFormat", "PenaltyForInvalidMove",
     "ComposeSamplingRewardTransforms", "NormalizeRewards", "NormalizeRewardsByEnv"
 ]

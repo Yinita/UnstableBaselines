@@ -1,10 +1,8 @@
 from typing import List
 from unstable.core import Trajectory
 
-# Step reward Transformations
 class StepRewardTransform:
-    def __call__(self, trajectory: Trajectory, step_index: int, base_reward: float) -> float:
-        raise NotImplementedError
+    def __call__(self, trajectory: Trajectory, step_index: int, base_reward: float) -> float: raise NotImplementedError
 
 class ComposeStepRewardTransforms:
     def __init__(self, transforms: List[StepRewardTransform]):  self.transforms = transforms

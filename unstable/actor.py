@@ -2,11 +2,10 @@ import os, time, asyncio
 from collections import defaultdict, deque
 from typing import Optional, Dict, Any
 
-import ray, torch
+import ray
 from vllm import EngineArgs, LLMEngine, SamplingParams
 from vllm.lora.request import LoRARequest
 
-import logging, pathlib
 from unstable.utils.logging import setup_logger
 
 
@@ -22,9 +21,7 @@ class VLLMActor:
             max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], task="generate", max_model_len=cfg["max_model_len"],
             disable_custom_all_reduce=True, enforce_eager=False, disable_log_stats=True,  # Reduce logging overhead
         )
-        try:
-            self.engine = LLMEngine.from_engine_args(engine_args)
-            self.logger.info("VLLM engine initialized successfully")
+        try: self.engine = LLMEngine.from_engine_args(engine_args); self.logger.info("VLLM engine initialized successfully")
         except Exception as e: self.logger.error(f"VLLM engine initialization failed: {e}"); raise
             
         self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096))
@@ -74,7 +71,6 @@ class VLLMActor:
                         lora_req = LoRARequest(path, self._lora_ids[path], path)
                     else:
                         lora_req = None
-                        
                     try:
                         self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
                         self.logger.debug(f"Added request {req_id} with lora {lora}")
@@ -84,7 +80,6 @@ class VLLMActor:
                         self._req2lora.pop(req_id, None)
                         fut.set_exception(e)
                         continue
-
                 try:
                     step_start = time.monotonic()
                     outs = self.engine.step()

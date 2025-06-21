@@ -20,14 +20,10 @@ class StandardLearner:
         save_every: int = 1, tracker=None, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool=False, max_train_len: Optional[int]=None
     ):
         self.logger = setup_logger("learner", ray.get(tracker.get_log_dir.remote())) # set up logging
+        self.step_buffer, self.model_pool, self.tracker = step_buffer, model_pool, tracker
+        self.batch_size, self.mini_batch_size, self.grad_clip = batch_size, mini_batch_size, grad_clip
         self.algorithm = algorithm
-        self.batch_size = batch_size
-        self.mini_batch_size = mini_batch_size  
-        self.grad_clip = grad_clip
         self.batch_delay_buffer = batch_delay_buffer
-        self.step_buffer = step_buffer
-        self.model_pool = model_pool
-        self.tracker = tracker
         self.save_every = save_every
         self.ckpt_root = pathlib.Path(ray.get(self.tracker.get_checkpoints_dir.remote()) if self.tracker else ckpt_root)
         self.ckpt_root.mkdir(parents=True, exist_ok=True)
@@ -73,30 +69,21 @@ class StandardLearner:
                     metrics_acc[k] = metrics_acc.get(k, 0.0) + v
                 self.logger.info(f"Mini-step metrics: {update_metrics}")
             self.logger.info(f"Step metrics: {metrics_acc}")
-            
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             try: self.optimizer.step()
             except Exception as exc: self.logger.exception(f"optimizer.step crashed on step {self._step} -\n\n{exc}\n\n"); raise
             self._step += 1
 
-            # Logging
-            if self.tracker is not None:
-                log = {f"{k}": v / num_steps for k, v in metrics_acc.items()}
-                log.update({
-                    "step": self._step,  "samples_seen": self._samples_seen,  "lr": self.optimizer.param_groups[0]["lr"], 
-                    "grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5
-                })
-                self.tracker.log_learner.remote(log)
-            else:
-                if self._step % 10 == 0: 
-                    self.logger.info(f"[Learner] step {self._step:>5} | loss={metrics_acc.get('loss', 0):.4f}")
+            log = {f"{k}": v / num_steps for k, v in metrics_acc.items()}
+            grad_norm = sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5
+            log.update({"step": self._step,  "samples_seen": self._samples_seen,  "lr": self.optimizer.param_groups[0]["lr"], "grad_norm": grad_norm})
+            self.tracker.log_learner.remote(log)
 
             # save & register checkpoint every step
             if self._step % self.save_every == 0:
-                try:                        self._save_checkpoint()
-                except Exception as exc:    self.logger.exception(f"failed to save checkpoint {ckpt_dir} -\n\n{exc}\n\n"); raise
-                # self._save_checkpoint()
+                try: self._save_checkpoint()
+                except Exception as exc: self.logger.exception(f"failed to save checkpoint {ckpt_dir} -\n\n{exc}\n\n"); raise
                 if self.model_pool and self._last_ckpt:
                     self.model_pool.add_checkpoint.remote(str(self._last_ckpt), self._step)
                     self.logger.info(f"[Learner] +registered -> {self._last_ckpt}")
@@ -104,7 +91,6 @@ class StandardLearner:
 
         self.logger.info("[Learner] training finished.")
         self.step_buffer.stop()
-        return {"final_step":self._step, "samples":self._samples}
 
     def _save_checkpoint(self):
         ckpt_dir = self.ckpt_root / f"iteration-{self._step}"
