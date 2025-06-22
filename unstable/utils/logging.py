@@ -2,16 +2,6 @@ import logging, os, pathlib
 from rich.logging import RichHandler
 
 def setup_logger(name: str, log_dir: str, level: int = logging.INFO, to_console: bool = False) -> logging.Logger:
-    """
-    Create a module-scoped rotating file logger. The logger never propagates to the root to avoid double prints.
-
-    Parameters
-    ----------
-    name (str): Log file prefix and the logging namespace.
-    log_dir (str): Directory where ``<name>.log`` is written.
-    level (int, default logging.INFO): Logging severity threshold.
-    to_console (bool, default False): If ``True`` attach a colourful Rich handler on the *driver process*
-    """
     path = pathlib.Path(log_dir) / f"{name}.log"
     path.parent.mkdir(parents=True, exist_ok=True)
     logger = logging.getLogger(name)

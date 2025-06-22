@@ -26,18 +26,6 @@ TEMPLATE_PARTS = {
     },
 }
 def apply_template(template_name: str, observation: str) -> str:
-    """
-    Render a prompt for 'template_name'.
-
-    Parameters
-    ----------
-    template_name (str): Key in :pydata:`TEMPLATE_PARTS`.
-    observation (str): Raw environment observation.
-
-    Returns
-    -------
-    (str) -> Fully formatted prompt (system + user + assistant parts).
-    """
     parts = TEMPLATE_PARTS.get(template_name)
     return format_template(system=parts.get("system", ""), user=parts["user"](observation), assistant=parts.get("assistant", ""))
 

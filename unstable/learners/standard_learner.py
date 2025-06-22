@@ -1,8 +1,6 @@
 
-import time, pathlib, math, json, logging
+import time, pathlib, ray, torch
 from typing import Any, Dict, Optional, List
-
-import ray, torch, transformers
 
 # local imports
 from unstable.buffer import StepBuffer

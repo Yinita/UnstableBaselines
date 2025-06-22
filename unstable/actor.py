@@ -27,7 +27,6 @@ class VLLMActor:
         self.logger.info(f"Model architecture: {self.engine.model_config.__dict__}")
             
         self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096))
-        # self.engine.lora_manager.unload_all_loras()
 
         self._queue = deque()
         self._futures = {}

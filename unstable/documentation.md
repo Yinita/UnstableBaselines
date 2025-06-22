@@ -38,55 +38,34 @@ The goal is to iterate **quickly** on small language models (< 8B params) and b
 The runtime can be thought of as three asynchronous loops:
 
 ```
- ┌──────────┐      batches        ┌─────────────┐     weight Δ      ┌──────────────────┐
- │ COLLECT  │ ─────────────────▶ │ STEP BUFFER │ ────────────────▶ │ STANDARD LEARNER │
- │  (N workers)   trajs, eval     │   (FIFO)    │    checkpoint     │     (LoRA)       │
- └──────────┘                    └─────────────┘                   └──────────────────┘
-       ▲                               │                                    │
-       │ game outcome                  │ snapshot                           │ add_checkpoint
-       │                               ▼                                    │
- ┌──────────┐  quality/explore   ┌──────────────────┐         μ/σ update    │
- │ MODEL    │◀────────────────── │    MODEL POOL    │◀──────────────────────┘
- │  POOL    │    sample_opponent └──────────────────┘
- └──────────┘
-
-      ┌───────────────┐
-      │               │
-      │   Collector   │
-      │               │
-      └───────────────┘
-             │ ▲
-    Maintain │ │ 
-     pool of │ │ return 
-  n parallel │ │ Trajectory
-     workers │ │
-             ▼ │
-       ┌─────────────┐
-       │   run_game  │
-       │  train\eval │
-       └─────────────┘
-
-
-
-
-┌───────────────┐   Sample Opponent    ┌───────────────┐                      
-│               │─────────────────────▶│               │                      
-│   Model Pool  │                      │   Collector   │                      
-│               │◀─────────────────────│               │                      
-└───────────────┘   update TrueSkill   └───────────────┘                      
-                                             ▲ │                      
-                                             │ │ Maintain     
-                                      return │ │ Pool of 
-                                  Trajectory │ │ n parallel      
-                                             │ │ workers   
-                                             │ ▼
-                                       ┌─────────────┐
-                                       │   run_game  │
-                                       │  train\eval │
-                                       └─────────────┘
-
-
+    ┌───────────────┐                           ┌───────────────┐                           ┌───────────────┐
+    │               │    Register new lora      │               │        Get Loss &         │               │
+    │   Model Pool  │◀──────────────────────────│    Learner    │◀─────────────────────────▶│   Algorithm   │
+    │               │       checkpoint          │               │      update weights       │               │
+    └───────────────┘                           └───────────────┘                           └───────────────┘ 
+           ▲ │                                       ▲     │ 
+           │ │ Sample                      If enough │     │ Check if enough
+    Update │ │ Opponent                   data, pull │     │ data for training
+ Trueskill │ │                        the next batch │     │ is available
+           │ ▼                                       │     ▼
+    ┌───────────────┐                          ┌───────────────┐                      
+    │               │     Process and store    │               │                      
+    │   Collector   │─────────────────────────▶│   StepBuffer  │                      
+    │               │  collected Trajectories  │               │                      
+    └───────────────┘                          └───────────────┘                      
+           ▲ │                      
+           │ │ Maintain     
+    return │ │ Pool of 
+Trajectory │ │ n parallel      
+           │ │ workers   
+           │ ▼
+     ┌─────────────┐
+     │  run_game() │
+     │  train\eval │
+     └─────────────┘
 ```
+
+
 
 * **Collector** instances roll games with the latest learner checkpoint vs. opponents sampled by the **Model Pool**.
 * End‑of‑game rewards & formatted trajectories land in the **Step Buffer**.

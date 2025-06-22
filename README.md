@@ -22,6 +22,36 @@
 * **Composable reward transforms** at step, final, and sampling stages.
 
 
+## Structure
+```
+    ┌───────────────┐                           ┌───────────────┐                           ┌───────────────┐
+    │               │    Register new lora      │               │        Get Loss &         │               │
+    │   Model Pool  │◀──────────────────────────│    Learner    │◀─────────────────────────▶│   Algorithm   │
+    │               │       checkpoint          │               │      update weights       │               │
+    └───────────────┘                           └───────────────┘                           └───────────────┘ 
+           ▲ │                                       ▲     │ 
+           │ │ Sample                      If enough │     │ Check if enough
+    Update │ │ Opponent                   data, pull │     │ data for training
+ Trueskill │ │                        the next batch │     │ is available
+           │ ▼                                       │     ▼
+    ┌───────────────┐                          ┌───────────────┐                      
+    │               │     Process and store    │               │                      
+    │   Collector   │─────────────────────────▶│   StepBuffer  │                      
+    │               │  collected Trajectories  │               │                      
+    └───────────────┘                          └───────────────┘                      
+           ▲ │                      
+           │ │ Maintain     
+    return │ │ Pool of 
+Trajectory │ │ n parallel      
+           │ │ workers   
+           │ ▼
+     ┌─────────────┐
+     │  run_game() │
+     │  train\eval │
+     └─────────────┘
+```
+
+
 ## Installation
 
 ```bash
@@ -50,6 +80,9 @@ If you want to monitor key metrics (in addition to logging them via W&B) you can
 ```bash
 python3 -m unstable.terminal_interface
 ```
+
+## Motivation for LoRA vs full fine-tuning
+TODO
 
 
 ## Collaboration
