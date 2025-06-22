@@ -156,7 +156,7 @@ If you want to monitor key metrics (in addition to logging them via W&B) during 
 python3 -m unstable.terminal_interface
 ```
 The rendered interface will currently look something like this: (please not that it might change in the future as UnstableBaselines is very much still under development)
-![](https://github.com/LeonGuertler/UnstableBaselines/_docs/terminal_interface_.gif)
+![](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/terminal_interface.gif)
 
 
 ### Results
