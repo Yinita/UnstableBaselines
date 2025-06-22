@@ -63,12 +63,12 @@ class TaskMeta:
     opponent_uid: str | None = None
 
 class BaseAlgo:
-    def initialize(self, model, tokenizer, device, max_train_len: Optional[int]= None, accelerator=None):
+    def initialize(self, model, tokenizer, device, max_generation_len: int, max_train_len: Optional[int]=None):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.max_train_len = max_train_len
-        self.accel = accelerator
+        self.max_generation_len = max_generation_len
 
     def prepare_batch(self, steps):
         """ Turn a list[Step] into tensors on self.dev. Return whatever update() needs """

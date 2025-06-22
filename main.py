@@ -14,6 +14,7 @@ BUFFER_SIZE = 384*2
 LR = 1e-5
 GRAD_CLIP = 0.2
 MAX_TRAIN_SEQ_LEN = None
+MAX_GENERATION_LENGTH = 4096 
 SAMPLE_MODE = "mirror"
 
 # vRAM optimization
@@ -27,7 +28,7 @@ lora_config = {
     "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]
 }
 vllm_config = {
-    "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": 4096,
+    "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": MAX_GENERATION_LENGTH,
     "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_config,
     "max_model_len": 8192
 }
@@ -109,6 +110,7 @@ learner = unstable.StandardLearner.options(num_gpus=NUM_LEARNERS, name="Learner"
     gradient_checkpointing=GRADIENT_CHECKPOINTING,
     use_trainer_cache=USE_TRAINER_CACHE,
     max_train_len=MAX_TRAIN_SEQ_LEN,
+    max_generation_len=MAX_GENERATION_LENGTH,
 )
 
 

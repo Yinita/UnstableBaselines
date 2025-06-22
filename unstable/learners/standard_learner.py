@@ -15,9 +15,10 @@ from unstable.utils.logging import setup_logger
 @ray.remote
 class StandardLearner:
     def __init__(
-        self, model_name: str, step_buffer: StepBuffer, model_pool: ModelPool, algorithm: BaseAlgo, batch_size: int, mini_batch_size: int, learning_rate: float=1e-5,
+        self, model_name: str, step_buffer: StepBuffer, model_pool: ModelPool, algorithm: BaseAlgo, batch_size: int, mini_batch_size: int, max_generation_len: int, learning_rate: float=1e-5,
         grad_clip: float=1.0, batch_delay_buffer: float=1.5, lora_cfg: Dict[str,Any] = {}, initial_lora_path: Optional[str]=None, num_learners: int=1, ckpt_root: str="checkpoints",
-        save_every: int = 1, tracker=None, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool=False, max_train_len: Optional[int]=None
+        save_every: int = 1, tracker=None, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool=False, max_train_len: Optional[int]=None,
+        
     ):
         self.logger = setup_logger("learner", ray.get(tracker.get_log_dir.remote())) # set up logging
         self.step_buffer, self.model_pool, self.tracker = step_buffer, model_pool, tracker
@@ -41,7 +42,7 @@ class StandardLearner:
         if activation_checkpointing:   enable_full_activation_ckpt(self.model)
         
         self.optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.model.parameters()), lr=learning_rate)
-        self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device, max_train_len=max_train_len) # TODO create a tabel with recommended amounts for different vram qtys
+        self.algorithm.initialize(model=self.model, tokenizer=self.tokenizer, device=self.device, max_train_len=max_train_len, max_generation_len=max_generation_len) # TODO create a tabel with recommended amounts for different vram qtys
         self._step = 0; self._samples_seen = 0 # training counters
 
     def train(self, iterations: int):

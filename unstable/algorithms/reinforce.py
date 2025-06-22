@@ -21,7 +21,7 @@ class Reinforce(BaseAlgo):
         mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device) # build prompt mask
         for i, o in enumerate(obs): mask[i, :len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
         mask = mask[:, 1:]
-        seq_logp = (tok_logp * mask).sum(1) / 4096
+        seq_logp = (tok_logp * mask).sum(1) / self.max_generation_len
         loss = -(advs * seq_logp).mean() / scaling
         loss.backward()
         torch.cuda.empty_cache()
