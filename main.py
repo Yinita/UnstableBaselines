@@ -48,8 +48,8 @@ TRAINING_ENVS = [
 EVALUATION_ENVS = [
     ("SimpleTak-v0-train", 2, "qwen3-zs"), 
     # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    # ("Nim-v0-train", 2, "qwen3-zs"), 
-    # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
+    ("Nim-v0-train", 2, "qwen3-zs"), 
+    ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
     # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
     # ("PigDice-v0-train", 2, "qwen3-zs")
     # ("Othello-v0-train", 2, "qwen3-zs")

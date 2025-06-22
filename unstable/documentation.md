@@ -88,7 +88,7 @@ $ git clone https://github.com/<you>/unstable-baselines && cd unstable-baselines
 ### Minimal training script
 
 ```python
-import time, ray, unstable
+import ray, unstable
 import unstable.reward_transformations as retra
 
 ray.init(namespace="unstable")
