@@ -1,0 +1,3 @@
+include README.md LICENSE requirements.txt
+recursive-include unstable/documentation.md *
+recursive-include _docs *

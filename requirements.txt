@@ -2,7 +2,6 @@ textarena
 wandb
 vllm
 ray>=2.43.0
-ray[air]
 torch
 transformers
 peft

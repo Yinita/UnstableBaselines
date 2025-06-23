@@ -175,8 +175,12 @@ class TerminalInterface:
                 await asyncio.sleep(2)
 
 
-if __name__ == "__main__":
-    ray.init(address="auto", namespace="unstable")   # connect to existing cluster (usually same node)
+def main():
+    ray.init(address="auto", namespace="unstable")   # connect to existing cluster
     tracker = ray.get_actor("Tracker"); step_buffer = ray.get_actor("StepBuffer")
     term = TerminalInterface(tracker=tracker, step_buffer=step_buffer)
     asyncio.run(term.run())
+
+
+if __name__ == "__main__":
+    main()

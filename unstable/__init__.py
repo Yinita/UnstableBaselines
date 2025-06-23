@@ -7,3 +7,4 @@ from unstable.terminal_interface import TerminalInterface
 import unstable.algorithms
 
 __all__ = ["Collector", "StepBuffer", "ModelPool", "StandardLearner", "Tracker", "TerminalInterface"]
+__version__ = "0.1.0"

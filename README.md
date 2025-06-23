@@ -7,6 +7,7 @@
 [Structure](#structure) | [Installation](#installation) | [Example](#example) | [Collaboration](#collaboration) | [Citation](#citation)
 
 ## Updates
+* 23/06/2025: Early release of the pip package (`pip install UnstableBaselines`)
 * 22/06/2025: Early release of the code base
 
 
@@ -162,8 +163,9 @@ The .gif doesn't do it justice, looks nice when you run it yourself haha.
 ### Results
 TODO include relevant figures
 
-
 ![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png)
+
+
 
 
 
