@@ -43,36 +43,35 @@ UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simpl
 
 ## Structure
 ```
-                                                
                                                 ┌───────────────┐
                                                 │               │
                                                 │   Algorithm   │
                                                 │               │
                                                 └───────────────┘
                                                         ▲        
-                                                        │ Get Loss &           
-                                                        │ update weights       
-                                                        ▼        
-    ┌───────────────┐                           ┌───────────────┐                           
+                                                        │ Get Loss &
+                                                        │ update weights
+                                                        ▼
+    ┌───────────────┐                           ┌───────────────┐
     │               │    Register new lora      │               │
     │   Model Pool  │◀──────────────────────────│    Learner    │
     │               │       checkpoint          │               │
-    └───────────────┘                           └───────────────┘                            
+    └───────────────┘                           └───────────────┘
            ▲ │                                         ▲ │ 
            │ │ Sample                        If enough │ │ Check if enough
     Update │ │ Opponent                     data, pull │ │ data for training
  Trueskill │ │                          the next batch │ │ is available
            │ ▼                                         │ ▼
-    ┌───────────────┐                           ┌───────────────┐                      
-    │               │     Process and store     │               │                      
-    │   Collector   │──────────────────────────▶│   StepBuffer  │                      
-    │               │  collected Trajectories   │               │                      
-    └───────────────┘                           └───────────────┘                      
-           ▲ │                      
-           │ │ Maintain     
+    ┌───────────────┐                           ┌───────────────┐
+    │               │     Process and store     │               │
+    │   Collector   │──────────────────────────▶│   StepBuffer  │
+    │               │  collected Trajectories   │               │
+    └───────────────┘                           └───────────────┘
+           ▲ │
+           │ │ Maintain
     return │ │ Pool of 
-Trajectory │ │ n parallel      
-           │ │ workers   
+Trajectory │ │ n parallel
+           │ │ workers
            │ ▼
      ┌─────────────┐
      │  run_game() │
