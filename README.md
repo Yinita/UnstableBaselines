@@ -1,9 +1,7 @@
 
 <div align="center">
 
-<div style="line-height: 1.0;">
-  <h1 style="font-size: 3em; font-weight: bold; margin: 0; border: none; padding: 0;">UnstableBaselines</h1>
-</div>
+<h1 style="font-size: 3em; font-weight: bold; margin: 0; border: none; padding: 0;">UnstableBaselines</h1>
 
 
 
