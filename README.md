@@ -18,7 +18,7 @@ An Async, Online, Multi-Trun, Multi-Agent RL library for training reasoning mode
 [![GitHub Repo stars](https://img.shields.io/github/stars/LeonGuertler/UnstableBaselines)](https://github.com/LeonGuertler/UnstableBaselines/stargazers)
 [![Discord](https://img.shields.io/discord/1257951838322561075?color=7289DA&label=Discord)](https://discord.gg/KPacHzK23e)
 [![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-181717)](https://github.com/LeonGuertler/TextArena)
-
+[![DOI](https://zenodo.org/badge/975887163.svg)](https://doi.org/10.5281/zenodo.15719270)
 </div>
 
 ---

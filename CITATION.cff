@@ -8,7 +8,7 @@ authors:
     orcid: "https://orcid.org/0000-0003-0536-9918"
   - family-names: Grams
     given-names: Tim
-    affiliation: "University of Mannheim, Germany"
+    affiliation: "Technical University of Clausthal, Germany"
     orcid: "https://orcid.org/0009-0001-0248-0875"
   - family-names: Zichen
     given-names: Liu
@@ -18,13 +18,12 @@ authors:
     given-names: Bobby
     affiliation: "I2R (A*STAR), Singapore"
     orcid: "https://orcid.org/0009-0009-3503-0158"
-  - family-names: Tan
-    given-names: Cheston
-    affiliation: "CFAR & I2R (A*STAR), Singapore"
-    orcid: "https://orcid.org/0000-0003-1248-4906"
-
+  # - family-names: Tan
+  #   given-names: Cheston
+  #   affiliation: "CFAR & I2R (A*STAR), Singapore"
+  #   orcid: "https://orcid.org/0000-0003-1248-4906"
 date-released: 2025-06-23
 version: 0.1.0
-doi: "10.5281/zenodo.TODO"
+doi: "10.5281/zenodo.15719271"
 repository-code: https://github.com/LeonGuertler/UnstableBaselines
 license: MIT
