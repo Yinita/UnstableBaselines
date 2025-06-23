@@ -1,26 +1,39 @@
-# unstable-baselines
 
-[![Status](https://img.shields.io/badge/status-WIP-orange?style=for-the-badge&label=Project%20Status)](#)
-[![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/LeonGuertler/TextArena)
-[![Discord](https://img.shields.io/discord/1257951838322561075?color=7289DA&label=TextArena%20Discord&logo=discord&logoColor=white&style=for-the-badge)](https://discord.gg/KPacHzK23e)
+<div align="center">
 
-[Structure](#structure) | [Installation](#installation) | [Example](#example) | [Collaboration](#collaboration) | [Citation](#citation)
+<div style="line-height: 1.0;">
+  <h1 style="font-size: 3em; font-weight: bold; margin: 0; border: none; padding: 0;">UnstableBaselines</h1>
+  <p style="font-size: 1em; margin: 0; padding: 0; color: gray;">pip install unstable-rl</p>
+</div>
+
+
+
+An Async, Online, Multi-Trun, Multi-Agent RL library for training reasoning models on TextArena games.
+
+<h3>
+
+[Documentation](https://github.com/LeonGuertler/UnstableBaselines/blob/main/unstable/documentation.md)
+
+</h3>
+
+[![GitHub Repo stars](https://img.shields.io/github/stars/LeonGuertler/UnstableBaselines)](https://github.com/LeonGuertler/UnstableBaselines/stargazers)
+[![Discord](https://img.shields.io/discord/1257951838322561075?color=7289DA&label=Discord)](https://discord.gg/KPacHzK23e)
+[![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-181717)](https://github.com/LeonGuertler/TextArena)
+
+</div>
+
+---
+> **Work in progress — interfaces will change.**
 
 ## Updates
-* 23/06/2025: Early release of the pip package (`pip install UnstableBaselines`)
+* 23/06/2025: Early release of the pip package (`pip install unstable-rl`)
 * 22/06/2025: Early release of the code base
 
 
 ## Introduction
-> **unstable‑baselines** is an **experimental, asynchronous, online reinforcement‑learning framework**
-> for rapid prototyping of *multi‑turn / multi‑agent* algorithms on
-> [TextArena](https://github.com/LeonGuertler/TextArena) environments.
->
-> We tried to keep the code as straight forward as possible. It is currently around 1.2K lines long and semi-readable. 
->
-> The main focus on unstable baselines is to enable fast prototyping/research. For something a bit more production ready we recomment to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers)
->
-> **Work in progress — interfaces will change.**
+UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simplicity and hackability. Since multiple recent papers showed the sufficiency of LoRA for reasoning tuning, and the fact that opponent sampling for self-play strategies beyond mirror self-play work best when using LoRA weights (since vLLM allows for hot-swapping), we built UnstableBaselines as a LoRA first RL library. We tried to keep the code as straight forward as possible. It is currently around **1.2K** lines long and semi-readable. The main focus on unstable baselines is to enable fast prototyping/research. For something a bit more production ready we recomment to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers)
+
+
 
 ## Key Features
 * **Asynchronous collection & learning** – actors generate data while learners train.
@@ -69,7 +82,7 @@ pip install -e .
 cd ..
 
 # install UnstableBaselines
-pip install UnstableBaselines
+pip install unstable-rl
 ```
 
 ## Example
@@ -157,7 +170,15 @@ The rendered interface will currently look something like this: (please not that
 The .gif doesn't do it justice, looks nice when you run it yourself haha.
 
 ### Results
-![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png)
+<!-- ![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png) -->
+
+### Results
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_light.png">
+  <img src="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_light.png" alt="Results Plot">
+</picture>
+
 
 TODO add some comments about the results
 
