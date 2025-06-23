@@ -163,7 +163,6 @@ The .gif doesn't do it justice, looks nice when you run it yourself haha.
 TODO include relevant figures
 
 
-![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot.png)
 ![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png)
 
 
