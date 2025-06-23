@@ -170,15 +170,11 @@ The rendered interface will currently look something like this: (please not that
 The .gif doesn't do it justice, looks nice when you run it yourself haha.
 
 ### Results
-<!-- ![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png) -->
-
-### Results
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_light.png">
   <img src="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_light.png" alt="Results Plot">
 </picture>
-
 
 TODO add some comments about the results
 
