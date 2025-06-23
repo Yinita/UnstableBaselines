@@ -89,7 +89,7 @@ class StandardLearner:
                     self.model_pool.snapshot.remote(self._step)
 
         self.logger.info("[Learner] training finished.")
-        self.step_buffer.stop()
+        self.step_buffer.stop.remote()
 
     def _save_checkpoint(self):
         ckpt_dir = self.ckpt_root / f"iteration-{self._step}"

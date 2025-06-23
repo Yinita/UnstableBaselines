@@ -172,7 +172,7 @@ The **Collector** will keep collecting episodes until the Learner tells it to st
 ### Monitoring Progress
 If you want to monitor key metrics (in addition to logging them via W&B) during training you can run the following command in a seperate terminal:
 ```bash
-python3 -m unstable.terminal_interface
+unstable-terminal
 ```
 The rendered interface will currently look something like this: (please not that it might change in the future as UnstableBaselines is very much still under development)
 ![](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/terminal_interface.gif)
