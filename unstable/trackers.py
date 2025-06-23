@@ -16,7 +16,7 @@ class Tracker(BaseTracker):
         if wandb_project: wandb.init(project=wandb_project, name=run_name); self.use_wandb = True
         self._m: Dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=512))
         self._buffer: Dict[str, Scalar] = {}
-        self._n = 0
+        self._n = {}
         self._last_flush = time.monotonic()
         self._interface_stats = {"gpu_tok_s": {}, "TS": {}, "exploration": {}, "match_counts": {}, "format_success": None, "inv_move_rate": None, "game_len": None}
 
@@ -43,7 +43,9 @@ class Tracker(BaseTracker):
                 self._put(f"collection-{env_id}/Respone Length (char)", len(traj.actions[idx]))
                 self._put(f"collection-{env_id}/Observation Length (char)", len(traj.obs[idx]))
                 for k, v in traj.format_feedbacks[idx].items(): self._put(f"collection-{env_id}/Format Success Rate - {k}", v)
-            self._buffer.update(self._agg('collection-')); self._n += 1; self._flush_if_due()
+            self._n[f"collection-{env_id}"] = self._n.get(f"collection-{env_id}", 0) + 1
+            self._put(f"collection-{env_id}/step", self._n[f"collection-{env_id}"])
+            self._buffer.update(self._agg('collection-')); self._flush_if_due()
         except Exception as exc:
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
 
@@ -54,6 +56,8 @@ class Tracker(BaseTracker):
             self._put(f"evaluation-{env_id}/Win Rate", int(me > opp))
             self._put(f"evaluation-{env_id}/Loss Rate", int(me < opp))
             self._put(f"evaluation-{env_id}/Draw Rate", int(me == opp))
+        self._n[f"evaluation-{env_id}"] = self._n.get(f"evaluation-{env_id}", 0) + 1
+        self._put(f"evaluation-{env_id}/step", self._n[f"evaluation-{env_id}"])
         self._buffer.update(self._agg('evaluation-'))
 
     def log_model_pool(self, match_counts: dict[tuple[str, str], int], ts_dict: dict[str, dict[str, float]], exploration: dict[str,dict[str,float]]) -> None:

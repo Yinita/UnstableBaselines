@@ -15,9 +15,9 @@
 > for rapid prototyping of *multi‑turn / multi‑agent* algorithms on
 > [TextArena](https://github.com/LeonGuertler/TextArena) environments.
 >
-> The main focus on unstable baselines is to enable fast prototyping/research. For something a bit more production ready we recomment to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers)
->
 > We tried to keep the code as straight forward as possible. It is currently around 1.2K lines long and semi-readable. 
+>
+> The main focus on unstable baselines is to enable fast prototyping/research. For something a bit more production ready we recomment to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers)
 >
 > **Work in progress — interfaces will change.**
 
@@ -157,10 +157,14 @@ python3 -m unstable.terminal_interface
 ```
 The rendered interface will currently look something like this: (please not that it might change in the future as UnstableBaselines is very much still under development)
 ![](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/terminal_interface.gif)
-
+The .gif doesn't do it justice, looks nice when you run it yourself haha.
 
 ### Results
 TODO include relevant figures
+
+
+![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot.png)
+![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png)
 
 
 
