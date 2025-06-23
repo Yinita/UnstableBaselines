@@ -85,6 +85,7 @@ Trajectory │ │ n parallel
     </td>
   </tr>
 </table>
+
 ## Installation
 
 ```bash
