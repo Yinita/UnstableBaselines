@@ -186,11 +186,12 @@ The .gif doesn't do it justice, looks nice when you run it yourself haha.
 
 ### Results
 Since we set `num_eval_workers=16`, throughout training there are always 16 eval games running in parallel (using the most recent lora checkpoint). Running 200 learner steps took a total of ~12h on the 3xRTX6000 ada setup we used.
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_light.png">
-  <img src="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_light.png" alt="Results Plot">
-</picture>
+<img
+  src="https://raw.githubusercontent.com/LeonGuertler/UnstableBaselines/main/_docs/results_plot_light.png"
+  data-light-theme-src="https://raw.githubusercontent.com/LeonGuertler/UnstableBaselines/main/_docs/results_plot_light.png"
+  data-dark-theme-src="https://raw.githubusercontent.com/LeonGuertler/UnstableBaselines/main/_docs/results_plot_dark.png"
+  alt="Win-Rate over training"
+/>
 
 As can be seen in the plots the Win-Rate against a fixed opponent (in this case `google/gemini-2.0-flash-lite-001`) improves significantly for both the training and evaluation environment, showing that at least some of learned reasoning patterns generalize to other tasks and problems.
 
