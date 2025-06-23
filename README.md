@@ -18,7 +18,6 @@ An Async, Online, Multi-Trun, Multi-Agent RL library for training reasoning mode
 [![GitHub Repo stars](https://img.shields.io/github/stars/LeonGuertler/UnstableBaselines)](https://github.com/LeonGuertler/UnstableBaselines/stargazers)
 [![Discord](https://img.shields.io/discord/1257951838322561075?color=7289DA&label=Discord)](https://discord.gg/KPacHzK23e)
 [![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-181717)](https://github.com/LeonGuertler/TextArena)
-[![DOI](https://zenodo.org/badge/975887163.svg)](https://doi.org/10.5281/zenodo.15719270)
 </div>
 
 ---
@@ -197,10 +196,20 @@ Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).
 We built this code-base as part of our research on self-play for reasoning models on text based games. We hope to finish and release both papers (one focused on the paradigm and one focused on the "scaling-laws" and analysis thereof) within the next couple of weeks!
 
 
-## Citation
+## Citation [![DOI](https://zenodo.org/badge/975887163.svg)](https://doi.org/10.5281/zenodo.15719270)
 
 If you use **UnstableBaselines** in your research, please cite:
 
-TODO
-<!-- [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.1234567.svg)](https://doi.org/10.5281/zenodo.1234567) -->
+```bibtex
+@software{guertler_leon_2025_15719271,
+  author={Guertler, Leon and Grams, Tim and Zichen, Liu and Cheng, Bobby and Tan, Cheston},
+  title={{UnstableBaselines}},
+  month=jun,
+  year=2025,
+  publisher={Zenodo},
+  version={0.1.0},
+  doi={10.5281/zenodo.15719271},
+  url={https://doi.org/10.5281/zenodo.15719271}
+}
 
+```
