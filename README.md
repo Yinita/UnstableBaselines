@@ -42,9 +42,10 @@ UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simpl
 
 
 ## Structure
-<div align="center">
-
-<pre style="text-align: left;">
+<table align="center">
+  <tr>
+    <td align="left">
+<pre>
                                                 ┌───────────────┐
                                                 │               │
                                                 │   Algorithm   │
@@ -81,8 +82,9 @@ Trajectory │ │ n parallel
      └─────────────┘
 
 </pre>
-
-</div>
+    </td>
+  </tr>
+</table>
 
 ## Installation
 
