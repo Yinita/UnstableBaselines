@@ -5,7 +5,7 @@
 
 
 
-An Async, Online, Multi-Trun, Multi-Agent RL library for training reasoning models on TextArena games.
+An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning models on TextArena games.
 
 <h3>
 
