@@ -39,7 +39,7 @@ UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simpl
 * **Asynchronous collection & learning** – actors generate data while learners train.
 * **Multi‑agent, multi‑turn** focus with self‑play or fixed opponents.
 * **LoRA‑first** fine‑tuning workflow for fast, lightweight updates.
-* **Composable reward transforms** at step, final, and sampling stages.
+* **Composable reward transforms** at step, game, and sampling stages.
 
 
 ## Structure
