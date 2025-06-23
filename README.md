@@ -183,6 +183,7 @@ As can be seen in the plots the Win-Rate against a fixed opponent (in this case 
 ## Collaboration
 Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).
 
+
 ## Papers
 We built this code-base as part of our research on self-play for reasoning models on text based games. We hope to finish and release both papers (one focused on the paradigm and one focused on the "scaling-laws" and analysis thereof) within the next couple of weeks!
 
