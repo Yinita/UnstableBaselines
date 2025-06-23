@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+title: "UnstableBaselines"
+authors:
+  - family-names: Guertler
+    given-names: Leon
+    affiliation: "CFAR (A*STAR), Singapore"
+    orcid: "https://orcid.org/0000-0003-0536-9918"
+  - family-names: Grams
+    given-names: Tim
+    affiliation: "University of Mannheim, Germany"
+    orcid: "https://orcid.org/0009-0001-0248-0875"
+  - family-names: Zichen
+    given-names: Liu
+    affiliation: "Sea AI Lab & NUS, Singapore"
+    orcid: "https://orcid.org/0000-0001-9451-8625"
+  - family-names: Cheng
+    given-names: Bobby
+    affiliation: "I2R (A*STAR), Singapore"
+    orcid: "https://orcid.org/XXX"
+  - family-names: Tan
+    given-names: Cheston
+    affiliation: "CFAR & I2R (A*STAR), Singapore"
+    orcid: "https://orcid.org/0000-0003-1248-4906"
+
+date-released: 2025-06-23
+version: 0.1.0
+doi: "10.5281/zenodo.TODO"
+repository-code: https://github.com/LeonGuertler/UnstableBaselines
+license: MIT

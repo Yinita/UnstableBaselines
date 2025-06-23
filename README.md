@@ -85,7 +85,7 @@ pip install unstable-rl
 ```
 
 ## Example
-To get you started, in this short example we will run you through the process of training `Qwen3-1.7B-Base` via **mirror self-play** on _SimpleTak_ and evaluating it against `google/gemini-2.0-flash-lite-001` on _SimpleTak_ and _KuhnPoker_. We will be running the experiments on 3xRTX6000 ada. If you are limited to 24gb of vRam, you can reduce the `MAX_TRAIN_SEQ_LEN` to around _2500_ (this means that the model will only be trained on the first 2500 prompt+answer tokens, but can still generate answer that are longer than that. Since (in our experience) models tend to shorten their reasoning throughout training, this works very well.
+To get you started, in this short example we will run you through the process of training `Qwen3-1.7B-Base` via **mirror self-play** on _SimpleTak_ and evaluating it against `google/gemini-2.0-flash-lite-001` on _SimpleTak_ and _KuhnPoker_. We will be running the experiments on 3xRTX6000 ada. If you are limited to 24gb of vRam, you can reduce the `MAX_TRAIN_SEQ_LEN` to around _2500_; this means that the model will only be trained on the first 2500 prompt+answer tokens, but can still generate answer that are longer than that. Since (in our experience) models tend to shorten their reasoning throughout training, this works very well.
 
 
 ### Training script
@@ -152,11 +152,11 @@ learner = unstable.StandardLearner.options(num_gpus=1, name="Learner").remote(
 collector.collect.remote(num_workers=384, num_eval_workers=16)  
 ray.get(learner.train.remote(200)) # total update steps
 ```
-In a Nutshell, the collector will maintain `384` and `16` in parallel running collection and evaluation games (respectively). Whenever a game finishes, the trajectory is passed to the StepBuffer and a new game is started. The StepBuffer split each trajectory into steps and apply the specified reward transformations.
+In a Nutshell, the **Collector** will maintain `384` and `16` in parallel running collection and evaluation games (respectively). Whenever a game finishes, the trajectory is passed to the **StepBuffer** and a new game is started. The **StepBuffer** splits each trajectory into steps and applies the specified reward transformations (on the game and step level first; and batch level once the Learner pulls the next batch).
 
-The Learner will periodically (once every 0.2 seconds) check if the StepBuffer has accumulated enough data for training. If so, it'll request a full training batch from the StepBuffer, train on the data, and push the new set of LoRA weights to the ModelPool.
+The **Learner** will periodically (once every 0.2 seconds) check if the **StepBuffer** has accumulated enough data for training. If so, it'll request a full training batch from the **StepBuffer**, train on the data, and push the new set of LoRA weights to the **ModelPool**.
 
-The collector will keep collecting episodes until the Learner tells it to stop (in this case, after `200` update steps).
+The **Collector** will keep collecting episodes until the Learner tells it to stop (in this case, after `200` update steps).
 
 
 ### Monitoring Progress
@@ -169,18 +169,29 @@ The rendered interface will currently look something like this: (please not that
 The .gif doesn't do it justice, looks nice when you run it yourself haha.
 
 ### Results
+Since we set `num_eval_workers=16`, throughout training there are always 16 eval games running in parallel (using the most recent lora checkpoint). Running 200 learner steps took a total of ~12h on the 3xRTX6000 ada setup we used.
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png">
   <source media="(prefers-color-scheme: light)" srcset="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_light.png">
   <img src="https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_light.png" alt="Results Plot">
 </picture>
 
-TODO add some comments about the results
+As can be seen in the plots the Win-Rate against a fixed opponent (in this case `google/gemini-2.0-flash-lite-001`) improves significantly for both the training and evaluation environment, showing that at least some of learned reasoning patterns generalize to other tasks and problems.
 
 
 
 ## Collaboration
 Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).
 
-## Paper & Citation
-We built this code-base as part of our research on self-play for reasoning models on text based games. We hope to finish and release those works within the next couple of weeks!
+
+## Papers
+We built this code-base as part of our research on self-play for reasoning models on text based games. We hope to finish and release both papers (one focused on the paradigm and one focused on the "scaling-laws" and analysis thereof) within the next couple of weeks!
+
+
+## Citation
+
+If you use **UnstableBaselines** in your research, please cite:
+
+TODO
+<!-- [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.1234567.svg)](https://doi.org/10.5281/zenodo.1234567) -->
+
