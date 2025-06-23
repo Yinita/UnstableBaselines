@@ -43,11 +43,21 @@ UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simpl
 
 ## Structure
 ```
-    ┌───────────────┐                           ┌───────────────┐                           ┌───────────────┐
-    │               │    Register new lora      │               │        Get Loss &         │               │
-    │   Model Pool  │◀──────────────────────────│    Learner    │◀─────────────────────────▶│   Algorithm   │
-    │               │       checkpoint          │               │      update weights       │               │
-    └───────────────┘                           └───────────────┘                           └───────────────┘ 
+                                                
+                                                ┌───────────────┐
+                                                │               │
+                                                │   Algorithm   │
+                                                │               │
+                                                └───────────────┘
+                                                        ▲        
+                                                        │ Get Loss &           
+                                                        │ update weights       
+                                                        ▼        
+    ┌───────────────┐                           ┌───────────────┐                           
+    │               │    Register new lora      │               │
+    │   Model Pool  │◀──────────────────────────│    Learner    │
+    │               │       checkpoint          │               │
+    └───────────────┘                           └───────────────┘                            
            ▲ │                                         ▲ │ 
            │ │ Sample                        If enough │ │ Check if enough
     Update │ │ Opponent                     data, pull │ │ data for training
@@ -77,6 +87,7 @@ Trajectory │ │ n parallel
 git clone https://github.com/LeonGuertler/TextArena.git
 cd TextArena
 git checkout v0.6.9
+python3 setup.py sdist bdist_wheel
 pip install -e .
 cd ..
 
