@@ -68,16 +68,12 @@ git checkout v0.6.9
 pip install -e .
 cd ..
 
-# clone the repo
-git clone https://github.com/LeonGuertler/UnstableBaselines.git
-cd UnstableBaselines
-
-# install Python dependencies
-pip install -r requirements.txt
+# install UnstableBaselines
+pip install UnstableBaselines
 ```
 
 ## Example
-To get you started, in this short example we will run you through the process of training `Qwen3-1.7B-Base` via **mirror self-play** on _SimpleTak_ and evaluating it against `google/gemini-2.0-flash-lite-001` on _SimpleTak_, _Nim_ and _KuhnPoker_. We will be running the experiments on 3xRTX6000 ada. If you are limited to 24gb of vRam, you can reduce the `MAX_TRAIN_SEQ_LEN` to around _2500_ (this means that the model will only be trained on the first 2500 prompt+answer tokens, but can still generate answer that are longer than that. Since (in our experience) models tend to shorten their reasoning throughout training, this works very well).
+To get you started, in this short example we will run you through the process of training `Qwen3-1.7B-Base` via **mirror self-play** on _SimpleTak_ and evaluating it against `google/gemini-2.0-flash-lite-001` on _SimpleTak_ and _KuhnPoker_. We will be running the experiments on 3xRTX6000 ada. If you are limited to 24gb of vRam, you can reduce the `MAX_TRAIN_SEQ_LEN` to around _2500_ (this means that the model will only be trained on the first 2500 prompt+answer tokens, but can still generate answer that are longer than that. Since (in our experience) models tend to shorten their reasoning throughout training, this works very well).
 
 
 ### Training script
@@ -119,7 +115,7 @@ collector = unstable.Collector.options(name="Collector").remote(
         "max_model_len": 8192
     },
     training_envs=[("SimpleTak-v0-train", 2, "qwen3-zs")], # (env-id, num players, prompt template)
-    evaluation_envs=[("SimpleTak-v0-train", 2, "qwen3-zs"), ("Nim-v0-train", 2, "qwen3-zs"), ("KuhnPoker-v0-train", 2, "qwen3-zs")],
+    evaluation_envs=[("SimpleTak-v0-train", 2, "qwen3-zs"), ("KuhnPoker-v0-train", 2, "qwen3-zs")],
     evaluation_opponent="google/gemini-2.0-flash-lite-001",
 )
 
@@ -161,11 +157,9 @@ The rendered interface will currently look something like this: (please not that
 The .gif doesn't do it justice, looks nice when you run it yourself haha.
 
 ### Results
-TODO include relevant figures
-
 ![image](https://github.com/LeonGuertler/UnstableBaselines/blob/main/_docs/results_plot_dark.png)
 
-
+TODO add some comments about the results
 
 
 
