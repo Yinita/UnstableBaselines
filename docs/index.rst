@@ -1,7 +1,7 @@
 Welcome to the **Unstable Baselines** docs!
 ===================================
 
-`Unstable Baselines <https://github.com/LeonGuertler/UnstableBaselines>`\_ is an Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning models on `TextArena <https://github.com/LeonGuertler/TextArena>`\_ games.
+`Unstable Baselines <https://github.com/LeonGuertler/UnstableBaselines>` is an Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning models on `TextArena <https://github.com/LeonGuertler/TextArena>`_ games.
 
 What is Unstable Baselines?
 -----------------------
