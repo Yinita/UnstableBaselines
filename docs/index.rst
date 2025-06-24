@@ -21,8 +21,9 @@ We tried to keep the code as straight forward as possible. It is currently aroun
    :maxdepth: 2
    :caption: Quickstart
 
-   quickstart/overview
-   quickstart/example
+   quickstart/index
+
+
 
 Citation
 --------
