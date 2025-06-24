@@ -220,9 +220,9 @@ Below is a high‑level index of every core component in **Unstable Baselines*
 ---
 
 <details>
-<summary><strong>VLLMActor (`actor.py`)</strong></summary>
+<summary><strong>VLLMActor (`actor.py`)</strong></summary> <a id="actor"></a>
 
-## `VLLMActor` — *actor.py* <a id="actor"></a>
+## `VLLMActor` — *actor.py* 
 
 Asynchronous, Ray‑based wrapper around a single **vLLM** engine instance.
 Receives text‑generation requests, batches them on a GPU, supports **LoRA** hot‑swapping, and reports rich throughput metrics.
