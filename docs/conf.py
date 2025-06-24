@@ -12,7 +12,9 @@ master_doc = 'index'
 extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.autodoc',
-    'sphinx.ext.viewcode'
+    'sphinx.ext.viewcode',
+    'sphinx.ext.autosummary',
+    'myst\_parser',
 ]
 templates_path = ["_templates"]
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
@@ -26,4 +28,5 @@ language = "en"
 
 # -- Options for HTML output -------------------------------------------------
 html_theme = 'sphinx_rtd_theme'
+autosummary_generate = True
 # html_static_path = ['_static']

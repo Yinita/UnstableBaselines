@@ -1,54 +1,104 @@
-Welcome to the Unstable Baselines docs!
+Welcome to the **Unstable Baselines** docs!
 ===================================
 
-Unstable Baselines is an Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning models on TextArena games.
+`Unstable Baselines <https://github.com/LeonGuertler/UnstableBaselines>`\_ is an Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning models on `TextArena <https://github.com/LeonGuertler/TextArena>`\_ games.
 
 
 What is Unstable Baselines?
 -----------------------
 
-**Unstable Baselines** is a lightweight reinforcement‑learning research harness focused on *self‑play* for text‑based games. It couples:
+**Unstable Baselines** is a lightweight reinforcement-learning research harness focused on *self-play* for text-based games. It couples:
 
-* **Ray** – easy, elastic distributed execution.
-* **vLLM** – high‑throughput inference with LoRA hot‑swapping.
-* **TextArena** – a growing suite of competitive text games.
+* **Ray** - easy, elastic distributed execution.
+* **vLLM** - high-throughput inference with LoRA hot-swapping.
+* **TextArena** - a growing suite of competitive text games.
 
 The goal is to iterate **quickly** on small language models (< 8B params) and benchmark new ideas in *reasoning and agentic behaviour*.
 Since multiple recent papers showed the sufficiency of LoRA for reasoning tuning, and the fact that opponent sampling for self-play strategies beyond mirror self-play work best when using LoRA weights (since vLLM allows for hot-swapping), we built UnstableBaselines as a LoRA first RL library. 
 We tried to keep the code as straight forward as possible. It is currently around **1.2K** lines long and semi-readable. 
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Quickstart
+\:maxdepth: 2
+\:caption: User Guide
 
-   quickstart/index
+guide/install
+guide/quickstart
+guide/architecture
+guide/usage
+guide/troubleshooting
 
+.. toctree::
+\:maxdepth: 1
+\:caption: API Reference
 
+api\_reference
 
-Citation
---------
+.. toctree::
+\:maxdepth: 1
+\:caption: Project
 
-|DOI Badge| |DOI Link|
+changelog
+license
 
-If you use **UnstableBaselines** in your research, please cite:
+## Citing Unstable Baselines
 
 .. code-block:: bibtex
 
-   @software{guertler_leon_2025_15719271,
-     author={Guertler, Leon and Grams, Tim and Zichen, Liu and Cheng, Bobby},
-     title={{UnstableBaselines}},
-     month=jun,
-     year=2025,
-     publisher={Zenodo},
-     version={0.1.0},
-     doi={10.5281/zenodo.15719271},
-     url={https://doi.org/10.5281/zenodo.15719271}
-   }
+```
+@software{guertler_2025_unstablebaselines,
+  author = {Guertler, Leon and Grams, Tim and Liu, Zichen and Cheng, Bobby},
+  title  = {Unstable Baselines},
+  year   = {2025},
+  version= {0.1.0},
+  doi    = {10.5281/zenodo.15719271},
+  url    = {https://github.com/LeonGuertler/UnstableBaselines}
+}
+```
 
-.. |DOI Badge| image:: https://zenodo.org/badge/975887163.svg
-   :target: https://doi.org/10.5281/zenodo.15719270
-   :alt: DOI
+## Contributing
 
-.. |DOI Link| raw:: html
+Bugs, feature requests and PRs are **very** welcome — the code is research-grade, not production-grade.  See `CONTRIBUTING.md <https://github.com/LeonGuertler/UnstableBaselines/blob/main/CONTRIBUTING.md>`\_.
 
-   <a href="https://doi.org/10.5281/zenodo.15719270">https://doi.org/10.5281/zenodo.15719270</a>
+## Indices and tables
+
+* \:ref:`genindex`
+* \:ref:`search`
+* \:ref:`modindex`
+
+\===============================
+
+# Unstable Baselines Documentation
+
+.. rubric:: Reinforcement Learning with LoRA hot-swapping on TextArena
+
+A lightweight, **async, online, multi-agent** RL library for reasoning models.
+
+.. toctree::
+\:maxdepth: 1
+\:caption: Quick-start
+
+quickstart/index
+
+.. toctree::
+\:maxdepth: 2
+\:caption: User-Guide
+
+architecture
+usage
+troubleshooting
+
+.. toctree::
+\:maxdepth: 2
+\:caption: API-Reference
+
+api\_reference
+
+.. toctree::
+\:maxdepth: 1
+\:caption: Project Info
+
+changelog
+license
+
+.. note::
+The public API is **alpha** and may change without notice.
