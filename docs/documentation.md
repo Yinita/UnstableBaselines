@@ -39,13 +39,9 @@
 
 8. [Configuration Reference](#configuration-reference)
 
-9. [Extending the Framework](#extending-the-framework)
+9. [Contributing](#contributing)
 
-10. [Troubleshooting & FAQ](#troubleshooting-and-faq)
-
-11. [Contributing](#contributing)
-
-12. [Contact & Support](#contact-and-support)
+10. [Contact](#contact-and-support)
 
 ---
 
@@ -220,9 +216,9 @@ Below is a high‑level index of every core component in **Unstable Baselines*
 ---
 
 <details>
-<summary><strong>VLLMActor (`actor.py`)</strong><a id="actor"></a></summary>
+<summary><strong>VLLMActor (`actor.py`)</strong></summary>
 
-## `VLLMActor` — *actor.py* 
+## `VLLMActor` — *actor.py* <a id="actor"></a>
 
 Asynchronous, Ray‑based wrapper around a single **vLLM** engine instance.
 Receives text‑generation requests, batches them on a GPU, supports **LoRA** hot‑swapping, and reports rich throughput metrics.
@@ -272,7 +268,7 @@ Receives text‑generation requests, batches them on a GPU, supports **LoRA** ho
 <details>
 <summary><strong>Collector (`collector.py`)</strong></summary>
 
-## `Collector` — *collector.py*
+## `Collector` — *collector.py* <a id="collector"></a>
 
 Ray actor responsible for orchestrating self‑play **training** episodes and fixed‑opponent **evaluation** episodes. It routes finished trajectories to the learner’s **StepBuffer**, maintains ELO scores via **ModelPool**, and logs everything through **Tracker**.
 
@@ -327,7 +323,7 @@ Ray actor responsible for orchestrating self‑play **training** episodes and fi
 <details>
 <summary><strong>ModelPool (`model_pool.py`)</strong></summary>
 
-## `ModelPool` — *model\_pool.py*
+## `ModelPool` — *model\_pool.py* <a id="model-pool"></a>
 
 Central registry and rating system for **all opponents**: learner checkpoints and fixed baseline models.
 Maintains **TrueSkill** ratings, exploration statistics, opponent sampling logic, and enforces a VRAM‑friendly cap on active LoRA adapters.
@@ -400,7 +396,7 @@ else:
 <details>
 <summary><strong>StepBuffer (`buffer.py`)</strong></summary>
 
-## `StepBuffer` — *buffer.py*
+## `StepBuffer` — *buffer.py* <a id="step-buffer"></a>
 
 High‑throughput **step‑level** replay buffer that lives on a Ray actor.
 Stores `Step` objects emitted from complete game trajectories, applies configurable reward transformations, downsamples when full, and serves randomised **training batches** to the learner.
@@ -463,7 +459,7 @@ This simple uniform reservoir keeps memory bounded while preserving sample diver
 <details>
 <summary><strong>Learner (`learners/standard_learner.py`)</strong></summary>
 
-## `StandardLearner` — *learners/standard\_learner.py*
+## `StandardLearner` — *learners/standard_learner.py* <a id="learner"></a>
 
 Main **parameter‑updating** component. Consumes `Step` batches from **StepBuffer**, computes policy‑gradient losses via a pluggable `BaseAlgo` (e.g., PPO, REINFORCE) and writes **LoRA checkpoints** every *N* steps. Also registers each new checkpoint with **ModelPool** so it can be sampled as an opponent.
 
@@ -529,7 +525,7 @@ Main **parameter‑updating** component. Consumes `Step` batches from **StepBuff
 <details>
 <summary><strong>Tracker (`trackers.py`)</strong></summary>
 
-## `Tracker` — *trackers.py*
+## `Tracker` — *trackers.py* <a id="tracker"></a>
 
 Central **metrics bus** for the entire pipeline. Runs as a lightweight Ray
 actor, buffers scalar logs in‑memory, aggregates them into means, and
@@ -603,14 +599,15 @@ the interactive terminal UI.
 <details>
 <summary><strong>TerminalInterface (`terminal_interface.py`)</strong></summary>
 
+## 'Terminal Interface' - *terminal_interface.py* <a id="terminal-interface"></a>
 *Documentation forthcoming…*
 
 </details>
 
 <details>
-<summary><strong>Core Data Structures (`core.py`)</strong></summary>
+<summary><strong>Core Data Structures (`core.py`)</strong></summary> 
 
-## Key Dataclasses
+## Key Dataclasses <a id="core-data-structures"></a>
 
 | Name                       | Fields                                                                                    | Purpose                                                          |
 | -------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
@@ -650,7 +647,7 @@ class CuriosityStep:
 
 ---
 
-# Reward Transformations
+# Reward Transformations <a id="reward-transformations"></a>
 
 Below utilities live under `unstable/reward_transformations/`. They let you
 reshape sparse win‑loss rewards into *denser* learning signals or correct
@@ -769,7 +766,7 @@ This normalises rewards per env and then clamps extreme values.
 
 ---
 
-## Algorithms
+## Algorithms <a id="algorithms"></a>
 
 ### Reinforce
 Explanation, use-cases, and examples.
@@ -779,7 +776,7 @@ How to implement and integrate custom algorithms.
 
 ---
 
-## Utilities and Helpers
+## Utilities and Helpers <a id="utilities-and-helpers"></a>
 
 ### Templates
 Documentation for templates handling prompts and action extraction.
@@ -789,16 +786,60 @@ Logging utility documentation.
 
 ---
 
-## Configuration Reference
-Comprehensive reference table for configurations and parameters for different hardware configurations
+## Configuration Reference <a id="configuration-reference"></a>
+
+Below are recommended configurations for different VRAM capacities. We strongly recommend using **one GPU as a learner** and dedicating **remaining GPUs as actors** for inference.
+Currently you will need at least 2 gpus to run the code (1 learner and 1 actor); we plan to relax this requirement in the future. Here are some rough guidelines on which parameter settings to use for what model size and hardware:
+
+### Qwen3 1.7B
+| VRAM | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
+| ---- | :----------------------: | :--------------------: | :---------------------: |
+| 12GB | TODO                     | TODO                   | TOOD                    |
+| 16GB | TOOD                     | TOOD                   | TOOD                    |
+| 24GB | TOOD                     | TOOD                   | TOOD                    |
+| 48GB+| TOOD                     | TOOD                   | TOOD                    |
+
+### Llama3.2 2B
+| VRAM | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
+| ---- | :----------------------: | :--------------------: | :---------------------: |
+| 12GB | TOOD                     | TOOD                   | TOOD                    |
+| 16GB | TOOD                     | TOOD                   | TOOD                    |
+| 24GB | TOOD                     | TOOD                   | TOOD                    |
+| 48GB | TOOD                     | TOOD                   | TOOD                    |
+| 80GB+| TOOD                     | TOOD                   | TOOD                    |
+
+### Qwen3 4B
+| VRAM | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
+| ---- | :----------------------: | :--------------------: | :---------------------: |
+| 16GB | TOOD                     | TOOD                   | TOOD                    |
+| 24GB | TOOD                     | TOOD                   | TOOD                    |
+| 48GB | TOOD                     | TOOD                   | TOOD                    |
+| 80GB+| TOOD                     | TOOD                   | TOOD                    |
+
+### Qwen3 8B
+| VRAM  | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
+| ----- | :----------------------: | :--------------------: | :---------------------: |
+| 24GB  | TOOD                     | TOOD                   | TOOD                    |
+| 32GB  | TOOD                     | TOOD                   | TOOD                    |
+| 48GB  | TOOD                     | TOOD                   | TOOD                    |
+| 80GB+ | TOOD                     | TOOD                   | TOOD                    |
+
+
+### 2. Additional Tips
+* **Activation Checkpointing** significantly reduces VRAM usage but incurs roughly 20-30% longer training times.
+* **Gradient Checkpointing** slightly reduces memory with minimal impact on speed.
+* **Train Length Truncation** controls maximum input token length, with shorter lengths substantially reducing VRAM requirements.
+* Adjust batch sizes carefully—larger batch sizes may require lower truncation lengths.
+
+
 
 ---
 
-
-## Contributing
+ 
+## Contributing <a id="contributing"></a>
 Guidelines on contributing to the project.
 
 ---
 
-## Contact and Support
+## Contact <a id="contact"></a>
 Contact information and channels for support and discussion.
