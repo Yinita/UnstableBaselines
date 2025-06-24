@@ -1,10 +1,10 @@
 # System Architecture
 
-.. \_arch-diagram:
+.. _arch-diagram:
 
 ## ASCII block diagram
 
-\::
+::
 
                                                 ┌───────────────┐
                                                 │               │
@@ -38,12 +38,12 @@ Trajectory │ │ n parallel
            │ ▼
      ┌─────────────┐
      │  run_game() │
-     │  train\eval │
+     │  train/eval │
      └─────────────┘
 
 ## Data-flow summary
 
-\#. **Collector** rolls games with the latest learner checkpoint vs. an opponent sampled by **ModelPool** (mirror, lagged, TrueSkill-based, etc.).
-\#. Completed trajectories pass to **StepBuffer**, which applies reward transforms and holds a sliding window of training steps.
-\#. **Learner** periodically drains a batch, performs back-prop via the chosen **Algorithm** (default: REINFORCE), saves a new LoRA checkpoint, and registers it with **ModelPool**.
-\#. **Tracker** logs metrics to Weights & Biases and exposes state for the **Terminal Interface** dashboard.
+#. **Collector** rolls games with the latest learner checkpoint vs. an opponent sampled by **ModelPool** (mirror, lagged, TrueSkill-based, etc.).
+#. Completed trajectories pass to **StepBuffer**, which applies reward transforms and holds a sliding window of training steps.
+#. **Learner** periodically drains a batch, performs back-prop via the chosen **Algorithm** (default: REINFORCE), saves a new LoRA checkpoint, and registers it with **ModelPool**.
+#. **Tracker** logs metrics to Weights & Biases and exposes state for the **Terminal Interface** dashboard.

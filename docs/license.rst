@@ -1,3 +1,3 @@
 .. literalinclude:: ../LICENSE
-\:language: none
-\:caption: MIT License
+    :language: none
+    :caption: MIT License

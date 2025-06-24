@@ -13,13 +13,13 @@ Select via `sample_mode` when constructing `ModelPool`.
 
 Three levels of transforms live under `unstable.reward_transformations`:
 
-\================ ================================
+================ ================================
 Stage            Typical use-case
-\================ ================================
+================ ================================
 Final            Convert raw game reward → win/draw/loss, apply role advantage
 Step             Per-step penalties: invalid move, formatting errors
 Sampling         Batch-time normalisation (e.g. z-score) or curriculum scaling
-\================ ================================
+================ ================================
 
 Compose multiple transforms with `Compose*RewardTransforms`.
 
@@ -30,7 +30,7 @@ Implement `BaseAlgo`:
 .. code-block:: python
 
 class PPO(BaseAlgo):
-def prepare\_batch(self, steps): ...
+def prepare_batch(self, steps): ...
 def update(self, batch, scaling): ...
 
 Pass an instance to `StandardLearner`.
