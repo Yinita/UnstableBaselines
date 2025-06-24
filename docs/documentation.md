@@ -799,7 +799,7 @@ Currently you will need at least 2 gpus to run the code (1 learner and 1 actor);
 | 24GB | TOOD                     | TOOD                   | TOOD                    |
 | 48GB+| TOOD                     | TOOD                   | TOOD                    |
 
-### Llama3.2 2B
+### Llama3.2 3B
 | VRAM | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
 | ---- | :----------------------: | :--------------------: | :---------------------: |
 | 12GB | TOOD                     | TOOD                   | TOOD                    |
