@@ -1,6 +1,6 @@
 # Unstable Baselines Documentation
 
-> **Version:** 0.1 · **Last Updated:** 2025-06-21
+> **Version:** 0.1 · **Last Updated:** 2025-06-24
 
 ---
 
@@ -216,7 +216,7 @@ Below is a high‑level index of every core component in **Unstable Baselines*
 ---
 
 <details>
-<summary><strong>VLLMActor (`actor.py`)</strong></summary>
+<summary><strong>VLLMActor (`actor.py`)</strong><a id="actor"></a></summary>
 
 ## `VLLMActor` — *actor.py* <a id="actor"></a>
 
@@ -263,10 +263,20 @@ Receives text‑generation requests, batches them on a GPU, supports **LoRA** ho
 | `submit_prompt` | `async (prompt: str, lora_path: Optional[str] = None) -> str` | Enqueue a generation job and await the resulting text.                 |
 | `_tok_rate`     | `(window: float = 2.0) -> float`                              | Rolling tokens‑per‑second over *window* s (internal, handy for tests). |
 
+### Concept Summary
+
+| Concept              | Description                                                                 |
+|----------------------|-----------------------------------------------------------------------------|
+| **vLLM engine**       | Efficient backend that streams text generation using CUDA kernels.          |
+| **LoRA adapter**      | LoRA weights are dynamically loaded and mapped to internal IDs.             |
+| **Prompt queue**      | Prompts are queued with associated LoRA path and processed in batches.      |
+| **Async execution**   | Uses `Future` objects to return results once generation completes.          |
+| **Throughput logging**| Tracks and logs `tokens/sec` to monitor GPU performance.                    |
+
 </details>
 
 <details>
-<summary><strong>Collector (`collector.py`)</strong></summary>
+<summary><strong>Collector (`collector.py`)</strong><a id="collector"></summary>
 
 ## `Collector` — *collector.py* <a id="collector"></a>
 
@@ -318,15 +328,39 @@ Ray actor responsible for orchestrating self‑play **training** episodes and fi
 * Enable `filter_opponent_invalid` in competitive settings to ignore wins by opponent invalid move.
 * Separate `training_envs` & `evaluation_envs` to avoid evaluator leakage.
 
+### Concept Summary
+
+| Concept             | Description                                                                            |
+|---------------------|----------------------------------------------------------------------------------------|
+| **Train job**       | Learner vs. sampled opponent → stored in buffer and used for learning                  |
+| **Eval job**        | Learner vs. fixed opponent → logged to evaluate performance                            |
+| **Flight queue**    | Tracks in-progress episodes and metadata (`TaskMeta`)                                  |
+| **Evaluation cap**  | Limits evaluation games per checkpoint to avoid redundancy                             |
+
 </details>
 
 <details>
-<summary><strong>ModelPool (`model_pool.py`)</strong></summary>
+<summary><strong>ModelPool (`model_pool.py`)</strong><a id="model-pool"></summary>
 
 ## `ModelPool` — *model\_pool.py* <a id="model-pool"></a>
 
 Central registry and rating system for **all opponents**: learner checkpoints and fixed baseline models.
 Maintains **TrueSkill** ratings, exploration statistics, opponent sampling logic, and enforces a VRAM‑friendly cap on active LoRA adapters.
+
+### Core Flow
+
+1. **Checkpoint Management**
+   - Adds learner checkpoints (`add_checkpoint`) with inherited or default TrueSkill ratings.
+   - Maintains ≤ `max_active_lora` active checkpoints to control GPU memory usage.
+   - Periodically logs snapshot data to the `Tracker`.
+
+2. **Opponent Sampling**
+   - Selects opponents dynamically based on the chosen `sample_mode` (e.g., `mirror`, `lagged`, `match-quality`).
+   - Uses TrueSkill ratings to guide sampling decisions for competitive matchups.
+
+3. **Post-Game Updates**
+   - Updates TrueSkill ratings after each game (`push_game_outcome`).
+   - Tracks match counts and gameplay diversity (via n-gram exploration stats).
 
 ### Constructor Arguments
 
@@ -359,15 +393,16 @@ Maintains **TrueSkill** ratings, exploration statistics, opponent sampling logic
 
 ### Sampling Modes
 
-| Mode            | Logic                                                       |         |                                     |
-| --------------- | ----------------------------------------------------------- | ------- | ----------------------------------- |
-| `fixed`         | Uniform random among fixed baselines only.                  |         |                                     |
-| `mirror`        | Returns the current learner checkpoint (self‑play).         |         |                                     |
-| `lagged`        | Uniform among *active* past checkpoints inside `lag_range`. |         |                                     |
-| `random`        | Uniform over fixed + active checkpoints.                    |         |                                     |
-| `match-quality` | Softmax based on `TrueSkill.quality()` vs. `uid_me`.        |         |                                     |
-| `ts-dist`       | Softmax over                                                | μ★–μopp | (smaller distance ⇒ higher weight). |
-| `exploration`   | Placeholder: rank opponents by expected state diversity.    |         |                                     |
+| Mode            | Logic                                                       |         |                                     | Opponent Type(s)   |
+| --------------- | ----------------------------------------------------------- | ------- | ----------------------------------- |--------------------|
+| `fixed`         | Uniform random among fixed baselines only.                  |         |                                     | Fixed              |
+| `mirror`        | Returns the current learner checkpoint (self‑play).         |         |                                     | Checkpoint         |
+| `lagged`        | Uniform among *active* past checkpoints inside `lag_range`. |         |                                     | Checkpoint         |
+| `random`        | Uniform over fixed + active checkpoints.                    |         |                                     | Fixed + Checkpoint |
+| `match-quality` | Softmax based on `TrueSkill.quality()` vs. `uid_me`.        |         |                                     | Fixed + Checkpoint |
+| `ts-dist`       | Softmax over                                                | μ★–μopp | (smaller distance ⇒ higher weight). | Fixed + Checkpoint |
+| `exploration`   | Placeholder: rank opponents by expected state diversity.    |         |                                     |                    |
+***Note**: where Fixed refers to a fixed opponent, and checkpoint refers to a saved LoRA checkpoint.* 
 
 ### Rating Update Formula
 
@@ -391,10 +426,20 @@ else:
 * Call **`add_fixed()`** early so baseline ratings converge before checkpoints appear.
 * The **`exploration`** mode is experimental—PRs are welcome!
 
+### Concept Summary
+
+| Concept           | Description                                                                 |
+|-------------------|-----------------------------------------------------------------------------|
+| **Checkpoint**    | LoRA adapter produced during training, rated and stored in the pool.        |
+| **Fixed model**   | Static external opponent (e.g., OpenRouter model).                          |
+| **TrueSkill**     | Used to track skill estimates across games (`μ`, `σ`).                      |
+| **Sampling mode** | Controls opponent selection strategy.                                       |
+| **Active pool**   | Limits active checkpoints to avoid exceeding memory budget.                 |
+
 </details>
 
 <details>
-<summary><strong>StepBuffer (`buffer.py`)</strong></summary>
+<summary><strong>StepBuffer (`buffer.py`)</strong><a id="step-buffer"></summary>
 
 ## `StepBuffer` — *buffer.py* <a id="step-buffer"></a>
 
@@ -445,8 +490,17 @@ add_trajectory()
   └── if len(steps) > max_buffer_size:
         random.sample(excess) → steps.remove()
 ```
-
 This simple uniform reservoir keeps memory bounded while preserving sample diversity.
+
+1. **Add Trajectory**  
+   - Converts a finished trajectory into `Step` objects (obs, act, reward).
+   - Applies reward transformations (final, per-step).
+   - Maintains a capped buffer (`max_buffer_size`) via random downsampling.
+
+2. **Sample Batch**  
+   - Randomly samples and removes a batch of steps (`get_batch()`).
+   - Applies optional sampling-time reward transformation.
+   - Logs each batch to disk (CSV).
 
 ### Practical Tips
 
@@ -454,10 +508,19 @@ This simple uniform reservoir keeps memory bounded while preserving sample diver
 * **Prioritised replay** – implement a new `buffer_strategy` (e.g., PER) and replace the random down‑sampling / sampling logic.
 * When training becomes I/O‑bound, consider moving CSV writes onto a background thread or disabling them in production.
 
+### Concept Summary
+
+| Concept           | Description                                                                 |
+|-------------------|-----------------------------------------------------------------------------|
+| **Step**          | One (obs, act, reward) tuple from a single player’s turn.                   |
+| **Reward shaping**| Supports transformations at end-of-game, per-step, and sampling time.       |
+| **Buffer cap**    | Evicts random samples when full (to stay under `max_buffer_size`).          |
+| **Control**       | `stop()` halts collection; `continue_collection()` signals if active.       |
+
 </details>
 
 <details>
-<summary><strong>Learner (`learners/standard_learner.py`)</strong></summary>
+<summary><strong>Learner (`learners/standard_learner.py`)</strong><a id="learner"></a></summary>
 
 ## `StandardLearner` — *learners/standard_learner.py* <a id="learner"></a>
 
@@ -520,10 +583,19 @@ Main **parameter‑updating** component. Consumes `Step` batches from **StepBuff
 * **Checkpoint hygiene** – old adapters can be pruned offline; `ModelPool` only keeps `max_active_lora` in VRAM.
 * **Multiple learners** – set `num_learners > 1` only when you shard the buffer; otherwise they’ll compete for samples.
 
+### Concept Summary
+
+| Concept            | Description                                                                 |
+|--------------------|-----------------------------------------------------------------------------|
+| **Mini-batching**  | Splits training batch into mini-batches for multiple gradient steps.        |
+| **LoRA fine-tuning** | Only LoRA adapter weights are updated and saved.                          |
+| **Gradient safety**| Applies `clip_grad_norm` and supports activation/gradient checkpointing.     |
+| **Logging**        | Sends training metrics (e.g., loss, grad norm) to the `Tracker`.            |
+
 </details>
 
 <details>
-<summary><strong>Tracker (`trackers.py`)</strong></summary>
+<summary><strong>Tracker (`trackers.py`)</strong><a id="tracker"></a></summary>
 
 ## `Tracker` — *trackers.py* <a id="tracker"></a>
 
@@ -594,10 +666,19 @@ the interactive terminal UI.
 * **Derived metrics** – compute heavy stats offline; push them via
   `log_model_pool()` rather than inside the tight game loop.
 
+### Concept Summary
+
+| Concept            | Description                                                                 |
+|--------------------|-----------------------------------------------------------------------------|
+| **Per-env logging**| Tracks separate stats for each training and eval environment.               |
+| **Rolling windows**| Aggregates metrics over recent 512 samples (e.g., format success rate).     |
+| **Interface stats**| Includes GPU throughput, TrueSkill ratings, match counts, exploration.      |
+| **W&B integration**| If configured, logs all stats via Weights & Biases in near real-time.       |
+
 </details>
 
 <details>
-<summary><strong>TerminalInterface (`terminal_interface.py`)</strong></summary>
+<summary><strong>TerminalInterface (`terminal_interface.py`)</strong><a id="terminal-interface"></a></summary>
 
 ## 'Terminal Interface' - *terminal_interface.py* <a id="terminal-interface"></a>
 *Documentation forthcoming…*
@@ -605,7 +686,7 @@ the interactive terminal UI.
 </details>
 
 <details>
-<summary><strong>Core Data Structures (`core.py`)</strong></summary> 
+<summary><strong>Core Data Structures (`core.py`)</strong><a id="core-data-structures"></a></summary> 
 
 ## Key Dataclasses <a id="core-data-structures"></a>
 
@@ -799,7 +880,7 @@ Currently you will need at least 2 gpus to run the code (1 learner and 1 actor);
 | 24GB | TOOD                     | TOOD                   | TOOD                    |
 | 48GB+| TOOD                     | TOOD                   | TOOD                    |
 
-### Llama3.2 3B
+### Llama3.2 2B
 | VRAM | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
 | ---- | :----------------------: | :--------------------: | :---------------------: |
 | 12GB | TOOD                     | TOOD                   | TOOD                    |
