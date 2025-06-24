@@ -220,7 +220,7 @@ Below is a high‑level index of every core component in **Unstable Baselines*
 ---
 
 <details>
-<summary><strong>VLLMActor (`actor.py`)</strong></summary> <a id="actor"></a>
+<summary><strong>VLLMActor (`actor.py`)</strong><a id="actor"></a></summary>
 
 ## `VLLMActor` — *actor.py* 
 
