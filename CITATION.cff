@@ -10,8 +10,8 @@ authors:
     given-names: Tim
     affiliation: "Technical University of Clausthal, Germany"
     orcid: "https://orcid.org/0009-0001-0248-0875"
-  - family-names: Zichen
-    given-names: Liu
+  - family-names: Liu
+    given-names: Zichen
     affiliation: "Sea AI Lab & NUS, Singapore"
     orcid: "https://orcid.org/0000-0001-9451-8625"
   - family-names: Cheng

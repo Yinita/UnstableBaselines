@@ -200,7 +200,7 @@ If you use **UnstableBaselines** in your research, please cite:
 
 ```bibtex
 @software{guertler_leon_2025_15719271,
-  author={Guertler, Leon and Grams, Tim and Zichen, Liu and Cheng, Bobby},
+  author={Guertler, Leon and Grams, Tim and Liu, Zichen and Cheng, Bobby},
   title={{UnstableBaselines}},
   month=jun,
   year=2025,
