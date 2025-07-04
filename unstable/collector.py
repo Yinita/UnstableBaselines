@@ -13,8 +13,6 @@ from unstable.core import BaseTracker, Trajectory, EpisodeResult, PlaySpec, Task
 from unstable.utils.logging import setup_logger
 from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING
 
-assert ta.__version__ == "0.6.9", f"TextArena 0.6.9 required, currently {ta.__version__}"
-
 class CallableActorWrapper:
     def __init__(self, actor: VLLMActor, lora_path: str|Path, obs_fmt_fn: Callable[[str],str], extract_fn: Callable[[str], Tuple[str, Dict[str, Any]]]) -> None:
         self._actor, self._lora, self._fmt, self._extract = actor, lora_path, obs_fmt_fn, extract_fn
@@ -46,16 +44,17 @@ def play_episode(spec: PlaySpec, actor: VLLMActor) -> EpisodeResult:
         pid, obs = env.get_observation()
         if pid == spec.player_id: raw, extracted, prompt, format_feedback = agents[pid].act_full(obs)
         else: extracted = agents[pid](obs)
-        done, info = env.step(extracted)
+        done, step_info = env.step(extracted)
         if pid == spec.player_id:  # Only track the learner’s internal details.
             traj.pid.append(pid); traj.obs.append(prompt); traj.actions.append(raw); traj.extracted_actions.append(extracted)
-            traj.infos.append(info); format_feedback["invalid_move"] = 0; traj.format_feedbacks.append(format_feedback)
+            traj.step_info.append(step_info); format_feedback["invalid_move"] = 0; traj.format_feedbacks.append(format_feedback)
         if done: break
         action_seq.append(_extract_action(extracted))
         turn += 1
-    traj.final_rewards = env.close(); traj.num_turns = turn
-    end_by_opp_inv = info["end_by_invalid"] and pid != spec.player_id
-    if info["end_by_invalid"] and pid == spec.player_id: traj.format_feedbacks[-1]["invalid_move"] = 1
+    traj.final_rewards, game_info = env.close(); traj.num_turns = turn
+    end_by_opp_inv = game_info[1-spec.player_id]["end_by_invalid"]  # and pid != spec.player_id
+    if game_info[spec.player_id]["end_by_invalid"]: traj.format_feedbacks[-1]["invalid_move"] = 1
+    # if info["end_by_invalid"] and pid == spec.player_id: traj.format_feedbacks[-1]["invalid_move"] = 1
     return EpisodeResult(traj=traj, end_by_opponent_invalid=end_by_opp_inv, action_seq=action_seq, final_rewards=traj.final_rewards)
 
 

@@ -55,14 +55,6 @@ Brief overview of Unstable Baselines, goals, and main features.
 
 ### Installation
 ```bash
-# build TextArena v0.6.9 (until it’s on PyPI)
-git clone https://github.com/LeonGuertler/TextArena.git
-cd TextArena
-git checkout v0.6.9
-python3 setup.py sdist bdist_wheel
-pip install -e .
-cd ..
-
 # install UnstableBaselines
 pip install unstable-rl
 ```

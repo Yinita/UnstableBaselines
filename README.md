@@ -15,7 +15,8 @@ An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning mode
 
 [![GitHub Repo stars](https://img.shields.io/github/stars/LeonGuertler/UnstableBaselines)](https://github.com/LeonGuertler/UnstableBaselines/stargazers)
 [![Discord](https://img.shields.io/discord/1257951838322561075?color=7289DA&label=Discord)](https://discord.gg/KPacHzK23e)
-[![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-181717)](https://github.com/LeonGuertler/TextArena)
+[![TextArena](https://img.shields.io/badge/TextArena-181717)](https://github.com/LeonGuertler/TextArena)
+<!-- [![TextArena](https://img.shields.io/badge/TextArena-v0.6.9-181717)](https://github.com/LeonGuertler/TextArena) -->
 </div>
 
 ---
@@ -78,18 +79,9 @@ Trajectory │ │ n parallel
 
 
 ## Installation
-
+install UnstableBaselines
 ```bash
-# build TextArena v0.6.9 (until it’s on PyPI)
-git clone https://github.com/LeonGuertler/TextArena.git
-cd TextArena
-git checkout v0.6.9
-python3 setup.py sdist bdist_wheel
-pip install -e .
-cd ..
-
-# install UnstableBaselines
-pip install unstable-rl
+pip3 install unstable-rl
 ```
 
 ## Example
