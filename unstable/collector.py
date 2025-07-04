@@ -32,31 +32,32 @@ def _extract_action(action: str) -> str: return (m.group(1).strip().lower() if (
 
 @ray.remote(num_cpus=0)
 def play_episode(spec: PlaySpec, actor: VLLMActor) -> EpisodeResult:
-    def _build_agent(agent_spec: AgentSpec):
-        match agent_spec.kind:
-            case "checkpoint": return CallableActorWrapper(actor=actor, lora_path=agent_spec.model, obs_fmt_fn=OBSERVATION_FORMATTING[agent_spec.prompt_template], extract_fn=ACTION_EXTRACTION[agent_spec.action_extraction_fn])
-            case "openrouter": return ta.agents.OpenRouterAgent(agent_spec.model)
-            case _: raise ValueError(f"unknown kind {agent_spec.kind!r}")
-    agents = {pid: _build_agent(spec.agent_specs[pid]) for pid in range(spec.num_players)}
-    env=ta.make(spec.env_id); env.reset(num_players=spec.num_players, seed=spec.seed); env.state.error_allowance=0
-    traj = Trajectory(); turn = 0; action_seq: List[str] = []
-    while True:
-        pid, obs = env.get_observation()
-        if pid == spec.player_id: raw, extracted, prompt, format_feedback = agents[pid].act_full(obs)
-        else: extracted = agents[pid](obs)
-        done, step_info = env.step(extracted)
-        if pid == spec.player_id:  # Only track the learner’s internal details.
-            traj.pid.append(pid); traj.obs.append(prompt); traj.actions.append(raw); traj.extracted_actions.append(extracted)
-            traj.step_info.append(step_info); format_feedback["invalid_move"] = 0; traj.format_feedbacks.append(format_feedback)
-        if done: break
-        action_seq.append(_extract_action(extracted))
-        turn += 1
-    traj.final_rewards, game_info = env.close(); traj.num_turns = turn
-    end_by_opp_inv = game_info[1-spec.player_id]["end_by_invalid"]  # and pid != spec.player_id
-    if game_info[spec.player_id]["end_by_invalid"]: traj.format_feedbacks[-1]["invalid_move"] = 1
-    # if info["end_by_invalid"] and pid == spec.player_id: traj.format_feedbacks[-1]["invalid_move"] = 1
-    return EpisodeResult(traj=traj, end_by_opponent_invalid=end_by_opp_inv, action_seq=action_seq, final_rewards=traj.final_rewards)
-
+    try:
+        def _build_agent(agent_spec: AgentSpec):
+            match agent_spec.kind:
+                case "checkpoint": return CallableActorWrapper(actor=actor, lora_path=agent_spec.model, obs_fmt_fn=OBSERVATION_FORMATTING[agent_spec.prompt_template], extract_fn=ACTION_EXTRACTION[agent_spec.action_extraction_fn])
+                case "openrouter": return ta.agents.OpenRouterAgent(agent_spec.model)
+                case _: raise ValueError(f"unknown kind {agent_spec.kind!r}")
+        agents = {pid: _build_agent(spec.agent_specs[pid]) for pid in range(spec.num_players)}
+        env=ta.make(spec.env_id); env.reset(num_players=spec.num_players, seed=spec.seed); env.state.error_allowance=0
+        traj = Trajectory(); turn = 0; action_seq: List[str] = []
+        while True:
+            pid, obs = env.get_observation()
+            if pid == spec.player_id: raw, extracted, prompt, format_feedback = agents[pid].act_full(obs)
+            else: extracted = agents[pid](obs)
+            done, step_info = env.step(extracted)
+            if pid == spec.player_id:  # Only track the learner’s internal details.
+                traj.pid.append(pid); traj.obs.append(prompt); traj.actions.append(raw); traj.extracted_actions.append(extracted)
+                traj.infos.append(step_info); format_feedback["invalid_move"] = 0; traj.format_feedbacks.append(format_feedback)
+            if done: break
+            action_seq.append(_extract_action(extracted))
+            turn += 1
+        traj.final_rewards, game_info = env.close(); traj.num_turns = turn
+        end_by_opp_inv = game_info[1-spec.player_id]["invalid_move"] 
+        if game_info[spec.player_id]["invalid_move"]: traj.format_feedbacks[-1]["invalid_move"] = 1
+        return EpisodeResult(traj=traj, end_by_opponent_invalid=end_by_opp_inv, action_seq=action_seq, final_rewards=traj.final_rewards)
+    except Exception as e:
+        print(f"EXCEPTION DURING COLLECTION {exc}")
 
 @ray.remote
 class Collector:

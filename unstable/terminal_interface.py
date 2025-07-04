@@ -104,6 +104,7 @@ class TerminalInterface:
     def _base_stats(self) -> Panel:
         if not self._tracker_stats: return Panel(Text("waiting …"), title="Collection Stats.", box=box.SQUARE)
         try:
+            print(self._tracker_stats)
             self._hist["format_success"].append(self._tracker_stats["Format Success Rate - correct_answer_format"]*100)
             self._hist["inv_move_rate"].append(self._tracker_stats["Format Success Rate - invalid_move"]*100)
             self._hist["game_len"].append(self._tracker_stats["Game Length"])

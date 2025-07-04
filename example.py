@@ -3,12 +3,13 @@ import unstable.reward_transformations as retra
 
 NUM_LEARNERS = 1
 NUM_ACTORS = 2
-COLLECTION_WORKERS = 384
-EVALUATION_WORKERS = 16
+COLLECTION_WORKERS = 64
+EVALUATION_WORKERS = 0
 ITERATIONS = 200
-MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
+# MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
+MODEL_NAME = "Qwen/Qwen3-0.6B-Base"
 # MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
-BATCH_SIZE = 384
+BATCH_SIZE = 8
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
 LR = 1e-5
