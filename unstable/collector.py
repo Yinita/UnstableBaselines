@@ -57,7 +57,7 @@ def play_episode(spec: PlaySpec, actor: VLLMActor) -> EpisodeResult:
         if game_info[spec.player_id]["invalid_move"]: traj.format_feedbacks[-1]["invalid_move"] = 1
         return EpisodeResult(traj=traj, end_by_opponent_invalid=end_by_opp_inv, action_seq=action_seq, final_rewards=traj.final_rewards)
     except Exception as e:
-        print(f"EXCEPTION DURING COLLECTION {exc}")
+        print(f"EXCEPTION DURING COLLECTION {e}")
 
 @ray.remote
 class Collector:
