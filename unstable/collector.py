@@ -53,7 +53,8 @@ def play_episode(spec: PlaySpec, actor: VLLMActor) -> EpisodeResult:
             action_seq.append(_extract_action(extracted))
             turn += 1
         traj.final_rewards, game_info = env.close(); traj.num_turns = turn
-        end_by_opp_inv = game_info[1-spec.player_id]["invalid_move"] 
+        if spec.num_players > 1: end_by_opp_inv = game_info[1-spec.player_id]["invalid_move"]
+        else: end_by_opp_inv = False # single player games have no opponent
         if game_info[spec.player_id]["invalid_move"]: traj.format_feedbacks[-1]["invalid_move"] = 1
         return EpisodeResult(traj=traj, end_by_opponent_invalid=end_by_opp_inv, action_seq=action_seq, final_rewards=traj.final_rewards)
     except Exception as e:
