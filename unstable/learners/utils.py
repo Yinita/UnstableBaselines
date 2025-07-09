@@ -1,5 +1,5 @@
 import torch, pathlib
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft.tuners.lora import LoraLayer
 from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
@@ -7,43 +7,31 @@ try:                from torch.utils.checkpoint import CheckpointImpl
 except ImportError: from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import CheckpointImpl
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
 
-def _load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
-    ckpt_dir = pathlib.Path(ckpt_dir)
-    candidates = [ckpt_dir / "adapter_model.safetensors", ckpt_dir / "adapter_model.bin", ckpt_dir / "pytorch_model.bin",]
-    for path in candidates:
-        if path.exists():
-            print(f"[loader] found LoRA adapter → {path.name}")
-            lora_sd = safe_load(str(path)) if path.suffix == ".safetensors" else torch.load(path, map_location="cpu")
-            set_peft_model_state_dict(peft_model, lora_sd, adapter_name="default")
-            return
-    raise FileNotFoundError(f"No adapter_model.* found in {ckpt_dir}")
 
-def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any] | None, initial_lora_path: Optional[str], freeze_base: bool = True):
-    print(f"[Learner] Loading base model: {base_name} ...")
-    try:
-        with torch.device(device):
-            base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True, attn_implementation="flash_attention_2")
-        base.config._attn_implementation = "flash_attention_2" # try forcing it # TODO not really working I think
-    except Exception as exc:
-        print(f"Flash attention not available.")
-        with torch.device(device):
-            base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True)
+def _load_base(name: str, dtype, device, **kwargs): 
+    with torch.device(device): 
+        return AutoModelForCausalLM.from_pretrained(name, torch_dtype=dtype, trust_remote_code=True, **kwargs)
 
-    
-    if freeze_base:
-        for p in base.parameters(): p.requires_grad_(False)
-    lcfg = LoraConfig(
+def _freeze(model, ignore_substr: Optional[str] = None):
+    for n, p in model.named_parameters():
+        if ignore_substr and ignore_substr in n: continue
+        p.requires_grad_(False)
+
+def _build_lora(model, lora_cfg: Dict[str, Any], task_type: str):
+    return get_peft_model(model, LoraConfig(
         r=lora_cfg.get("lora_rank", 32), lora_alpha=lora_cfg.get("lora_alpha", 32), lora_dropout=lora_cfg.get("lora_dropout", 0.05),
-        bias="none", task_type="CAUSAL_LM", target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]),
-    )
-    model = get_peft_model(base, lcfg).to(device)
+        bias="none", task_type=task_type, target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]),
+    ))
 
-    if initial_lora_path:
-        print(f"[Learner] Loading initial LoRA weights from {initial_lora_path}")
-        _load_lora_state(model, initial_lora_path)
-
+def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any]|None, initial_lora_path: Optional[str]=None, freeze_base: bool=True, critic_model: bool=False, value_head_prefix: str="value_head") -> Tuple[torch.nn.Module, "transformers.PreTrainedTokenizer"]:
+    dtype = torch.bfloat16
+    task_type = "TOKEN_CLS" if critic_model else "CAUSAL_LM"
+    base = get_critic_model(base_name, device, torch_dtype=dtype, value_head_prefix=value_head_prefix) if critic_model else _load_base(base_name, dtype, device)
+    if freeze_base: _freeze(base, None if not critic_model else value_head_prefix)
+    model = _build_lora(base, lora_cfg or {}, task_type).to(device)
+    if initial_lora_path: _load_lora_state(model, initial_lora_path)
     tok = AutoTokenizer.from_pretrained(base_name, trust_remote_code=True)
-    tok.pad_token = tok.eos_token  # safe default
+    tok.pad_token = tok.eos_token
     return model, tok
 
 def _json_safe(obj):

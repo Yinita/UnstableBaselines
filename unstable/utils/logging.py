@@ -1,5 +1,14 @@
-import logging, os, pathlib
+import logging, os, pathlib #, datetime
 from rich.logging import RichHandler
+
+
+# def create_output_folder(run_name):
+#     output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), run_name)
+#     os.makedirs(output_dir)
+#     output_dirs = []
+#     for folder_name in ["training_data", "eval_data", "checkpoints", "logs"]: 
+#         output_dirs.append(os.path.join(self.output_dir, folder_name)); os.makedirs(output_dirs[-1], exist_ok=True)
+#     return *output_dirs
 
 def setup_logger(name: str, log_dir: str, level: int = logging.INFO, to_console: bool = False) -> logging.Logger:
     path = pathlib.Path(log_dir) / f"{name}.log"

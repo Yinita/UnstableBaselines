@@ -1,6 +1,22 @@
 import torch
 from unstable.core import BaseAlgo
 
+
+
+class BaseAlgo:
+    def initialize(self, model, tokenizer, device, max_generation_len: int, max_train_len: Optional[int]=None):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = device
+        self.max_train_len = max_train_len
+        self.max_generation_len = max_generation_len
+
+    def prepare_batch(self, steps): raise NotImplementedError # Turn a list[Step] into tensors on self.dev. Return whatever update() needs
+    def update(self, batch):        raise NotImplementedError # One gradient update on *this worker only*. Must call .backward() but NOT .step(). Return latest loss as float (for logging)
+
+
+
+
 class Reinforce(BaseAlgo):
     def prepare_batch(self, steps):
         obs, acts, advs = zip(*[(s.obs, s.act, s.reward) for s in steps])

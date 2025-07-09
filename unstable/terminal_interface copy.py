@@ -13,7 +13,6 @@ from rich.panel import Panel
 from rich.layout import Layout
 from rich.console import Console, Group
 
-# TODO track the learner info here as well maybe
 
 _HIST_BARS = " ▁▂▃▄▅▆▇█"
 _UID_FIELD = 22
@@ -34,8 +33,8 @@ def _scaled_hist(hist: deque[float|int], width: int) -> str:
     return result.ljust(width)
 
 class TerminalInterface:
-    def __init__(self, tracker, buffer):
-        self.tracker, self.buffer = tracker, buffer
+    def __init__(self, tracker, step_buffer):
+        self.tracker, self.step_buffer = tracker, step_buffer
         self.console = Console(color_system="truecolor") 
         self._gpu_stats = None
         self._general_stats = None
@@ -69,7 +68,7 @@ class TerminalInterface:
             try:
                 # Fetch all stats
                 self._gpu_stats = await self._system_stats()
-                self._buffer_size = await self.buffer.size.remote()
+                self._buffer_size = await self.step_buffer.size.remote()
                 self._tracker_stats = await self.tracker.get_interface_info.remote()
                 # Update all panels with new data
                 self._gpu_panel = self._gpu()
@@ -81,7 +80,14 @@ class TerminalInterface:
                 self.console.log(f"[red]stat-fetch error: {e}")
             await asyncio.sleep(interval)
 
-    def _colour_for_util(self, pct: float) -> str: return PALETTE["ok"] if pct >= 75 else PALETTE["warn"] if pct >= 40 else PALETTE["crit"]
+    # def _colour_for_util(self, pct: float) -> str: return "green" if pct >= 75 else "yellow" if pct >= 40 else "red"
+    def _colour_for_util(self, pct: float) -> str:
+        if pct >= 75:
+            return PALETTE["ok"]
+        elif pct >= 40:
+            return PALETTE["warn"]
+        else:
+            return PALETTE["crit"]
     def _gpu(self) -> Panel:
         if not self._gpu_stats or not self._tracker_stats: return Panel(Text("waiting …"), title="GPU", box=box.SQUARE)
         gpu_panels = []
@@ -91,9 +97,9 @@ class TerminalInterface:
             self._max_tok_s = self._max_tok_s if tok_s<self._max_tok_s else tok_s
             tok_pct = tok_s/self._max_tok_s * 100
             role = "Actor" if tok_s and tok_s > 0 else "Learner"
-            line1 = Text.assemble(("TOK ", "dim"), Text(_bar(tok_pct, bar_w),            style=self._colour_for_util(tok_pct)),             f" {tok_s:5.0f} tok/s")
-            line2 = Text.assemble(("PWR ", "dim"), Text(_bar(gpu_d['power_pct'], bar_w), style=self._colour_for_util(gpu_d['power_pct'])),  f" {gpu_d['power_pct']:5.1f}%")
-            line3 = Text.assemble(("MEM ", "dim"), Text(_bar(gpu_d['mem_pct'], bar_w),   style=self._colour_for_util(gpu_d['mem_pct'])),    f" {gpu_d['mem_pct']:5.1f}%")
+            line1 = Text.assemble(("PWR ", "dim"), Text(_bar(gpu_d['power_pct'], bar_w), style=self._colour_for_util(gpu_d['power_pct'])),   f" {gpu_d['power_pct']:5.1f}%")
+            line2 = Text.assemble(("MEM ", "dim"), Text(_bar(gpu_d['mem_pct'], bar_w),   style=self._colour_for_util(gpu_d['mem_pct'])),   f" {gpu_d['mem_pct']:5.1f}%")
+            line3 = Text.assemble(("TOK ", "dim"), Text(_bar(tok_pct, bar_w),            style=self._colour_for_util(tok_pct)),              f" {tok_s:5.0f} tok/s")
             gpu_panels.append(Panel(Group(line1, line2, line3), title=f"GPU{gpu_d['id']} - {role}", box=box.SQUARE, padding=(0, 1)))
         
         # build a 2-column grid (rows = ceil(N/2))
@@ -180,8 +186,8 @@ class TerminalInterface:
 
 def main():
     ray.init(address="auto", namespace="unstable")   # connect to existing cluster
-    tracker = ray.get_actor("Tracker"); buffer = ray.get_actor("Buffer")
-    term = TerminalInterface(tracker=tracker, buffer=buffer)
+    tracker = ray.get_actor("Tracker"); step_buffer = ray.get_actor("StepBuffer")
+    term = TerminalInterface(tracker=tracker, step_buffer=step_buffer)
     asyncio.run(term.run())
 
 

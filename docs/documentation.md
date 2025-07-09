@@ -4,6 +4,16 @@
 
 ---
 
+
+code line counts:
+v0.1.0 1,144
+v0.2.0  
+
+
+# TODO
+- explain the logical flow of everything
+
+
 ## Table of Contents
 
 1. [Introduction](#introduction)

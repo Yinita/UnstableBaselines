@@ -1,11 +1,33 @@
-import os, re, ray, time, wandb, collections, logging, numpy as np
-from typing import Optional, Union
-from unstable.core import BaseTracker, Trajectory
-from unstable.utils.logging import setup_logger
+import os, re, ray, time, wandb, collections, datetime, logging, numpy as np
+from typing import Optional, Union, Dict
+from unstable.utils import setup_logger
 
+from unstable.types import PlayerTrajectory, GameInformation
 
 Scalar = Union[int, float, bool]
 
+class BaseTracker:
+    def __init__(self, run_name: str):
+        self.run_name = run_name 
+        self._build_output_dir()
+
+    def _build_output_dir(self):
+        self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.run_name)
+        os.makedirs(self.output_dir)
+        self.output_dirs = {}
+        for folder_name in ["training_data", "eval_data", "checkpoints", "logs"]: 
+            self.output_dirs[folder_name] =  os.path.join(self.output_dir, folder_name); os.makedirs(self.output_dirs[folder_name], exist_ok=True)
+
+    def get_checkpoints_dir(self):  return self.output_dirs["checkpoints"]
+    def get_train_dir(self):        return self.output_dirs["training_data"]
+    def get_eval_dir(self):         return self.output_dirs["eval_data"]
+    def get_log_dir(self):          return self.output_dirs["logs"]
+    
+    def add_trajectory(self, trajectory: PlayerTrajectory, env_id: str): raise NotImplementedError
+    def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
+    def log_lerner(self, info_dict: Dict): raise NotImplementedError
+
+    
 @ray.remote
 class Tracker(BaseTracker): 
     FLUSH_EVERY = 64
@@ -29,17 +51,17 @@ class Tracker(BaseTracker):
                 except Exception as e: self.logger.warning(f"wandb.log failed: {e}")
             self._buffer.clear(); self._last_flush=time.monotonic()
 
-    def add_trajectory(self, traj: Trajectory, player_id: int, env_id: str):
+    def add_player_trajectory(self, traj: PlayerTrajectory, env_id: str):
         try:
-            r = traj.final_rewards; me=r[player_id]; opp=r[1-player_id] if len(r)==2 else 0
-            self._put(f"collection-{env_id}/reward", me)
+            reward = traj.final_reward; player_id = traj.pid
+            self._put(f"collection-{env_id}/reward", reward)
             if len(r) == 2:
-                self._put(f"collection-{env_id}/Win Rate", int(me>opp))
-                self._put(f"collection-{env_id}/Loss Rate", int(me<opp))
-                self._put(f"collection-{env_id}/Draw", int(me == opp))
-                self._put(f"collection-{env_id}/Reward (pid={player_id})", r[player_id])
+                self._put(f"collection-{env_id}/Win Rate", int(reward==1))
+                self._put(f"collection-{env_id}/Loss Rate", int(reward==-1))
+                self._put(f"collection-{env_id}/Draw", int(reward==0))
+                self._put(f"collection-{env_id}/Reward (pid={traj.pid})", r[traj.pid])
             self._put(f"collection-{env_id}/Game Length", traj.num_turns)
-            for idx in [i for i,p in enumerate(traj.pid) if p == player_id]:
+            for idx in range(len(traj.obs)):
                 self._put(f"collection-{env_id}/Respone Length (char)", len(traj.actions[idx]))
                 self._put(f"collection-{env_id}/Observation Length (char)", len(traj.obs[idx]))
                 for k, v in traj.format_feedbacks[idx].items(): self._put(f"collection-{env_id}/Format Success Rate - {k}", v)
@@ -49,16 +71,20 @@ class Tracker(BaseTracker):
         except Exception as exc:
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
 
+    def add_game_information(self, game_information: GameInformation):
+        raise NotImplementedError
+
     def add_eval_episode(self, rewards: list[float], player_id: int, env_id: str):
-        me = rewards[player_id]; opp = rewards[1-player_id] if len(rewards) == 2 else 0
-        self._put(f"evaluation-{env_id}/Reward", me)
-        if len(rewards) == 2:
-            self._put(f"evaluation-{env_id}/Win Rate", int(me > opp))
-            self._put(f"evaluation-{env_id}/Loss Rate", int(me < opp))
-            self._put(f"evaluation-{env_id}/Draw Rate", int(me == opp))
-        self._n[f"evaluation-{env_id}"] = self._n.get(f"evaluation-{env_id}", 0) + 1
-        self._put(f"evaluation-{env_id}/step", self._n[f"evaluation-{env_id}"])
-        self._buffer.update(self._agg('evaluation-'))
+        pass
+        # me = rewards[player_id]; opp = rewards[1-player_id] if len(rewards) == 2 else 0
+        # self._put(f"evaluation-{env_id}/Reward", me)
+        # if len(rewards) == 2:
+        #     self._put(f"evaluation-{env_id}/Win Rate", int(me > opp))
+        #     self._put(f"evaluation-{env_id}/Loss Rate", int(me < opp))
+        #     self._put(f"evaluation-{env_id}/Draw Rate", int(me == opp))
+        # self._n[f"evaluation-{env_id}"] = self._n.get(f"evaluation-{env_id}", 0) + 1
+        # self._put(f"evaluation-{env_id}/step", self._n[f"evaluation-{env_id}"])
+        # self._buffer.update(self._agg('evaluation-'))
 
     def log_model_pool(self, match_counts: dict[tuple[str, str], int], ts_dict: dict[str, dict[str, float]], exploration: dict[str,dict[str,float]]) -> None:
         # top = sorted(match_counts.items(), key=lambda kv: kv[1], reverse=True) # TODO fix this up

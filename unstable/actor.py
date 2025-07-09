@@ -58,7 +58,8 @@ class VLLMActor:
         while True:
             try:
                 await asyncio.sleep(0.02)
-                if time.monotonic() - self._last_step_time > 30: self.logger.error(f"Potential deadlock detected - no engine steps for {now - self._last_step_time:.1f} seconds\nRunning requests: {dict(self._running)}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
+                if time.monotonic() - self._last_step_time > 30: 
+                    self.logger.error(f"Potential deadlock detected - no engine steps for {time.monotonic() - self._last_step_time:.1f} seconds\nRunning requests: {dict(self._running)}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
                 while self._queue:
                     prompt, path, fut = self._queue.popleft()
                     lora = path or "base"
@@ -67,6 +68,7 @@ class VLLMActor:
                     self._req2lora[req_id] = lora
                     self._queued -= 1
                     self._running += 1
+                    self.logger.info(f"path: {path}, lora_ids: {self._lora_ids}")
 
                     if path:
                         if path not in self._lora_ids:
@@ -106,7 +108,8 @@ class VLLMActor:
                     self._prev_tok_cnt[req_id] = len(tok_ids)
 
                     now = time.monotonic()
-                    for _ in range(new_tok): self._tok_hist.append(now)
+                    for _ in range(new_tok): 
+                        self._tok_hist.append(now)
                     if segment.finish_reason is not None:
                         fut = self._futures.pop(req_id, None)
                         if fut and not fut.done():

@@ -1,15 +1,13 @@
 import time, ray, unstable
 import unstable.reward_transformations as retra
 
-NUM_LEARNERS = 1
-NUM_ACTORS = 2
-COLLECTION_WORKERS = 64
+# always uses 1 learner and the remainder of the GPUS as actors
+COLLECTION_WORKERS = 384
 EVALUATION_WORKERS = 0
 ITERATIONS = 200
-# MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
 MODEL_NAME = "Qwen/Qwen3-0.6B-Base"
 # MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
-BATCH_SIZE = 8
+BATCH_SIZE = 384
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
 LR = 1e-5
@@ -34,91 +32,82 @@ vllm_config = {
     "max_model_len": 8192
 }
 
-TRAINING_ENVS = [
-    ("SimpleTak-v0-train", 2, "qwen3-zs"), 
-    # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    # ("Nim-v0-train", 2, "qwen3-zs"), 
-    # ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
-    # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
-    # ("PigDice-v0-train", 2, "qwen3-zs")
-    # ("Othello-v0-train", 2, "qwen3-zs")
-    # ("Snake-v0-train", 2, "qwen3-zs")
-    # ("Chopsticks-v0-train", 2, "qwen3-zs")
-    # ("GameOfPureStrategy-v0-train", 2, "qwen3-zs")
-]
-EVALUATION_ENVS = [
-    ("SimpleTak-v0-train", 2, "qwen3-zs"), 
-    # ("LiarsDice-v0-train", 2, "qwen3-zs"), 
-    ("Nim-v0-train", 2, "qwen3-zs"), 
-    ("KuhnPoker-v0-train", 2, "qwen3-zs"), 
-    # ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
-    # ("PigDice-v0-train", 2, "qwen3-zs")
-    # ("Othello-v0-train", 2, "qwen3-zs")
-    # ("Snake-v0-train", 2, "qwen3-zs")
-    # ("Chopsticks-v0-train", 2, "qwen3-zs")
-    # ("GameOfPureStrategy-v0-train", 2, "qwen3-zs")
-]
-
-# WANDB_RUN_NAME = f"Reward-Ablation--exp1-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
-WANDB_RUN_NAME = f"Debugging-run-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
 
 
-ray.init(namespace="unstable") # Ray init 
-tracker = unstable.Tracker.options(name="Tracker").remote(run_name=WANDB_RUN_NAME, wandb_project="UnstableBaselines") # Tracker
+# Ray init
+ray.init(namespace="unstable")  
+
+# initialize environment scheduler
+env_sampler = unstable.samplers.env.UniformRandomEnvSampler(
+    train_env_specs=[
+        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
+        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
+    ],
+    eval_env_specs=[
+        unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
+])
+
+# initialize model registry
+model_registry = unstable.ModelRegistry.options(name="ModelRegistry").remote()
+ray.get(model_registry.add_checkpoint.remote(uid="base", path=None, iteration=0))
+ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
+
+
+# initialize model sampler
+model_sampler = unstable.samplers.model.BaseModelSampler(model_registry=model_registry) # TODO extend, but now ok for mirror self-play. unstable.model_sampler. # pass model registry here as well
+
+# build game scheduler
+game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler)
+
+
+# Tracker
+tracker = unstable.Tracker.options(name="Tracker").remote(
+    run_name=f"Test-{MODEL_NAME.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", 
+    wandb_project="UnstableBaselines"
+) 
+
 
 # Data Buffer
-step_buffer = unstable.StepBuffer.options(name="StepBuffer").remote(
+step_buffer = unstable.StepBuffer.options(name="Buffer").remote(
     max_buffer_size=BUFFER_SIZE, tracker=tracker,
     final_reward_transformation=retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()]),
     step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
     sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
 )
 
-# Model Pool
-model_pool = unstable.ModelPool.options(name="ModelPool").remote(tracker=tracker, sample_mode=SAMPLE_MODE, max_active_lora=5)
-ray.get(model_pool.add_checkpoint.remote(path=None, iteration="-1"))
-ray.get(model_pool.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
 
-# Collector
+# initialize the collector
 collector = unstable.Collector.options(name="Collector").remote(
-    num_actors=NUM_ACTORS, 
-    tracker=tracker, 
-    vllm_config=vllm_config, 
-    step_buffer=step_buffer, 
-    model_pool=model_pool,
-    training_envs=TRAINING_ENVS, 
-    evaluation_envs=EVALUATION_ENVS, 
-    evaluation_opponent="google/gemini-2.0-flash-lite-001",
-    action_extraction="default"
+    vllm_config=vllm_config, tracker=tracker, buffer=step_buffer, game_scheduler=game_scheduler,
 )
 
-# Algorithm and Learner
-algorithm = unstable.algorithms.Reinforce()
-learner = unstable.StandardLearner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
-    num_learners=NUM_LEARNERS, 
-    tracker=tracker, 
-    model_name=MODEL_NAME, 
-    step_buffer=step_buffer, 
-    model_pool=model_pool, 
-    algorithm=algorithm, 
-    batch_size=BATCH_SIZE, 
-    mini_batch_size=MINI_BATCH_SIZE, 
-    learning_rate=LR, 
-    grad_clip=GRAD_CLIP, 
-    batch_delay_buffer=1.5, 
+
+# initialize the learner
+learner = unstable.REINFORCELearner.options(num_gpus=1, name="Learner").remote(
+    model_name=MODEL_NAME,
     lora_cfg=lora_config,
+    batch_size=BATCH_SIZE,
+    mini_batch_size=MINI_BATCH_SIZE,
+    learning_rate=LR,
+    grad_clip=GRAD_CLIP,
+    buffer=step_buffer,
+    tracker=tracker,
+    model_registry=model_registry,
     activation_checkpointing=ACTIVATION_CHECKPOINTING,
     gradient_checkpointing=GRADIENT_CHECKPOINTING,
-    use_trainer_cache=USE_TRAINER_CACHE,
-    max_train_len=MAX_TRAIN_SEQ_LEN,
-    max_generation_len=MAX_GENERATION_LENGTH,
+    use_trainer_cache=USE_TRAINER_CACHE
 )
+ray.get(learner.initialize_algorithm.remote(cfg={"max_train_len": MAX_TRAIN_SEQ_LEN, "max_generation_len": MAX_GENERATION_LENGTH})) # this part will depend on the algorithm used.
+
 
 
 try:
-    collector.collect.remote(num_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS)
+    collector.collect.remote(num_train_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS)
     ray.get(learner.train.remote(ITERATIONS))
 finally:
     ray.kill(collector, no_restart=True)
     ray.shutdown()
+
+
+
 
