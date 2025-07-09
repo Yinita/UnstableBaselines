@@ -22,7 +22,10 @@ class AdvantageActorCritic(BaseAlgo):
 
     def prepare_batch(self, steps):
         obs, acts, advs, rets = zip(
-            *[(s.obs, s.act, s.reward, s.step_info.get("return", torch.nan)) for s in steps]
+            *[
+                (s.obs, s.act, s.reward, s.step_info.get("return", torch.nan))
+                for s in steps
+            ]
         )
         advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
         rets = torch.tensor(rets, dtype=torch.float32, device=self.device)

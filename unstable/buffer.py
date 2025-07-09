@@ -222,13 +222,12 @@ class EpisodeBuffer:
                     step_info=step_info,
                 )
             )
-        print(f"adding traj")
         with self.mutex:
             self.episodes.append(episode)
             excess_num_samples = max(
                 0, len(tree.flatten(self.episodes)) - self.max_buffer_size
             )
-            print("BUFFER NUM of STEP", len(tree.flatten(self.episodes)))
+            self.logger.info(f"BUFFER NUM of STEP {len(tree.flatten(self.episodes))}")
             while excess_num_samples > 0:
                 randm_sampled = random.sample(self.episodes, 1)
                 for b in randm_sampled:
@@ -253,7 +252,7 @@ class EpisodeBuffer:
             for ep in sampled_episodes:
                 self.episodes.remove(ep)
         # batch = self.sampling_reward_transformation(batch) if self.sampling_reward_transformation is not None else batch
-        print(f"Sampling {len(sampled_episodes)} episodes from buffer.")
+        self.logger.info(f"Sampling {len(sampled_episodes)} episodes from buffer.")
         # try: write_training_data_to_file(batch=batch, filename=os.path.join(self.local_storage_dir, f"train_data_step_{self.training_steps}.csv"))
         # except Exception as exc: self.logger.error(f"Exception when trying to write training data to file: {exc}")
         self.training_steps += 1

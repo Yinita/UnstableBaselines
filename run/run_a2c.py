@@ -60,7 +60,7 @@ EVALUATION_ENVS = [
 ]
 
 # WANDB_RUN_NAME = f"Reward-Ablation--exp1-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
-WANDB_RUN_NAME = f"A2C-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
+WANDB_RUN_NAME = f"A2C-NormalizeByEnv-1e-5lr-{MODEL_NAME.split('/')[-1]}-{[t[0] for t in TRAINING_ENVS]}-{int(time.time())}"
 
 
 ray.init(namespace="unstable") # Ray init 

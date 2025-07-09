@@ -9,6 +9,9 @@ from unstable.core import BaseAlgo
 from unstable.model_pool import ModelPool
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
 from unstable.utils.logging import setup_logger
+from unstable.reward_transformations.transformation_sampling import (
+    NormalizeRewardsByEnv,
+)
 
 
 def compute_gae(rewards, values, gamma=1.0, gae_lambda=1.0):
@@ -45,7 +48,7 @@ class A2CLearner:
         max_generation_len: int,
         normalize_adv: bool = False,
         learning_rate: float = 1e-5,
-        critic_learning_rate: float = 5e-5,
+        critic_learning_rate: float = 1e-5,
         grad_clip: float = 1.0,
         batch_delay_buffer: float = 1.5,
         lora_cfg: Dict[str, Any] = {},
@@ -75,6 +78,7 @@ class A2CLearner:
         self.algorithm = algorithm
         self.batch_delay_buffer = batch_delay_buffer
         self.save_every = save_every
+        self.normalize_adv = normalize_adv
         self.ckpt_root = pathlib.Path(
             ray.get(self.tracker.get_checkpoints_dir.remote())
             if self.tracker
@@ -171,18 +175,18 @@ class A2CLearner:
                 adv = compute_gae(rewards, values)
                 ep_advantages.append(adv)
                 ep_returns.append(adv + values)
-            # TODO normalize advantages
 
             batch = []
             for i, ep in enumerate(batch_episodes):
                 for j, step in enumerate(ep):
                     step = replace(step, reward=ep_advantages[i][j].item())
-                    step = replace(step,
+                    step = replace(
+                        step,
                         step_info={
                             **step.step_info,
                             "return": ep_returns[i][j].item(),
                             "advantage": ep_advantages[i][j].item(),
-                        }
+                        },
                     )
                     batch.append(step)
             assert len(batch) >= self.batch_size
@@ -197,6 +201,10 @@ class A2CLearner:
             print(
                 f"Got {num_samples} many samples. Running for {num_steps} steps (i.e. mini batch size: {self.mini_batch_size})"
             )
+
+            if self.normalize_adv:
+                batch = NormalizeRewardsByEnv(True)(batch)
+
             for i in range(num_steps):
                 sub = batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
                 with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
