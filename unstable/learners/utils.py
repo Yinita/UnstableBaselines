@@ -1,4 +1,4 @@
-import torch, pathlib
+import os, torch, pathlib
 from typing import Dict, Any, Optional
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from peft.tuners.lora import LoraLayer
@@ -18,18 +18,21 @@ def _load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):
             return
     raise FileNotFoundError(f"No adapter_model.* found in {ckpt_dir}")
 
+def remap_device(device: torch.device) -> torch.device:
+    if device.type != "cuda": return device
+    visible = list(map(int, os.environ["CUDA_VISIBLE_DEVICES"].split(",")))
+    return torch.device(f"cuda:{visible.index(device.index)}")
+
 def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any] | None, initial_lora_path: Optional[str], freeze_base: bool = True):
     print(f"[Learner] Loading base model: {base_name} ...")
+    if device.type == "cuda":
+        torch.cuda.set_device(device.index)
+        print(f"[Learner] Set torch device to: cuda:{device.index}")
+        device_map = {"": f"cuda:{device.index}"}
+    else: device_map = {"": device}
     try:
-        with torch.device(device):
-            base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True, attn_implementation="flash_attention_2")
-        base.config._attn_implementation = "flash_attention_2" # try forcing it # TODO not really working I think
-    except Exception as exc:
-        print(f"Flash attention not available.")
-        with torch.device(device):
-            base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True)
-
-    
+        base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True, attn_implementation=None, device_map=device_map)
+    except Exception as exc: print(f"[Learner] Failed model load: {exc}"); raise
     if freeze_base:
         for p in base.parameters(): p.requires_grad_(False)
     lcfg = LoraConfig(
