@@ -4,8 +4,6 @@ from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
 
 
-
-
 @ray.remote
 class A2CLearner(BaseLearner):
     def initialize_algorithm(self, infer_mini_batch_size: int, critic_learning_rate: float, normalize_adv: bool=False, initial_lora_path: Optional[str]=None):
@@ -31,21 +29,32 @@ class A2CLearner(BaseLearner):
         state_enc = self.tokenizer(obs, return_tensors="pt", padding=True, truncation=True, max_length=self.max_train_len).to(self.device)  # Tokenize with truncation
         return enc, state_enc, advs, rets, obs, avg_len, pct_truncated
 
-    def _mini_batch_update_step(self, batch):
-        metrics_acc = {}
-        self.policy_optimizer.zero_grad(set_to_none=True)
-        for i in range(self.gradient_acc_steps):
-            sub = batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
-            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16): 
-                update_metrics = self._mini_batch_update_step.update(sub, scaling=self.gradient_acc_steps)
-            for k, v in update_metrics.items():
-                metrics_acc[k] = metrics_acc.get(k, 0.0) + v
-            self.logger.info(f"Mini-step metrics: {update_metrics}")
-        self.logger.info(f"Step metrics: {metrics_acc}")
-        # update weights
-        torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.grad_clip)
-        self.policy_optimizer.step()
-        return metrics_acc
+    def _mini_batch_update_step(self, steps, scaling: float = 1.0):
+        enc, state_enc, advs, rets, obs, avg_len, pct_truncated = self.prepare_batch(steps=steps)
+        # Learn policy
+        out = self.model(**enc)
+        logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
+        tgt_ids = enc.input_ids[:, 1:]
+        tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
+        mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)  # build prompt mask
+        for i, o in enumerate(obs): mask[i, : len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
+        mask = mask[:, 1:]
+        seq_logp = (tok_logp * mask).sum(1) / self.max_generation_len
+        loss = -(advs * seq_logp).mean() / scaling
+        loss.backward()
+        torch.cuda.empty_cache()
+
+        # Learn value
+        value_pred = self.critic(**state_enc)[:, 0]
+        value_loss = 0.5 * ((value_pred - rets) ** 2).mean()
+        value_loss.backward()
+        torch.cuda.empty_cache()
+
+        return {
+            "policy_loss": loss.item(), "value_loss": value_loss.item(), "logp_mean": seq_logp.mean().item(),
+            "logp_std": seq_logp.std().item(), "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
+        }
+
 
     def _update(self, batch):
         all_samples = tree.flatten(batch_episodes)
@@ -92,7 +101,7 @@ class A2CLearner(BaseLearner):
         for i in range(num_steps):
             sub = batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                update_metrics = self._update(sub, scaling=num_steps)
+                update_metrics = self._mini_batch_update_step(sub, scaling=num_steps)
             for k, v in update_metrics.items():
                 metrics_acc[k] = metrics_acc.get(k, 0.0) + v
             self.logger.info(f"Mini-step metrics: {update_metrics}")

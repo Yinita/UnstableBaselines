@@ -7,3 +7,4 @@ transformers
 peft
 trueskill
 pynvml
+dm-tree

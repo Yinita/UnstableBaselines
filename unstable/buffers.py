@@ -1,5 +1,5 @@
 
-import os, ray, random
+import os, ray, tree, random
 from threading import Lock
 from typing import List, Dict, Optional, Tuple, Callable
 
@@ -72,13 +72,13 @@ class StepBuffer(BaseBuffer):
     def stop(self):                 self.collect = False
     def size(self) -> int:          return len(self.steps)
     def continue_collection(self):  return self.collect
-    def clear(self):
+    def clear(self):                
         with self.mutex: 
             self.steps.clear()
 
 
 @ray.remote
-class EpisodeBuffer:
+class EpisodeBuffer(BaseBuffer):
     def __init__(
         self, max_buffer_size: int, tracker: BaseTracker, 
         final_reward_transformation: Optional[ComposeFinalRewardTransforms], 
@@ -99,21 +99,20 @@ class EpisodeBuffer:
         self.mutex = Lock()
 
     def add_player_trajectory(self, player_traj: PlayerTrajectory, env_id: str):
+        episode = []
         reward = self.final_reward_transformation(reward=player_traj.final_reward, pid=player_traj.pid, env_id=env_id) if self.final_reward_transformation else player_traj.final_reward
         for idx in range(len(player_traj.obs)):
             step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=reward) if self.step_reward_transformation else reward
-            self.steps.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
-        self.logger.info(f"Buffer size: {len(self.steps)}, added {len(player_traj.obs)} steps")
-        # downsample if necessary
-        excess_num_samples = max(0, len(self.steps) - self.max_buffer_size)
-        self.logger.info(f"Excess Num Samples: {excess_num_samples}")
-        if excess_num_samples > 0:
-            self.logger.info(f"Downsampling buffer because of excess samples")
-            randm_sampled = random.sample(self.steps, excess_num_samples)
-            for b in randm_sampled:
-                self.steps.remove(b)
-            self.logger.info(f"Buffer size after downsampling: {len(self.steps)}")
-
+            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
+        with self.mutex:
+            self.episodes.append(episode)
+            excess_num_samples = max(0, len(tree.flatten(self.episodes)) - self.max_buffer_size)
+            self.logger.info(f"BUFFER NUM of STEP {len(tree.flatten(self.episodes))}")
+            while excess_num_samples > 0:
+                randm_sampled = random.sample(self.episodes, 1)
+                for b in randm_sampled: self.episodes.remove(b)
+                excess_num_samples = max(0, len(tree.flatten(self.episodes)) - self.max_buffer_size)
+        
     def get_batch(self, batch_size: int) -> List[List[Step]]:
         with self.mutex:
             assert len(tree.flatten(self.episodes)) >= batch_size
@@ -133,5 +132,5 @@ class EpisodeBuffer:
     def size(self) -> int:          return len(tree.flatten(self.episodes))
     def continue_collection(self):  return self.collect
     def clear(self):
-        with self.mutex:
+        with self.mutex: 
             self.episodes.clear()

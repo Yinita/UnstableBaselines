@@ -59,7 +59,7 @@ class Tracker(BaseTracker):
                 self._put(f"collection-{env_id}/Win Rate", int(reward==1))
                 self._put(f"collection-{env_id}/Loss Rate", int(reward==-1))
                 self._put(f"collection-{env_id}/Draw", int(reward==0))
-                self._put(f"collection-{env_id}/Reward (pid={traj.pid})", r[traj.pid])
+                self._put(f"collection-{env_id}/Reward (pid={traj.pid})", reward)
             self._put(f"collection-{env_id}/Game Length", traj.num_turns)
             for idx in range(len(traj.obs)):
                 self._put(f"collection-{env_id}/Respone Length (char)", len(traj.actions[idx]))
