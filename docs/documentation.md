@@ -1,6 +1,6 @@
 # Unstable Baselines Documentation
 
-> **Version:** 0.3 · **Last Updated:** 2025-07-10
+> **Version:** 0.2 · **Last Updated:** 2025-07-10
 >
 > This release introduces a dedicated **sampler** layer (`samplers/`), a composable **runtime** builder (`runtime.build()`), and separate **REINFORCE** / **A2C** learners.  `ModelPool` has been renamed **ModelRegistry**, and the data layer now exposes both **StepBuffer** *and* **EpisodeBuffer**.
 
