@@ -1,5 +1,5 @@
-import ray
-from typing import Dict, Any
+import ray, random
+from typing import Dict, Any, Tuple, Optional
 
 from unstable.types import GameInformation
 
@@ -19,6 +19,10 @@ class BaseModelSampler:
             scores = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["pid"] in game_info.final_rewards],
             env_id = job_info["env_id"]
         )
+    def sample_opponent(self, *, current_uid: str, registry_snapshot: dict) -> Tuple[str, str, Optional[str], Optional[str]]: raise NotImplementedError
 
-    def sample_opponent(self, *, current_uid: str, registry_snapshot: dict) -> str: raise NotImplementedError
+class FixedOpponentModelSampler(BaseModelSampler):
+    def sample_opponent(self, *, current_uid: str, registry_snapshot: dict) -> Tuple[str, str, Optional[str], Optional[str]]:
+        opponent_meta = random.choice([model_meta for uid, model_meta in ray.get(self.model_registry.get_all_models.remote()) if model_meta.active and model_meta.kind=="fixed"])
+        return (opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name) 
 

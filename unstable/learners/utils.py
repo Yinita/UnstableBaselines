@@ -1,17 +1,11 @@
 import torch, pathlib
 from typing import Dict, Any, Optional, Tuple
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoModel
 from peft.tuners.lora import LoraLayer
 from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
 try:                from torch.utils.checkpoint import CheckpointImpl
 except ImportError: from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import CheckpointImpl
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
-
-from typing import Optional
-
-import torch
-from torch import nn
-from transformers import AutoConfig, AutoModel
 
 def build_critic_cls(base_cls, base_pretrain_cls, value_head_prefix):
     class CriticModel(base_pretrain_cls):
@@ -20,7 +14,7 @@ def build_critic_cls(base_cls, base_pretrain_cls, value_head_prefix):
             super().__init__(config)
             setattr(self, self.base_model_prefix, base_cls(config))
             self.value_head_prefix = value_head_prefix
-            setattr(self, value_head_prefix, nn.Linear(config.hidden_size, 1, bias=False))
+            setattr(self, value_head_prefix, torch.nn.Linear(config.hidden_size, 1, bias=False))
 
         def forward(self, input_ids: torch.LongTensor=None, attention_mask: Optional[torch.Tensor]=None, return_output=False, **_) -> torch.Tensor:
             position_ids = attention_mask.long().cumsum(-1) - 1

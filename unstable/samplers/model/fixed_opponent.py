@@ -1,4 +1,0 @@
-
-
-
-class FixedOpponentModelSampler(BaseModelSampler):

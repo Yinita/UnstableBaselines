@@ -8,12 +8,13 @@ from unstable.types import ModelMeta
 
 @ray.remote
 class ModelRegistry:
-    def __init__(self, beta: float = 4.0):
+    def __init__(self, tracker, beta: float = 4.0):
         self.TS = trueskill.TrueSkill(beta=beta)
         self._db: dict[str, ModelMeta] = {}
         self._match_counts = defaultdict(int) # (uid_a, uid_b) -> n
         self._exploration = defaultdict(lambda: defaultdict(dict))
         self._current_ckpt_uid : str | None = None 
+        self._tracker = tracker; self._update_step: int = 1
 
     @staticmethod
     def _scores_to_ranks(scores: List[float]) -> List[int]:
@@ -30,12 +31,12 @@ class ModelRegistry:
         self._db[uid] = ModelMeta(uid=uid, kind="checkpoint", path_or_name=path, rating=rating, iteration=iteration)
         self._current_ckpt_uid = uid # make it current
 
-    def snapshot(self) -> dict[str, dict]: return {uid: asdict(meta) for uid, meta in self._db.items()}
-    def match_counts(self): return copy.deepcopy(self._match_counts)
+    def get_all_models(self): return copy.deepcopy(self._db)
     def get_current_ckpt(self) -> str|None: return self._current_ckpt_uid
     def get_name_or_lora_path(self, uid: str) -> str: return self._db[uid].path_or_name
     def add_fixed(self, name: str, prior_mu: float = 25.): 
         if f"fixed-{name}" not in self._db: self._db[f"fixed-{name}"] = ModelMeta(f"fixed-{name}", "fixed", name, self.TS.create_rating(mu=prior_mu))
+
     def update_ratings(self, uids: List[str], scores: List[float], env_id: str, dummy_uid: str="fixed-env") -> None:
         if len(uids) == 1:
             if dummy_uid not in self._db: self.add_fixed(name=dummy_uid, prior_mu=25.0)
@@ -56,4 +57,8 @@ class ModelRegistry:
         for i, uid_i in enumerate(uids):
             for uid_j in uids[i+1:]:
                 self._match_counts[tuple(sorted((uid_i, uid_j)))] += 1
+        self._update_step += 1
+
+        # push to tracker every n update steps
+        if not self._update_step%10: self._tracker.log_model_registry.remote(ts_dict={uid: asdict(meta) for uid, meta in self._db.items()}, match_counts=copy.deepcopy(self._match_counts))
 

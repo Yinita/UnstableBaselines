@@ -22,7 +22,6 @@ class BaseTracker:
     def get_train_dir(self):        return self.output_dirs["training_data"]
     def get_eval_dir(self):         return self.output_dirs["eval_data"]
     def get_log_dir(self):          return self.output_dirs["logs"]
-    
     def add_trajectory(self, trajectory: PlayerTrajectory, env_id: str): raise NotImplementedError
     def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
     def log_lerner(self, info_dict: Dict): raise NotImplementedError
@@ -55,11 +54,10 @@ class Tracker(BaseTracker):
         try:
             reward = traj.final_reward; player_id = traj.pid
             self._put(f"collection-{env_id}/reward", reward)
-            if len(r) == 2:
-                self._put(f"collection-{env_id}/Win Rate", int(reward==1))
-                self._put(f"collection-{env_id}/Loss Rate", int(reward==-1))
-                self._put(f"collection-{env_id}/Draw", int(reward==0))
-                self._put(f"collection-{env_id}/Reward (pid={traj.pid})", reward)
+            self._put(f"collection-{env_id}/Win Rate", int(reward>0))
+            self._put(f"collection-{env_id}/Loss Rate", int(reward<0))
+            self._put(f"collection-{env_id}/Draw", int(reward==0))
+            self._put(f"collection-{env_id}/Reward (pid={traj.pid})", reward)
             self._put(f"collection-{env_id}/Game Length", traj.num_turns)
             for idx in range(len(traj.obs)):
                 self._put(f"collection-{env_id}/Respone Length (char)", len(traj.actions[idx]))
@@ -71,28 +69,25 @@ class Tracker(BaseTracker):
         except Exception as exc:
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
 
-    def add_game_information(self, game_information: GameInformation):
-        raise NotImplementedError
+    def add_eval_game_information(self, game_information: GameInformation, env_id: str):
+        eval_reward = game_information.final_rewards.get(game_information.eval_model_pid, 0.0)
+        _prefix = f"evaluation-{env_id}" if not game_information.eval_opponent_name else f"evaluation-{env_id} ({game_information.eval_opponent_name})"
+        self._put(f"{_prefix}/Reward", eval_reward)
+        self._put(f"{_prefix}/Reward (pid={game_information.eval_model_pid})", eval_reward)
+        self._put(f"{_prefix}/Win Rate",  int(eval_reward>0))
+        self._put(f"{_prefix}/Loss Rate", int(eval_reward<0))
+        self._put(f"{_prefix}/Draw Rate", int(eval_reward==0))
+        self._n[_prefix] = self._n.get(_prefix, 0) + 1
+        self._put(f"{_prefix}/step", self._n[_prefix])
+        self._buffer.update(self._agg('collection-')); self._flush_if_due()
 
-    def add_eval_episode(self, rewards: list[float], player_id: int, env_id: str):
-        pass
-        # me = rewards[player_id]; opp = rewards[1-player_id] if len(rewards) == 2 else 0
-        # self._put(f"evaluation-{env_id}/Reward", me)
-        # if len(rewards) == 2:
-        #     self._put(f"evaluation-{env_id}/Win Rate", int(me > opp))
-        #     self._put(f"evaluation-{env_id}/Loss Rate", int(me < opp))
-        #     self._put(f"evaluation-{env_id}/Draw Rate", int(me == opp))
-        # self._n[f"evaluation-{env_id}"] = self._n.get(f"evaluation-{env_id}", 0) + 1
-        # self._put(f"evaluation-{env_id}/step", self._n[f"evaluation-{env_id}"])
-        # self._buffer.update(self._agg('evaluation-'))
-
-    def log_model_pool(self, match_counts: dict[tuple[str, str], int], ts_dict: dict[str, dict[str, float]], exploration: dict[str,dict[str,float]]) -> None:
+    def log_model_registry(self, ts_dict: dict[str, dict[str, float]], match_counts: dict[tuple[str, str], int]):
         # top = sorted(match_counts.items(), key=lambda kv: kv[1], reverse=True) # TODO fix this up
         # if top:
         #     tbl = wandb.Table(columns=["uid_a", "uid_b", "games"], data=[[*pair, cnt] for pair, cnt in top])
         #     self._buffer["pool/top_matchups"] = tbl
-        self._interface_stats.update({"TS": ts_dict, "exploration": exploration, "match_counts": match_counts})
-        self._buffer.update({f"exploration/{env_id}/Pct. Unique Action {n_gram}": pct for env_id in exploration.keys() for n_gram, pct in exploration[env_id].items()})
+        self._interface_stats.update({"TS": ts_dict, "exploration": None, "match_counts": match_counts})
+        # self._buffer.update({f"exploration/{env_id}/Pct. Unique Action {n_gram}": pct for env_id in exploration.keys() for n_gram, pct in exploration[env_id].items()})
 
     def log_inference(self, actor: str, gpu_ids: list[int], stats: dict[str, float]):
         for key in stats: self._put(f"inference/{actor}/{key}", stats[key])

@@ -1,4 +1,4 @@
-import ray, torch
+import ray, torch, tree
 from typing import Optional
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt

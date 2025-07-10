@@ -124,7 +124,7 @@ class TerminalInterface:
         if not self._tracker_stats or not self._tracker_stats.get("TS"): return Panel(Text("waiting …"), title="TrueSkill", box=box.DOUBLE)
         bar_field = max(10, int(self.console.size.width * 0.45)-50)
         max_rows = max(3, int(self.console.size.height * 0.35))
-        entries = [(uid, v["mu"], v["sigma"]) for uid, v in self._tracker_stats["TS"].items()]
+        entries = [(uid, v["rating"].mu, v["rating"].sigma) for uid, v in self._tracker_stats["TS"].items()]
         entries.sort(key=lambda x: x[1], reverse=True) # by μ desc
         entries = entries[:max_rows]
         self._ts_idx: dict[str, int] = {}   # reset each draw

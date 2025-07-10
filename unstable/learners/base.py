@@ -43,9 +43,9 @@ class BaseLearner:
             while (ray.get(self.buffer.size.remote()) < self.batch_size * 1.5): time.sleep(0.2) # wait until enough data is available
             self.logger.info("Enough data, starting learning step")
             batch: List = ray.get(self.buffer.get_batch.remote(self.batch_size)); self._samples_seen += self.batch_size
-            accumulated_metrics: Dict[str, float] = self._update(batch=batch) # handled by specific algo implementations
+            accumulated_metrics, update_steps = self._update(batch=batch) # handled by specific algo implementations
 
-            log = {f"{k}": v / num_steps for k, v in metrics_acc.items()}
+            log = {f"{k}": v / update_steps for k, v in accumulated_metrics.items()}
             log.update({"step": self._step,  "samples_seen": self._samples_seen,  "lr": self.policy_optimizer.param_groups[0]["lr"], "grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5})
             self.tracker.log_learner.remote(log)
 

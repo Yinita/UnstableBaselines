@@ -37,6 +37,8 @@ class GameInformation:
     final_rewards:      Dict[int, float] = field(default_factory=dict)
     num_turns:          int = field(default_factory=int)
     names:              Dict[int, str] = field(default_factory=dict)
+    eval_model_pid:     Optional[int] = None
+    eval_opponent_name: Optional[str] = None
 
 @dataclass 
 class AgentSpec:
@@ -54,6 +56,8 @@ class GameSpec:
     env_id: str
     seed: int
     agent_specs: List[AgentSpec]
+    eval_model_pid: Optional[int] = None
+    eval_opponent_name: Optional[str] = None
 
 
 @dataclass
@@ -70,11 +74,6 @@ class TrainEnvSpec:
     prompt_template: str 
     action_extraction_fn: str = "default"
 
-    # def __post_init__(self):
-    #     assert 0 < self.num_actors <= self.num_players
-    #     self.num_opponents = self.num_players - self.num_actors
-
-
 @dataclass 
 class EvalEnvSpec:
     env_id: str 
@@ -82,7 +81,7 @@ class EvalEnvSpec:
     prompt_template: str
     action_extraction_fn: str = "default"
     fixed_opponent: str = "google/gemini-2.0-flash-lite-001"
-    forced_pid: Optional[List] = None # whether to force a specific pid for the collection models
+    # forced_pid: Optional[List] = None # whether to force a specific pid for the collection models
 
 
 @dataclass

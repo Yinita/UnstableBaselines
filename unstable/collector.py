@@ -31,7 +31,7 @@ class CallableActorWrapper:
 
 @ray.remote(num_cpus=0)
 def run_game(game_spec: GameSpec, actor: VLLMActor):
-    game_information = GameInformation(game_idx=game_spec.game_idx)
+    game_information = GameInformation(game_idx=game_spec.game_idx, eval_model_pid=game_spec.eval_model_pid, eval_opponent_name=game_spec.eval_opponent_name)
     agents = {agent_spec.pid: {
         "traj": PlayerTrajectory(pid=agent_spec.pid) if agent_spec.collect_data else None, 
         "name": agent_spec.lora_path if agent_spec.lora_path else agent_spec.openrouter_name,
@@ -50,11 +50,12 @@ def run_game(game_spec: GameSpec, actor: VLLMActor):
         # player specific trackering
         if agents[pid]["traj"] != None:
             agents[pid]["traj"].obs.append(obs); agents[pid]["traj"].actions.append(raw); agents[pid]["traj"].extracted_actions.append(extracted)
-            agents[pid]["traj"].format_feedbacks.append(format_feedback); agents[pid]["traj"].step_infos.append(step_info)
+            format_feedback["invalid_move"] = False; agents[pid]["traj"].format_feedbacks.append(format_feedback); agents[pid]["traj"].step_infos.append(step_info)
         if done: break
     final_rewards, game_info = env.close()
     for pid in agents.keys():
-        agents[pid]["traj"].final_reward=final_rewards[pid]; agents[pid]["traj"].game_info=game_info[pid]; agents[pid]["traj"].num_turns=turn
+        if agents[pid]["traj"]!=None: agents[pid]["traj"].final_reward=final_rewards[pid]; agents[pid]["traj"].game_info=game_info[pid]; agents[pid]["traj"].num_turns=turn
+        if game_info[pid]["invalid_move"] and agents[pid]["traj"]!=None: agents[pid]["traj"].format_feedbacks[-1]["invalid_move"]=True
     game_information.final_rewards=final_rewards; game_information.num_turns=turn; game_information.game_info=game_info
     return game_information, [agents[pid]["traj"] for pid in agents.keys() if agents[pid]["traj"]!=None]
 
@@ -74,25 +75,26 @@ class Collector:
         self.logger.info("Collector initialized")
     
     def _launch_jobs(self, max_train: int, max_eval: Optional[int]):
-        self.logger.info("inside launch jobs")
         while self._num_running("train") < max_train: # submit new train game
-            self.logger.info("inside while loop")
             try:
                 game_spec: GameSpec = ray.get(self.game_scheduler.next_train_job.remote()) # sample game spec
-  
-                self.logger.info(f"received game_spec: {game_spec}")
+                self.logger.info(f"received train game_spec: {game_spec}")
                 actor: VLLMActor = next(self._actor_iter) # get actor
-                self.logger.info(f"running game now")
                 ref = run_game.remote(game_spec, actor)
                 self.flight[ref] = TaskMeta("train", game_spec.env_id)
             except Exception as exc:
-                self.logger.info(f"Exception: {exc}")
-        # latest_ckpt = ray.get(self.model_pool.latest_ckpt.remote())
-        # if self.eval_counter.get(latest_ckpt, 0) < self.max_eval * len(self.eval_envs):
-        #     while self._num_running("eval") < max_eval: 
-        #         self._submit_eval(latest_ckpt)
+                self.logger.info(f"Exception in train game {game_spec}: {exc}")
 
-    
+        while max_eval!=None and self._num_running("eval") < max_eval:
+            try:
+                game_spec: GameSpec = ray.get(self.game_scheduler.next_eval_job.remote())
+                self.logger.info(f"received eval game_spec: {game_spec}")
+                actor: VLLMActor = next(self._actor_iter) # get actor
+                ref = run_game.remote(game_spec, actor)
+                self.flight[ref] = TaskMeta("eval", game_spec.env_id)
+            except Exception as exc:
+                self.logger.info(f"Exception in eval game {game_spec}: {exc}")
+
     def _handle_finished_job(self, ref):
         meta = self.flight.pop(ref)
         try: game_information, player_trajs = ray.get(ref)
@@ -104,7 +106,7 @@ class Collector:
         self.game_scheduler.update.remote(game_info=game_information)
 
     def _post_eval(self, meta: TaskMeta, game_information: GameInformation):
-        raise NotImplementedError
+        self.tracker.add_eval_game_information.remote(game_information=game_information, env_id=meta.env_id)
     
     def collect(self, num_train_workers: int, num_eval_workers: Optional[int]=None):
         self.logger.info("entered collect func")

@@ -7,7 +7,7 @@
 
 code line counts:
 v0.1.0 1,144
-v0.2.0  
+v0.2.0 1,267 (wip)
 
 
 # TODO

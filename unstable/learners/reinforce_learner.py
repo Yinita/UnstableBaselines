@@ -19,7 +19,7 @@ class REINFORCELearner(BaseLearner):
         return enc, advs, obs, avg_len, pct_truncated
 
     def _mini_batch_update_step(self, steps, scaling: float = 1.0):
-        enc, advs, obs, avg_len, pct_truncated = self.prepare_batch(steps=steps)
+        enc, advs, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
         out = self.policy_model(**enc)
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tgt_ids = enc.input_ids[:, 1:]
@@ -47,5 +47,5 @@ class REINFORCELearner(BaseLearner):
         # update weights
         torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.grad_clip)
         self.policy_optimizer.step()
-        return metrics_acc
+        return metrics_acc, self.gradient_acc_steps
         
