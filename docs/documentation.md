@@ -1,170 +1,107 @@
 # Unstable Baselines Documentation
 
-> **Version:** 0.1 · **Last Updated:** 2025-06-24
+> **Version:** 0.3 · **Last Updated:** 2025-07-10
+>
+> This release introduces a dedicated **sampler** layer (`samplers/`), a composable **runtime** builder (`runtime.build()`), and separate **REINFORCE** / **A2C** learners.  `ModelPool` has been renamed **ModelRegistry**, and the data layer now exposes both **StepBuffer** *and* **EpisodeBuffer**.
 
 ---
 
+code‑line counts
+`v0.1.0`  1 144
+`v0.2.0`  1 267 (TODO confirm and plot final)
 
-code line counts:
-v0.1.0 1,144
-v0.2.0 1,267 (wip)
-
-
-# TODO
-- explain the logical flow of everything
-
+---
 
 ## Table of Contents
 
 1. [Introduction](#introduction)
-
 2. [Getting Started](#getting-started)
+
    * Installation
    * Quick Start
-
 3. [Architecture Overview](#architecture-overview)
-
 4. [Core Modules](#core-modules)
-   * [Actor (`actor.py`)](#actor)
-   * [Collector (`collector.py`)](#collector)
-   * [Model Pool (`model_pool.py`)](#model-pool)
-   * [Step Buffer (`buffer.py`)](#step-buffer)
-   * [Learner (`learners/standard_learner.py`)](#learner)
-   * [Tracker (`trackers.py`)](#tracker)
-   * [Terminal Interface (`terminal_interface.py`)](#terminal-interface)
-   * [Core Data Structures (`core.py`)](#core-data-structures)
-
 5. [Reward Transformations](#reward-transformations)
-   * Final Reward
-   * Step Reward
-   * Sampling Reward
-
 6. [Algorithms](#algorithms)
-   * Reinforce (`algorithms/reinforce.py`)
-   * Extending with Custom Algorithms
-
-7. [Utilities and Helpers](#utilities-and-helpers)
-   * Templates (`utils/templates.py`)
-   * Logging (`utils/logging.py`)
-
-8. [Configuration Reference](#configuration-reference)
-
-9. [Contributing](#contributing)
-
-10. [Contact](#contact-and-support)
+7. [Configuration Reference](#configuration-reference)
 
 ---
 
-## Introduction
+## Introduction <a id="introduction"></a>
 
-The logical flow of the code is as follows:
-
-The key piece holding unstable baselines together is the `Collector`. It maintains a pool of `max_train_workers` and `max_eval_workers` in parallel running games. The games to be run are scheduled by the `GameScheduler` which in turns samples the information from the `env_samplers` and `model_samplers` (the latter is for opponent sampling). Once a game is done, the relevant information is passed to the `Tracker` for logging, and the collected Trajectories are passed to the buffer (either `StepBuffer` or `EpisodeBuffer` depending on the algorithm used). Once enough samples are accumulated in the buffer, the `Learner` pulls one batch and trains on it, updating the current checkpoint in the `ModelRegistry`.
-
+The key piece holding **Unstable Baselines** together is the **Collector**.  It maintains a pool of `num_train_workers` and `num_eval_workers` games in flight.  A **GameScheduler** decides *what* to run next by querying the **EnvSampler** (which environment?) and **ModelSampler** (which opponent?).  When a game finishes, trajectories stream into a replay **Buffer**, metrics go to the **Tracker**, and TrueSkill updates flow back to the **ModelRegistry**.
 
 ---
 
-## Getting Started
+## Getting Started <a id="getting-started"></a>
 
 ### Installation
+
 ```bash
-# install UnstableBaselines
 pip install unstable-rl
 ```
 
-### Quick Start
-To get you started, in this short example we will run you through the process of training `Qwen3-1.7B-Base` via **mirror self-play** on _SimpleTak_ and evaluating it against `google/gemini-2.0-flash-lite-001` on _SimpleTak_ and _KuhnPoker_. We will be running the experiments on 3xRTX6000 ada. If you are limited to 24gb of vRam, you can reduce the `MAX_TRAIN_SEQ_LEN` to around _2500_; this means that the model will only be trained on the first 2500 prompt+answer tokens, but can still generate answer that are longer than that. Since (in our experience) models tend to shorten their reasoning throughout training, this works very well.
+### Quick Start
 
+Below we reproduce the *classic* quick‑start snippet in the same style as earlier docs – numbered comments explain each line.
 
 ```python
-import ray, unstable
-import unstable.reward_transformations as retra
+# 1) import the high‑level facade
+import unstable
 
-ray.init(namespace="unstable")
+# 2) declare the training & evaluation environments
+train_envs = [
+    unstable.TrainEnvSpec(
+        env_id="SimpleTak",       # game name
+        num_players=2,             # 2‑player zero‑sum
+        num_actors=1,              # 1 learner actor, rest are opponents
+        prompt_template="qwen3-zs" # prompt formatting key
+    )
+]
 
-tracker = unstable.Tracker.options(name="Tracker").remote(run_name="demo", wandb_project="UB")
+# fixed baseline for eval
+GEMINI = "google/gemini-2.0-flash-lite-001"
 
-step_buffer = unstable.StepBuffer.options(name="StepBuffer").remote(
-    max_buffer_size=768, 
-    tracker=tracker,
-    final_reward_transformation=retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()]),
-    step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
-    sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
+eval_envs = [
+    unstable.EvalEnvSpec(env_id="SimpleTak", num_players=2, prompt_template="qwen3-zs"),
+    unstable.EvalEnvSpec(env_id="KuhnPoker", num_players=2, prompt_template="qwen3-zs")
+]
+
+# 3) spawn every actor via the runtime builder
+run = unstable.runtime.build(
+    model_name="Qwen/Qwen3-1.7B-Base",   # HF base model
+    train_envs=train_envs,
+    eval_envs=eval_envs,
+    algorithm="reinforce",              # learner algo
+    iterations=200,                      # learner update steps
+    opponent_fixed=[GEMINI],             # baseline list
+    num_train_workers=384,               # concurrent self‑play games
+    num_eval_workers=16,                 # concurrent eval games
 )
 
-model_pool = unstable.ModelPool.options(name="ModelPool").remote(sample_mode="mirror", max_active_lora=3, tracker=tracker)
-ray.get(model_pool.add_checkpoint.remote(path=None, iteration=-1)) # set initial checkpoint as no LoRA
-
-lora_cfg = {
-    "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
-    "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]
-}
-collector = unstable.Collector.options(name="Collector").remote(
-    num_actors=2, 
-    step_buffer=step_buffer, 
-    model_pool=model_pool, 
-    tracker=tracker,
-    vllm_config={
-        "model_name": "Qwen/Qwen3-1.7B-base", 
-        "max_parallel_seq": 128,
-        "max_tokens": 4096, 
-        "max_loras": 5, 
-        "lora_config": lora_cfg, 
-        "max_model_len": 8192
-    },
-    training_envs=[("SimpleTak-v0-train", 2, "qwen3-zs")], # (env-id, num players, prompt template)
-    evaluation_envs=[("SimpleTak-v0-train", 2, "qwen3-zs"), ("KuhnPoker-v0-train", 2, "qwen3-zs")],
-    evaluation_opponent="google/gemini-2.0-flash-lite-001",
-)
-
-learner = unstable.StandardLearner.options(num_gpus=1, name="Learner").remote(
-    model_name="Qwen/Qwen3-1.7B-base", 
-    step_buffer=step_buffer,
-    model_pool=model_pool,
-    tracker=tracker,
-    algorithm=unstable.algorithms.Reinforce(),
-    batch_size=384,
-    mini_batch_size=1,
-    learning_rate=1e-5,
-    grad_clip=0.2,
-    lora_cfg=lora_cfg,
-    activation_checkpointing=False,
-    gradient_checkpointing=False,
-    max_train_len=None, # always train on the full sequence
-    max_generation_len=4096, # important for Dr. GRPO
-)
-
-# start the collection and training loops
-collector.collect.remote(num_workers=384, num_eval_workers=16)  
-ray.get(learner.train.remote(200)) # total update steps
+# 4) asynchronous execution helpers
+run.start()  # launches Collector + Learner
+# run.wait()   # block until Learner finishes (200 updates)
+run.stop()   # tear down actors & Ray runtime
 ```
-In a Nutshell, the **Collector** will maintain `384` and `16` in parallel running collection and evaluation games (respectively). Whenever a game finishes, the trajectory is passed to the **StepBuffer** and a new game is started. The **StepBuffer** splits each trajectory into steps and applies the specified reward transformations (on the game and step level first; and batch level once the Learner pulls the next batch).
 
-The **Learner** will periodically (once every 0.2 seconds) check if the **StepBuffer** has accumulated enough data for training. If so, it'll request a full training batch from the **StepBuffer**, train on the data, and push the new set of LoRA weights to the **ModelPool**.
-
-The **Collector** will keep collecting episodes until the Learner tells it to stop (in this case, after `200` update steps).
-
-Since we set `num_eval_workers=16`, throughout training there are always 16 eval games running in parallel (using the most recent lora checkpoint). Running 200 learner steps took a total of ~12h on the 3xRTX6000 ada setup we used.
-![Results (light)](https://raw.githubusercontent.com/LeonGuertler/UnstableBaselines/main/docs/results_plot_light.png#gh-light-mode-only)
-![Results (dark)](https://raw.githubusercontent.com/LeonGuertler/UnstableBaselines/main/docs/results_plot_dark.png#gh-dark-mode-only)
-
-
-As can be seen in the plots the Win-Rate against a fixed opponent (in this case `google/gemini-2.0-flash-lite-001`) improves significantly for both the training and evaluation environment, showing that at least some of learned reasoning patterns generalize to other tasks and problems.
-
+In a nutshell, the **Collector** will keep `384` self‑play and `16` evaluation games running in parallel.  The **Learner** polls the **StepBuffer**; once ≥ `batch_size` steps are available it performs one gradient step, saves a new LoRA adapter, and registers it with the **ModelRegistry**.
 
 ---
 
 ## Architecture Overview <a id="architecture-overview"></a>
 
-The runtime can be thought of as three asynchronous loops:
+The original ASCII diagram is preserved below – only the label *Model Pool* → *Model Registry* changed.
+
 ```
  ┌─────────┐ ┌─────────┐             ┌────────────┐
  │   Env   │ │  Model  │ Get Models  │    Model   │
  │ Sampler │ │ Sampler │◀─────────── │  Registry  │
  └─────────┘ └─────────┘             └────────────┘ 
-      │Sample    │Sample                   ▲    
-      │Env       │Opponent                 │Push
-      ▼          ▼                         │Checkpoint
+      │          │                         ▲
+      │Sample    │Sample                   │Push
+      │Env       │Opponent                 │Checkpoint 
+      ▼          ▼                         │
     ┌───────────────┐              ┌───────────────┐
     │               │              │               │
     │ GameScheduler │              │    Learner    │
@@ -188,691 +125,254 @@ Trajectory │ │ n parallel
            │ ▼
      ┌─────────────┐
      │  run_game() │
-     │  train\eval │
+     │  train/eval │
      └─────────────┘
 ```
 
+---
 
+## Core Modules <a id="core-modules"></a>
 
+| Module                | Source File                  | One‑line Purpose                                  |
+| --------------------- | ---------------------------- | ------------------------------------------------- |
+| **VLLMActor**         | `actor.py`                   | GPU‑bound async text generation + LoRA hot‑swap   |
+| **Collector**         | `collector.py`               | Orchestrates episode rollout & trajectory capture |
+| **ModelRegistry**     | `model_registry.py`          | Keeps checkpoints & TrueSkill ratings             |
+| **EnvSampler**        | `samplers/env_samplers.py`   | Uniform‑random or reward‑aware env selection      |
+| **ModelSampler**      | `samplers/model_samplers.py` | Self‑play / fixed opponent / lagged sampling      |
+| **GameScheduler**     | `game_scheduler.py`          | Converts sampler outputs into GameSpecs           |
+| **StepBuffer**        | `buffers.py`                 | Stores Steps for on‑policy learners               |
+| **EpisodeBuffer**     | `buffers.py`                 | Stores full episodes for off‑policy algorithms    |
+| **Learners**          | `learners/`                  | REINFORCE & A2C LoRA fine‑tuning                  |
+| **Tracker**           | `trackers.py`                | Centralised metrics & W\&B logging                |
+| **TerminalInterface** | `terminal_interface.py`      | Live Rich dashboard                               |
+| **runtime.build()**   | `runtime.py`                 | High‑level factory that wires everything together |
 
-* **Collector** instances roll games with the latest learner checkpoint vs. opponents sampled by the **ModelPool**.
-* End‑of‑game rewards & formatted trajectories land in the **StepBuffer**.
-* The **Learner** periodically drains a batch, performs a gradient step, saves a LoRA checkpoint and registers it with the **ModelPool**.
-* The **Tracker** aggregates metrics; the **Terminal Interface** turns them into a live Rich dashboard.
 
 ---
 
----
-
-# Core Modules
-
-Below is a high‑level index of every core component in **Unstable Baselines**. Click any row (or the ▸ icon) to expand its full reference.
-
-| Module                   | Source File                    | One‑line Purpose                                   |
-| ------------------------ | ------------------------------ | -------------------------------------------------- |
-| **VLLMActor**            | `actor.py`                     | GPU‑bound async text generation + LoRA hot‑swap    |
-| **Collector**            | `collector.py`                 | Orchestrates episode rollout & trajectory capture  |
-| **ModelPool**            | `model_pool.py`                | Checkpoint registry, ELO scores, opponent sampling |
-| **StepBuffer**           | `buffer.py`                    | Replay buffer & prioritised sampling               |
-| **Learner**              | `learners/standard_learner.py` | PPO / REINFORCE optimiser & weight sync            |
-| **Tracker**              | `trackers.py`                  | Centralised metrics & experiment logging           |
-| **TerminalInterface**    | `terminal_interface.py`        | Lightweight CLI dashboard                          |
-| **Core Data Structures** | `core.py`                      | `Trajectory`, `EpisodeResult`, etc. schema         |
-
----
+### Component Reference
 
 <details>
-<summary><strong>VLLMActor (`actor.py`)</strong><a id="actor"></a></summary>
+<summary><strong>VLLMActor (<code>actor.py</code>)</strong><a id="actor"></a></summary>
 
-## `VLLMActor` — *actor.py* <a id="actor"></a>
+GPU‑bound, async wrapper around a single **vLLM** engine.  Queues generation requests, batches them every 20 ms, supports on‑the‑fly **LoRA** hot‑swap, and reports queue size + tokens‑per‑second back to the **Tracker**.
 
-Asynchronous, Ray‑based wrapper around a single **vLLM** engine instance.
-Receives text‑generation requests, batches them on a GPU, supports **LoRA** hot‑swapping, and reports rich throughput metrics.
-
-### Parameters
-
-| Name      | Type                    | Meaning                                              |
-| --------- | ----------------------- | ---------------------------------------------------- |
-| `cfg`     | `Dict[str, Any]`        | Parsed YAML/CLI configuration (selected keys below). |
-| `tracker` | `ray.actor.ActorHandle` | Central metrics sink.                                |
-| `name`    | `str`                   | Human‑readable tag used in logs & dashboards.        |
-
-| **`cfg` keys consumed here**       | Purpose                                           |
-| ---------------------------------- | ------------------------------------------------- |
-| `model_name`                       | Base model (HF id or local path).                 |
-| `max_loras`                        | Maximum resident LoRA adapters (GPU + CPU).       |
-| `lora_config.lora_rank`            | Rank for each adapter.                            |
-| `max_parallel_seq`                 | Upper bound on concurrent sequences per `step()`. |
-| `max_model_len`                    | Context length.                                   |
-| `temperature / top_p / max_tokens` | Sampling hyper‑parameters.                        |
-
-### Attributes
-
-* **`engine`** `vllm.LLMEngine` – underlying generator initialised from **EngineArgs**.
-* **`sampling_params`** `vllm.SamplingParams` – immutable settings shared by every request.
-* **`submit_prompt()`** – awaitable API entry‑point.
-* **`_batch_loop()`** – background task that drains the queue and calls `engine.step()`.
-* **`_report_loop()`** – background task that sends queue / TPS metrics to *Tracker* every 5 s.
-* **`_tok_rate()`** – helper for rolling tokens‑per‑second.
-
-### Runtime Lifecycle
-
-1. **`submit_prompt`** – queues *(prompt, lora)* pair; returns an `asyncio.Future`.
-2. **`_batch_loop`** – every 20 ms drains the queue, adds requests to vLLM, calls `engine.step()`, timestamps new tokens for TPS, fulfils finished futures.
-3. **`_report_loop`** – every 5 s logs & forwards `{queued,running,tok_s}` to *Tracker*.
-4. **Shutdown** – cancelling the Ray actor stops both background tasks gracefully.
-
-### Public API Summary
-
-| Method          | Signature                                                     | Purpose                                                                |
-| --------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| `submit_prompt` | `async (prompt: str, lora_path: Optional[str] = None) -> str` | Enqueue a generation job and await the resulting text.                 |
-| `_tok_rate`     | `(window: float = 2.0) -> float`                              | Rolling tokens‑per‑second over *window* s (internal, handy for tests). |
-
-### Concept Summary
-
-| Concept              | Description                                                                 |
-|----------------------|-----------------------------------------------------------------------------|
-| **vLLM engine**       | Efficient backend that streams text generation using CUDA kernels.          |
-| **LoRA adapter**      | LoRA weights are dynamically loaded and mapped to internal IDs.             |
-| **Prompt queue**      | Prompts are queued with associated LoRA path and processed in batches.      |
-| **Async execution**   | Uses `Future` objects to return results once generation completes.          |
-| **Throughput logging**| Tracks and logs `tokens/sec` to monitor GPU performance.                    |
+* **Public API**  – `submit_prompt(prompt, lora_path=None) -> str`
+* **Background Tasks** – `_batch_loop()` for stepping the engine, `_report_loop()` for metrics.
+* **LoRA pool** – maps adapter paths to numeric IDs so vLLM can switch weights without re‑loading the base model.
 
 </details>
 
 <details>
-<summary><strong>Collector (`collector.py`)</strong><a id="collector"></summary>
+<summary><strong>Collector (<code>collector.py</code>)</strong><a id="collector"></a></summary>
 
-## `Collector` — *collector.py* <a id="collector"></a>
+Orchestrates episode rollout.  Maintains a round‑robin iterator over a pool of **VLLMActor** GPUs, spawns remote `run_game()` tasks, and tracks them in `flight` with accompanying `TaskMeta`.
 
-Ray actor responsible for orchestrating self‑play **training** episodes and fixed‑opponent **evaluation** episodes. It routes finished trajectories to the learner’s **StepBuffer**, maintains ELO scores via **ModelPool**, and logs everything through **Tracker**.
-
-### Responsibilities
-
-* Spawns `num_actors` GPU workers (`VLLMActor`) and assigns episodes round‑robin.
-* Samples training & evaluation environments/opponents.
-* Submits remote `play_episode` tasks, tracks them in `flight`, and handles results.
-* Streams trajectories to **StepBuffer**, pushes game outcomes to **ModelPool**, and records metrics via **Tracker**.
-
-### Constructor Arguments
-
-| Name                      | Type                                | Purpose                                        |
-| ------------------------- | ----------------------------------- | ---------------------------------------------- |
-| `num_actors`              | `int`                               | How many `VLLMActor` GPUs to spawn.            |
-| `step_buffer`             | `ray.actor.ActorHandle`             | Remote buffer storing raw steps.               |
-| `model_pool`              | `ray.actor.ActorHandle`             | Checkpoint registry & ELO logic.               |
-| `tracker`                 | `BaseTracker`                       | Central experiment logger.                     |
-| `vllm_config`             | `dict`                              | Config forwarded to each `VLLMActor`.          |
-| `training_envs`           | `list[(env_id, players, template)]` | Candidate envs for self‑play.                  |
-| `evaluation_envs`         | `list[(env_id, players, template)]` | Candidate envs for offline eval.               |
-| `evaluation_opponent`     | `str`                               | Fixed opponent HF / OpenRouter model.          |
-| `max_eval_games_per_ckpt` | `int`                               | Cap evaluation episodes per checkpoint × env.  |
-| `filter_opponent_invalid` | `bool`                              | Drop games ended by opponent invalid.          |
-| `action_extraction`       | `str`                               | Key selecting extraction/formatting functions. |
-
-### Key Methods
-
-| Method                                   | Purpose                                                                            |
-| ---------------------------------------- | ---------------------------------------------------------------------------------- |
-| `collect(num_workers, num_eval_workers)` | Main loop: keeps *num\_workers* train & *num\_eval\_workers* eval tasks in flight. |
-| `_submit_train()`                        | Launches a training episode with a sampled opponent.                               |
-| `_submit_eval(ckpt_uid)`                 | Launches an evaluation episode against the fixed opponent.                         |
-| `_handle_finished(ref)`                  | Processes a completed `play_episode`; delegates to `_post_train/_post_eval`.       |
-| `_post_train` / `_post_eval`             | Push trajectory / eval reward to downstream subsystems.                            |
-
-### Episode Flow
-
-1. **Spec creation** – build `PlaySpec` describing env, players, checkpoint paths & seeds.
-2. **Remote rollout** – `play_episode.remote(spec, actor)` executes the full loop off‑process.
-3. **Result handling** – finished futures are popped from `flight`; data streamed to buffers & loggers.
-4. **Back‑pressure** – honours `StepBuffer.continue_collection()` to pause when buffer is near capacity.
-
-### Practical Tips
-
-* Increase `num_eval_workers` if evaluation becomes a bottleneck.
-* Enable `filter_opponent_invalid` in competitive settings to ignore wins by opponent invalid move.
-* Separate `training_envs` & `evaluation_envs` to avoid evaluator leakage.
-
-### Concept Summary
-
-| Concept             | Description                                                                            |
-|---------------------|----------------------------------------------------------------------------------------|
-| **Train job**       | Learner vs. sampled opponent → stored in buffer and used for learning                  |
-| **Eval job**        | Learner vs. fixed opponent → logged to evaluate performance                            |
-| **Flight queue**    | Tracks in-progress episodes and metadata (`TaskMeta`)                                  |
-| **Evaluation cap**  | Limits evaluation games per checkpoint to avoid redundancy                             |
+* Submits *training* games until `<num_train_workers>` are running and *evaluation* games until `<num_eval_workers>` are running.
+* Handles results via `_post_train()` (streams trajectories to **Buffer**, updates **ModelRegistry**) or `_post_eval()` (logs rewards).
+* Back‑pressure: pauses submission when `Buffer.continue_collection()` returns `False`.
 
 </details>
 
 <details>
-<summary><strong>ModelPool (`model_pool.py`)</strong><a id="model-pool"></summary>
+<summary><strong>ModelRegistry (<code>model_registry.py</code>)</strong><a id="model-registry"></a></summary>
 
-## `ModelPool` — *model\_pool.py* <a id="model-pool"></a>
+Central store of <em>all</em> opponents – learner checkpoints and fixed baselines.  Uses **TrueSkill** to track skill, records pair‑wise match counts, and exposes two key calls:
 
-Central registry and rating system for **all opponents**: learner checkpoints and fixed baseline models.
-Maintains **TrueSkill** ratings, exploration statistics, opponent sampling logic, and enforces a VRAM‑friendly cap on active LoRA adapters.
+* `add_checkpoint(uid, path, iteration)` – inherit μ/σ from previous ckpt.
+* `update_ratings(uids, scores, env_id)` – batch TrueSkill update after every game.
 
-### Core Flow
+`get_current_ckpt()` returns the latest learner UID; `sample()` is delegated to a **ModelSampler** strategy.
 
-1. **Checkpoint Management**
-   - Adds learner checkpoints (`add_checkpoint`) with inherited or default TrueSkill ratings.
-   - Maintains ≤ `max_active_lora` active checkpoints to control GPU memory usage.
-   - Periodically logs snapshot data to the `Tracker`.
+</details>
 
-2. **Opponent Sampling**
-   - Selects opponents dynamically based on the chosen `sample_mode` (e.g., `mirror`, `lagged`, `match-quality`).
-   - Uses TrueSkill ratings to guide sampling decisions for competitive matchups.
+<details>
+<summary><strong>EnvSampler / ModelSampler (<code>samplers/*.py</code>)</strong><a id="samplers"></a></summary>
 
-3. **Post-Game Updates**
-   - Updates TrueSkill ratings after each game (`push_game_outcome`).
-   - Tracks match counts and gameplay diversity (via n-gram exploration stats).
+* **EnvSampler** – currently `UniformRandomEnvSampler`; plug‑in point for curriculum or reward‑aware scheduling.
+* **ModelSampler** – decides which opponent UID to fight.  Built‑in `FixedOpponentModelSampler` uniformly draws from registered baselines, but you can subclass to implement lagged or TrueSkill‑match‑quality sampling.
 
-### Constructor Arguments
+Both are pure Python – no Ray actors – so they stay cheap and composable.
 
-| Name              | Type                            | Purpose                                               |
-| ----------------- | ------------------------------- | ----------------------------------------------------- |
-| `sample_mode`     | `str`                           | Opponent selection strategy (see *Sampling Modes*).   |
-| `max_active_lora` | `int`                           | Max number of checkpoint LoRAs flagged `active=True`. |
-| `tracker`         | `ray.actor.ActorHandle \| None` | Optional tracker for dashboard snapshots.             |
-| `lag_range`       | `(int,int)`                     | Low/high indices used by the *lagged* strategy.       |
+</details>
 
-### Responsibilities
+<details>
+<summary><strong>GameScheduler (<code>game_scheduler.py</code>)</strong><a id="game-scheduler"></a></summary>
 
-* **Checkpoint registry** – `add_checkpoint()` logs a new UID, carries forward μ/σ.
-* **Fixed opponents** – `add_fixed()` registers static baselines (no checkpoints).
-* **Opponent sampling** – `sample(uid_me)` implements 6+ heuristics.
-* **Rating updates** – `push_game_outcome()` calls `_update_ratings()` and `_register_game()`.
-* **Exploration metrics** – Tracks state‑space coverage via `ExplorationTracker`.
-* **LoRA pool maintenance** – `_maintain_active_pool()` flips `Opponent.active` flags to honor `max_active_lora`.
-* **Snapshotting** – `snapshot()` pushes a JSON‑serialisable view to *Tracker* for later analysis.
+Small Ray actor that fuses `EnvSampler` + `ModelSampler` into concrete **GameSpec** objects.  Keeps an internal `_game_idx` counter (seed) and a `_running_jobs` dict so it can compute average actor/opponent reward when a game finishes.
 
-### Key Methods
+</details>
 
-| Method                                                                 | Returns                | Summary                                            |
-| ---------------------------------------------------------------------- | ---------------------- | -------------------------------------------------- |
-| `current_uid()`                                                        | `str \| None`          | UID of the latest learner checkpoint.              |
-| `latest_ckpt()`                                                        | `str \| None`          | Alias for `current_uid()`.                         |
-| `ckpt_path(uid)`                                                       | `(path, kind) \| None` | Resolve a UID to (filesystem path, kind).          |
-| `sample(uid_me)`                                                       | `str`                  | Choose an opponent UID according to `sample_mode`. |
-| `push_game_outcome(uid_me, uid_opp, final_reward, action_seq, env_id)` | —                      | Update ratings & exploration, then snapshot state. |
+<details>
+<summary><strong>StepBuffer / EpisodeBuffer (<code>buffers.py</code>)</strong><a id="buffer"></a></summary>
 
-### Sampling Modes
+Replay store living on a Ray actor.  Two flavours:
 
-| Mode            | Logic                                                       |         |                                     | Opponent Type(s)   |
-| --------------- | ----------------------------------------------------------- | ------- | ----------------------------------- |--------------------|
-| `fixed`         | Uniform random among fixed baselines only.                  |         |                                     | Fixed              |
-| `mirror`        | Returns the current learner checkpoint (self‑play).         |         |                                     | Checkpoint         |
-| `lagged`        | Uniform among *active* past checkpoints inside `lag_range`. |         |                                     | Checkpoint         |
-| `random`        | Uniform over fixed + active checkpoints.                    |         |                                     | Fixed + Checkpoint |
-| `match-quality` | Softmax based on `TrueSkill.quality()` vs. `uid_me`.        |         |                                     | Fixed + Checkpoint |
-| `ts-dist`       | Softmax over                                                | μ★–μopp | (smaller distance ⇒ higher weight). | Fixed + Checkpoint |
-| `exploration`   | Placeholder: rank opponents by expected state diversity.    |         |                                     |                    |
-***Note**: where Fixed refers to a fixed opponent, and checkpoint refers to a saved LoRA checkpoint.* 
+* **StepBuffer** – flattens trajectories into `Step` objects; ideal for on‑policy REINFORCE style updates.
+* **EpisodeBuffer** – keeps whole episodes; useful for value‑based or off‑policy algorithms.
 
-### Rating Update Formula
+Both support reward‑shaping via three hook pipelines (final / per‑step / sampling‑time) and evict random samples once `len(buffer) > max_buffer_size`.
 
-For a finished game with reward *r ∈ {‑1, 0, 1}* (win/draw/loss for *learner*):
+</details>
+
+<details>
+<summary><strong>REINFORCELearner (<code>learners/reinforce_learner.py</code>)</strong><a id="reinforce"></a></summary>
+
+Pure policy‑gradient learner.  Pulls <code>batch\_size</code> steps, splits into <code>mini\_batch\_size</code> chunks for gradient accumulation, computes <code>-advantage × log p</code>, clips gradients, steps AdamW, saves a LoRA adapter every learner update and registers it with **ModelRegistry**.
+
+</details>
+
+<details>
+<summary><strong>A2CLearner (<code>learners/a2c_learner.py</code>)</strong><a id="a2c"></a></summary>
+
+Actor‑critic sibling.  Builds an extra LoRA‑wrapped **critic** head via `learners.utils.build_peft_model()` and learns both policy & value in tandem.  Uses GAE for advantage computation; optional reward normalisation with `NormalizeRewardsByEnv`.
+
+</details>
+
+<details>
+<summary><strong>Tracker (<code>trackers.py</code>)</strong><a id="tracker"></a></summary>
+
+Lightweight Ray actor that buffers scalar metrics in memory, aggregates them into moving means, and flushes to **Weights & Biases** every 64 s (optional).  Also exposes `get_interface_info()` consumed by the live **TerminalInterface**.
+
+</details>
+
+<details>
+<summary><strong>TerminalInterface (<code>terminal_interface.py</code>)</strong><a id="terminal-interface"></a></summary>
+
+Rich‑based curses UI that renders:
+
+* **GPU panel** – live tokens/sec, power draw, memory usage.
+* **Collection stats** – format success, invalid move rate, game length.
+* **TrueSkill bar chart** – μ/σ for every checkpoint and baseline.
+* **Heat‑map** – match counts between top‑N models.
+
+It refreshes every 2 s and resizes gracefully.
+
+</details>
+
+<details>
+<summary><strong>Runtime Builder (<code>runtime.py</code>)</strong><a id="runtime"></a></summary>
+
+One‑stop factory that spins up **Tracker**, **ModelRegistry**, **Buffer**, **GameScheduler**, **Collector**, and **Learner** actors; wires them together, and returns a handle with `start() / wait() / stop()` helpers.  Pass `algorithm="reinforce"` or `"a2c"` to pick the learner class.
+
+</details>
+
+---
+
+---
+## Reward Transformations <a id="reward-transformations"></a>
+
+Reward shaping in **Unstable Baselines** is fully modular—three independent pipelines can be stacked to turn sparse game outcomes into dense learning signals.
+
+| Pipeline            | Runs                                  | Typical Use-Case                                                                      |
+| ------------------- | ------------------------------------- | ------------------------------------------------------------------------------------- |
+| **Final Reward**    | *once* per game                       | Balance first-player advantage, convert raw env scores into `{-1, 0, 1}` etc.         |
+| **Step Reward**     | every step                            | Give tiny bonuses for valid format, penalise invalid moves, distance-to-goal shaping. |
+| **Sampling Reward** | right before a learner batch is drawn | Normalise or clip advantages, on-policy GAE style transforms.                         |
+
+### Base Interfaces
 
 ```python
-if r == 1:
-    new_a, new_b = TS.rate_1vs1(a, b)      # learner wins
-elif r == -1:
-    new_b, new_a = TS.rate_1vs1(b, a)      # learner loses
-else:
-    new_a, new_b = TS.rate_1vs1(a, b, drawn=True)
+class FinalRewardTransform:
+    def __call__(self, reward: float, pid: int, env_id: str|None=None) -> float: ...
+
+class StepRewardTransform:
+    def __call__(self, player_traj, step_index: int, reward: float) -> float: ...
+
+class SamplingRewardTransform:
+    def __call__(self, steps: list[Step]) -> list[Step]: ...
 ```
 
-μ/σ are then written back into `self._models`.
-
-### Practical Tips
-
-* **Keep `max_active_lora` small** (≤4) when GPUs are scarce; inactive checkpoints can still be sampled as *fixed* opponents via OpenRouter.
-* Switch to **`match-quality`** after a few hundred games to keep training pairs evenly matched.
-* Call **`add_fixed()`** early so baseline ratings converge before checkpoints appear.
-* The **`exploration`** mode is experimental—PRs are welcome!
-
-### Concept Summary
-
-| Concept           | Description                                                                 |
-|-------------------|-----------------------------------------------------------------------------|
-| **Checkpoint**    | LoRA adapter produced during training, rated and stored in the pool.        |
-| **Fixed model**   | Static external opponent (e.g., OpenRouter model).                          |
-| **TrueSkill**     | Used to track skill estimates across games (`μ`, `σ`).                      |
-| **Sampling mode** | Controls opponent selection strategy.                                       |
-| **Active pool**   | Limits active checkpoints to avoid exceeding memory budget.                 |
-
-</details>
-
-<details>
-<summary><strong>StepBuffer (`buffer.py`)</strong><a id="step-buffer"></summary>
-
-## `StepBuffer` — *buffer.py* <a id="step-buffer"></a>
-
-High‑throughput **step‑level** replay buffer that lives on a Ray actor.
-Stores `Step` objects emitted from complete game trajectories, applies configurable reward transformations, downsamples when full, and serves randomised **training batches** to the learner.
-
-### Constructor Arguments
-
-| Name                             | Type                                      | Purpose                                                |
-| -------------------------------- | ----------------------------------------- | ------------------------------------------------------ |
-| `max_buffer_size`                | `int`                                     | Hard cap on number of `Step` objects kept in memory.   |
-| `tracker`                        | `BaseTracker`                             | Logger for buffer metrics & CSV dumps.                 |
-| `final_reward_transformation`    | `ComposeFinalRewardTransforms \| None`    | Optional pipeline applied to end‑of‑game rewards.      |
-| `step_reward_transformation`     | `ComposeStepRewardTransforms \| None`     | Optional function applied at each step (shaping).      |
-| `sampling_reward_transformation` | `ComposeSamplingRewardTransforms \| None` | Optional post‑processing applied *only when sampling*. |
-| `buffer_strategy`                | `str`                                     | Currently only `"random"` (uniform reservoir).         |
-
-### Responsibilities
-
-* **Trajectory ingestion** – `add_trajectory()` unrolls a `Trajectory` into individual `Step`s and stores them.
-* **Reward shaping** – applies the supplied transformation pipelines at *final* and *step* granularity.
-* **Capacity management** – once `len(steps) > max_buffer_size`, uniformly removes excess samples.
-* **Batch provisioning** – `get_batch(batch_size)` uniform random‑samples *without replacement*, applies optional `sampling_reward_transformation`, and returns the list.
-* **Book‑keeping** – CSV dumps of each batch and buffer‑size logging for easy debugging.
-
-### Key Methods
-
-| Method                                          | Returns      | Summary                                                       |
-| ----------------------------------------------- | ------------ | ------------------------------------------------------------- |
-| `add_trajectory(trajectory, player_id, env_id)` | —            | Flattens a finished trajectory into `Step`s and appends them. |
-| `get_batch(batch_size)`                         | `List[Step]` | Pop *batch\_size* random steps; writes a CSV snapshot.        |
-| `clear()`                                       | —            | Purge all stored steps.                                       |
-| `stop()`                                        | —            | Set `collect=False` so Collector pauses ingestion.            |
-| `size()`                                        | `int`        | Current number of stored steps.                               |
-| `continue_collection()`                         | `bool`       | Helper polled by Collector for back‑pressure.                 |
-
-### Reward Transformation Hooks
-
-* **Final reward** – `ComposeFinalRewardTransforms` maps the *vector* of per‑player rewards to a new vector (e.g., win → +1 / loss → –1).
-* **Step reward** – called for each step *i* with `(trajectory, step_index=i, base_reward)`; enables shaped rewards like dense progress signals.
-* **Sampling reward** – run on the *batch* right before returning; useful for on‑policy advantages or normalisation.
-
-### Capacity Workflow
-
-```text
-add_trajectory()
-  ├── append new steps
-  └── if len(steps) > max_buffer_size:
-        random.sample(excess) → steps.remove()
-```
-This simple uniform reservoir keeps memory bounded while preserving sample diversity.
-
-1. **Add Trajectory**  
-   - Converts a finished trajectory into `Step` objects (obs, act, reward).
-   - Applies reward transformations (final, per-step).
-   - Maintains a capped buffer (`max_buffer_size`) via random downsampling.
-
-2. **Sample Batch**  
-   - Randomly samples and removes a batch of steps (`get_batch()`).
-   - Applies optional sampling-time reward transformation.
-   - Logs each batch to disk (CSV).
-
-### Practical Tips
-
-* **Disk snapshots** – batches are written to `<train_dir>/train_data_step_<N>.csv`; disable by monkey‑patching `write_training_data_to_file`.
-* **Prioritised replay** – implement a new `buffer_strategy` (e.g., PER) and replace the random down‑sampling / sampling logic.
-* When training becomes I/O‑bound, consider moving CSV writes onto a background thread or disabling them in production.
-
-### Concept Summary
-
-| Concept           | Description                                                                 |
-|-------------------|-----------------------------------------------------------------------------|
-| **Step**          | One (obs, act, reward) tuple from a single player’s turn.                   |
-| **Reward shaping**| Supports transformations at end-of-game, per-step, and sampling time.       |
-| **Buffer cap**    | Evicts random samples when full (to stay under `max_buffer_size`).          |
-| **Control**       | `stop()` halts collection; `continue_collection()` signals if active.       |
-
-</details>
-
-<details>
-<summary><strong>Learner (`learners/standard_learner.py`)</strong><a id="learner"></a></summary>
-
-## `StandardLearner` — *learners/standard_learner.py* <a id="learner"></a>
-
-Main **parameter‑updating** component. Consumes `Step` batches from **StepBuffer**, computes policy‑gradient losses via a pluggable `BaseAlgo` (e.g., PPO, REINFORCE) and writes **LoRA checkpoints** every *N* steps. Also registers each new checkpoint with **ModelPool** so it can be sampled as an opponent.
-
-### Constructor Arguments
-
-| Name                       | Type          | Purpose                                              |
-| -------------------------- | ------------- | ---------------------------------------------------- |
-| `model_name`               | `str`         | HF id or local path of the *base* model.             |
-| `step_buffer`              | `StepBuffer`  | Source of training data batches.                     |
-| `model_pool`               | `ModelPool`   | Destination for newly‑minted checkpoints.            |
-| `algorithm`                | `BaseAlgo`    | Policy‑gradient implementation (PPO, etc.).          |
-| `batch_size`               | `int`         | Number of `Step`s per learner update.                |
-| `mini_batch_size`          | `int`         | Sub‑division for gradient accumulation.              |
-| `max_generation_len`       | `int`         | Truncation length during rollouts.                   |
-| `learning_rate`            | `float`       | AdamW learning rate (LoRA params only).              |
-| `grad_clip`                | `float`       | Global **L2‑norm** gradient clip.                    |
-| `batch_delay_buffer`       | `float`       | Multiplier controlling back‑pressure on buffer.      |
-| `lora_cfg`                 | `dict`        | LoRA rank, α, dropout, etc.                          |
-| `initial_lora_path`        | `str \| None` | Warm‑start from a prior adapter.                     |
-| `num_learners`             | `int`         | How many concurrent learners share the buffer.       |
-| `ckpt_root`                | `str`         | Directory for saving checkpoints.                    |
-| `save_every`               | `int`         | Save+register every *N* learner steps.               |
-| `activation_checkpointing` | `bool`        | Enable full activation CKPT to save VRAM.            |
-| `gradient_checkpointing`   | `bool`        | Enable HF gradient CKPT.                             |
-| `use_trainer_cache`        | `bool`        | Keep model KV cache during fwd pass (speed vs. RAM). |
-| `max_train_len`            | `int \| None` | Hard limit on token count seen by loss fn.           |
-
-### Training Loop (`train(iterations)`) — High‑level Steps
-
-1. **Wait for data** – block until `StepBuffer.size() ≥ batch_size × batch_delay_buffer`.
-2. **Fetch batch** – `get_batch(batch_size)` returns uniform random `Step`s.
-3. **Gradient accumulation** – split into `mini_batch_size` chunks; call `algorithm.update()` under `torch.autocast(bfloat16)`.
-4. **Clip & step** – global L2 clipping then `optimizer.step()`.
-5. **Logging** – aggregate metrics, grad norm, LR; push to **Tracker**.
-6. **Checkpoint** – every *save\_every* steps, write LoRA adapter to disk and `ModelPool.add_checkpoint()`.
-7. **Stop‑condition** – once `self._step == iterations`, stop buffer collection.
-
-### Attributes Exposed to Other Actors
-
-| Attribute       | Type                               | Description                                        |
-| --------------- | ---------------------------------- | -------------------------------------------------- |
-| `device`        | `torch.device`                     | CUDA / CPU device resolved from Ray GPU placement. |
-| `model`         | `transformers.PreTrainedModel`     | PEFT‑wrapped policy network.                       |
-| `tokenizer`     | `transformers.PreTrainedTokenizer` | Matching tokenizer for `model`.                    |
-| `_step`         | `int`                              | Learner update counter.                            |
-| `_samples_seen` | `int`                              | Cumulative number of `Step`s consumed.             |
-
-### PEFT & Memory Optimisations
-
-* **LoRA‑only training** keeps GPU memory low; base weights are frozen by default.
-* `enable_full_activation_ckpt()` wraps each module in `torch.utils.checkpoint` — expect \~20‑30 % slower fwd pass but ≤50 % VRAM.
-* Set `torch.set_default_dtype(torch.bfloat16)` and `torch.set_float32_matmul_precision('high')` for Ampere+ GPUs.
-
-### Practical Tips
-
-* **Throughput** – choose `batch_delay_buffer ≈ 1.5–2.0`; higher values reduce idle GPU time.
-* **Stability** – if loss spikes, reduce `learning_rate` or increase `grad_clip`.
-* **Checkpoint hygiene** – old adapters can be pruned offline; `ModelPool` only keeps `max_active_lora` in VRAM.
-* **Multiple learners** – set `num_learners > 1` only when you shard the buffer; otherwise they’ll compete for samples.
-
-### Concept Summary
-
-| Concept            | Description                                                                 |
-|--------------------|-----------------------------------------------------------------------------|
-| **Mini-batching**  | Splits training batch into mini-batches for multiple gradient steps.        |
-| **LoRA fine-tuning** | Only LoRA adapter weights are updated and saved.                          |
-| **Gradient safety**| Applies `clip_grad_norm` and supports activation/gradient checkpointing.     |
-| **Logging**        | Sends training metrics (e.g., loss, grad norm) to the `Tracker`.            |
-
-</details>
-
-<details>
-<summary><strong>Tracker (`trackers.py`)</strong><a id="tracker"></a></summary>
-
-## `Tracker` — *trackers.py* <a id="tracker"></a>
-
-Central **metrics bus** for the entire pipeline. Runs as a lightweight Ray
-actor, buffers scalar logs in‑memory, aggregates them into means, and
-periodically pushes the result to **Weights & Biases** (optional) and to
-the interactive terminal UI.
-
-### Constructor Arguments
-
-| Name            | Type          | Purpose                                                                                               |
-| --------------- | ------------- | ----------------------------------------------------------------------------------------------------- |
-| `run_name`      | `str`         | Display name for the current experiment.                                                              |
-| `wandb_project` | `str \| None` | If supplied, `wandb.init(project=…, name=run_name)` is called and every flush uploads a metrics dict. |
-
-### Internal State
-
-| Attribute          | Purpose                                                      |
-| ------------------ | ------------------------------------------------------------ |
-| `FLUSH_EVERY`      | Seconds between *automatic* flushes (default 64 s).          |
-| `_m`               | `defaultdict(str→deque)` raw per‑key history (≤512 entries). |
-| `_buffer`          | Current *aggregated* snapshot that will be flushed.          |
-| `_n`               | Per‑prefix counters (e.g., number of trajectories logged).   |
-| `_interface_stats` | Cached dict used by the **TerminalInterface**.               |
-| `use_wandb`        | Bool gate so the actor works offline too.                    |
-
-### Responsibilities
-
-* **Aggregation** – store every scalar via `_put(k,v)`; compute means with `_agg(prefix)`.
-* **Time‑based flushing** – `_flush_if_due()` fires when `time.monotonic() – _last_flush >= FLUSH_EVERY`.
-* **Metric namespaces** – prefixes encode data sources:
-
-  * `collection‑<env_id>/…` – training trajectories.
-  * `evaluation‑<env_id>/…` – offline evaluation.
-  * `inference/<actor>/…` – GPU token/sec + queue stats.
-  * `learner/…` – loss, grad norm, samples seen.
-* **Model‑pool introspection** – `log_model_pool()` dumps TrueSkill, exploration % and match counts into the dashboard.
-* **Terminal feed** – `get_interface_info()` returns a compact dict used by the curses‑style UI.
-
-### Key Public Methods
-
-| Method                                               | Summary                                                          |
-| ---------------------------------------------------- | ---------------------------------------------------------------- |
-| `add_trajectory(traj, player_id, env_id)`            | Logs reward, win‑rate, formatting success, game length, etc.     |
-| `add_eval_episode(rewards, player_id, env_id)`       | Logs evaluation reward & outcome.                                |
-| `log_inference(actor, gpu_ids, stats)`               | Ingests throughput stats from every `VLLMActor`.                 |
-| `log_learner(info)`                                  | Single‑call log for each learner step (losses, LR, grad norm).   |
-| `log_model_pool(match_counts, ts_dict, exploration)` | Records pool‑level data (TrueSkill μ/σ, unique n‑gram coverage). |
-| `get_interface_info()`                               | Returns dict consumed by **TerminalInterface**.                  |
-
-### Flush Cycle
-
-```text
-┌ every scalar arrives via any log_* method ┐
-│  _put(key, value)                        │
-└──► _buffer.update(_agg(prefix))          │
-            │                              │
-            └──► _flush_if_due() ──► wandb.log(_buffer) every 64 s
-```
-
-### Practical Tips
-
-* **Offline mode** – omit `wandb_project` to disable WANDB completely; metrics remain query‑able via `TerminalInterface`.
-* **Custom scalars** – any key that starts with an existing prefix will
-  be averaged automatically; no schema changes required.
-* **Adjust cadence** – set `Tracker.FLUSH_EVERY = 30` before launching if
-  you prefer faster WANDB updates.
-* **Derived metrics** – compute heavy stats offline; push them via
-  `log_model_pool()` rather than inside the tight game loop.
-
-### Concept Summary
-
-| Concept            | Description                                                                 |
-|--------------------|-----------------------------------------------------------------------------|
-| **Per-env logging**| Tracks separate stats for each training and eval environment.               |
-| **Rolling windows**| Aggregates metrics over recent 512 samples (e.g., format success rate).     |
-| **Interface stats**| Includes GPU throughput, TrueSkill ratings, match counts, exploration.      |
-| **W&B integration**| If configured, logs all stats via Weights & Biases in near real-time.       |
-
-</details>
-
-<details>
-<summary><strong>TerminalInterface (`terminal_interface.py`)</strong><a id="terminal-interface"></a></summary>
-
-## 'Terminal Interface' - *terminal_interface.py* <a id="terminal-interface"></a>
-*Documentation forthcoming…*
-
-</details>
-
-<details>
-<summary><strong>Core Data Structures (`core.py`)</strong><a id="core-data-structures"></a></summary> 
-
-## Key Dataclasses <a id="core-data-structures"></a>
-
-| Name                       | Fields                                                                                    | Purpose                                                          |
-| -------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| **`Trajectory`**           | `pid, obs, actions, extracted_actions, infos, final_rewards, num_turns, format_feedbacks` | Full record of a *single* game episode from one agent’s POV.     |
-| **`Step`**                 | `pid, obs, act, reward, env_id, step_info`                                                | Flattened, per‑turn training sample passed to **Learner**.       |
-| **`Opponent`**             | `uid, kind, path_or_name, rating, active`                                                 | Metadata + TrueSkill rating for every opponent in **ModelPool**. |
-| **`EpisodeResult`**        | `traj, end_by_opponent_invalid, action_seq, final_rewards`                                | Light‑weight wrapper returned by `play_episode()`.               |
-| **`PlaySpec`** *(frozen)*  | `env_id, num_players, player_id, agent_specs, seed`                                       | Declarative description used to spawn a rollout.                 |
-| **`AgentSpec`** *(frozen)* | `kind, model, prompt_template, action_extraction_fn`                                      | Specifies how each player should act inside `play_episode`.      |
-| **`TaskMeta`**             | `type, env_id, player_id, seed, ckpt_uid, opponent_uid`                                   | Book‑keeping blob attached to every in‑flight rollout.           |
-
-### Utility Classes
-
-* **`BaseAlgo`** – abstract interface for policy‑gradient algorithms (`initialize`, `prepare_batch`, `update`).
-* **`BaseTracker`** – filesystem helper that exposes output directories (train / eval / checkpoints / logs).
-* **`ExplorationTracker`** – rolling window *n‑gram* coverage metric used by **ModelPool** to encourage diverse opponents.
-
-### Example — Building a Custom Dataclass
-
-Need a new structure (e.g., to log curiosity bonuses)? Simply import `dataclass` and extend:
+Compose multiple transforms via the provided helpers:
 
 ```python
-from dataclasses import dataclass
-
-@dataclass
-class CuriosityStep:
-    pid: int
-    obs: str
-    act: str
-    reward: float
-    curiosity: float  # 👈 your extra field
-```
-
-`Learner.prepare_batch()` can then branch on `isinstance(step, CuriosityStep)`.
-
-</details>
-
----
-
-# Reward Transformations <a id="reward-transformations"></a>
-
-Below utilities live under `unstable/reward_transformations/`. They let you
-reshape sparse win‑loss rewards into *denser* learning signals or correct
-for known biases (e.g., first‑player advantage).
-
-<details>
-<summary><strong>Final‑Reward Transforms (`transformation_final.py`)</strong></summary>
-
-### API
-
-* Every transform inherits from **`FinalRewardTransform`** and implements
-  `__call__(x: Dict[int, float], env_id: str|None) -> Dict[int, float]`.
-* A stack is built via **`ComposeFinalRewardTransforms([...])`**; transforms
-  are applied *sequentially*.
-
-### Built‑in Transforms
-
-| Class                         | Effect                                             |
-| ----------------------------- | -------------------------------------------------- |
-| `WinDrawLossFormatter`        | Maps raw score *s* → `{‑1,0,1}` win/draw/loss.     |
-| `RoleAdvantageFormatter`      | Subtracts an EMA of each role’s historical reward. |
-| `RoleAdvantageByEnvFormatter` | Same, but tracked per‑environment ID.              |
-
-### Custom Transform Example
-
-```python
-class ScaleRewardTransform(FinalRewardTransform):
-    """Multiply every reward by *alpha*."""
-    def __init__(self, alpha: float = 0.1):
-        self.alpha = alpha
-    def __call__(self, x, env_id=None):
-        return {pid: r * self.alpha for pid, r in x.items()}
-
-# Register it:
-transforms = ComposeFinalRewardTransforms([
-    WinDrawLossFormatter(),
-    ScaleRewardTransform(alpha=0.2),
+final_t  = retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()])
+step_t   = retra.ComposeStepRewardTransforms([
+    retra.RewardForFormat(reward=0.25, penalty=0.0),
+    retra.PenaltyForInvalidMove(penalty=-1.0)
+])
+sample_t = retra.ComposeSamplingRewardTransforms([
+    retra.NormalizeRewardsByEnv(z_score=True)
 ])
 ```
 
-This scales the usual `{‑1,0,1}` output down to `{‑0.2,0,0.2}`.
+Pass these into `StepBuffer` / `EpisodeBuffer` at construction time (the *runtime* builder exposes keyword hooks).
 
-</details>
+#### Built-in Final Reward Transforms
 
-<details>
-<summary><strong>Step‑Reward Transforms (`transformation_step.py`)</strong></summary>
+| Class                         | Effect                                                       |
+| ----------------------------- | ------------------------------------------------------------ |
+| `RoleAdvantageFormatter`      | Subtract a global EMA of each player-ID’s historical reward. |
+| `RoleAdvantageByEnvFormatter` | Same, but tracked per-environment.                           |
 
-### API
+#### Built-in Step Reward Transforms
 
-* Implement **`StepRewardTransform`** with `__call__(trajectory, step_index, base_reward) -> float`.
-* Chain them with **`ComposeStepRewardTransforms([...])`**; each transform receives the output of the previous one.
+| Class                                    | Effect                                                                                  |
+| ---------------------------------------- | --------------------------------------------------------------------------------------- |
+| `RewardForFormat(reward, penalty)`       | Adds *reward* when the agent encloses its answer in `\boxed{}` and *penalty* otherwise. |
+| `PenaltyForInvalidMove(reward, penalty)` | Adds *penalty* if the env marks the step as invalid.                                    |
 
-### Built‑in Transforms
+#### Built-in Sampling Reward Transforms
 
-| Class                   | Effect                                                                           |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| `RewardForFormat`       | Adds `reward` if the agent’s answer is well‑formatted; otherwise adds `penalty`. |
-| `PenaltyForInvalidMove` | Adds `penalty` when the agent commits an invalid move; otherwise adds `reward`.  |
+| Class                                  | Effect                                                       |
+| -------------------------------------- | ------------------------------------------------------------ |
+| `NormalizeRewards(z_score=False)`      | Mean-centres (and optionally z-scores) rewards in the batch. |
+| `NormalizeRewardsByEnv(z_score=False)` | Same but computed separately per env-ID bucket.              |
 
-### Custom Transform Example
-
-```python
-class DiscountFutureRewards(StepRewardTransform):
-    """Apply γ^t discount to every intermediate reward."""
-    def __init__(self, gamma: float = 0.99):
-        self.gamma = gamma
-    def __call__(self, trajectory, step_index, base_reward):
-        return base_reward * (self.gamma ** step_index)
-
-step_transforms = ComposeStepRewardTransforms([
-    RewardForFormat(reward=0.05, penalty=-0.05),
-    DiscountFutureRewards(gamma=0.97),
-])
-```
-
-This first rewards/penalises formatting, then exponentially discounts by step index.
-
-</details>
-
-<details>
-<summary><strong>Sampling‑Reward Transforms (`transformation_sampling.py`)</strong></summary>
-
-### API
-
-* Sub‑class **`SamplingRewardTransform`** and implement `__call__(steps: List[Step]) -> List[Step]`.
-* A stack is applied via **`ComposeSamplingRewardTransforms([...])`** *after* the batch is drawn from **StepBuffer**.
-
-### Built‑in Transforms
-
-| Class                   | Effect                                                                 |
-| ----------------------- | ---------------------------------------------------------------------- |
-| `NormalizeRewards`      | Subtracts the mean reward across the batch (optionally divide by std). |
-| `NormalizeRewardsByEnv` | Mean‑centres (and optionally z‑scores) rewards *per environment ID*.   |
-
-### Custom Transform Example
-
-```python
-class ClampRewards(SamplingRewardTransform):
-    """Clip rewards into [min_r, max_r]."""
-    def __init__(self, min_r: float = -1.0, max_r: float = 1.0):
-        self.min_r, self.max_r = min_r, max_r
-    def __call__(self, steps, env_id=None):
-        for s in steps:
-            s.reward = max(self.min_r, min(self.max_r, s.reward))
-        return steps
-
-sampling_transforms = ComposeSamplingRewardTransforms([
-    NormalizeRewardsByEnv(z_score=True),
-    ClampRewards(min_r=-2, max_r=2),
-])
-```
-
-This normalises rewards per env and then clamps extreme values.
-
-</details>
+Add your own transform by subclassing the relevant base class and appending it to the compose helper.
 
 ---
 
 ## Algorithms <a id="algorithms"></a>
 
-### Reinforce
-Explanation, use-cases, and examples.
+### REINFORCE (On-Policy)
 
-### Extending with Custom Algorithms
-How to implement and integrate custom algorithms.
+Minimal policy-gradient on the frozen backbone + LoRA head.
+
+* **Advantage** = per-step reward (already shaped) – no baseline by default.
+* **Loss** = `-log π(a|s) × advantage` averaged over sequence tokens.
+* **Token masking** – prompt tokens are masked out so only generated tokens contribute to the loss.
+* **Truncation** – `max_train_len` limits context seen by the loss while `max_generation_len` limits new tokens produced during rollouts.
+* **Gradient Accumulation** – `batch_size // mini_batch_size` forward/backward passes before one `optimizer.step()`.
+
+
+
+### A2C (Actor-Critic)
+
+Adds a separate **critic** value head (LoRA wrapped) on the same backbone.
+
+1. **Rollout** as usual, but learner periodically runs the critic to produce state-values for every step.
+2. **GAE** computes advantages + returns.
+3. **Policy Loss** identical to REINFORCE (but uses GAE advantage).
+4. **Value Loss** = 0.5 × MSE(return, value\_pred).
+5. Joint optimisation with two AdamW optimisers (policy & critic).
+
+Key config:
+
+```python
+learner.initialize_algorithm(
+    infer_mini_batch_size=16,     # critic forward batch-size
+    critic_learning_rate=1e-5,
+    normalize_adv=True,           # optional SamplingRewardTransform
+)
+```
+
+### Adding Your Own
+
+Create `learners/my_algo_learner.py`, subclass `BaseLearner`, implement:
+
+* `initialize_algorithm(...)`
+* `_update(batch)` – must `backward()` on model parameters and return a metrics dict.
+  Expose it from `learners/__init__.py` and pass `algorithm="my_algo"` to `runtime.build()`.
+
+\--- <a id="algorithms"></a>
+
+* **REINFORCE** – minimal policy‑gradient with advantage shaping.
+* **A2C** – actor‑critic with GAE; critic shares the frozen backbone + LoRA value head.
+* *Extend your own* – derive from `BaseLearner` and plug into `runtime.build()`.
 
 ---
-
-## Utilities and Helpers <a id="utilities-and-helpers"></a>
-
-### Templates
-Documentation for templates handling prompts and action extraction.
-
-### Logging
-Logging utility documentation.
-
----
-
 ## Configuration Reference <a id="configuration-reference"></a>
 
 Below are recommended configurations for different VRAM capacities. We strongly recommend using **one GPU as a learner** and dedicating **remaining GPUs as actors** for inference.
@@ -919,14 +419,4 @@ Currently you will need at least 2 gpus to run the code (1 learner and 1 actor);
 * Adjust batch sizes carefully—larger batch sizes may require lower truncation lengths.
 
 
-
 ---
-
- 
-## Contributing <a id="contributing"></a>
-Guidelines on contributing to the project.
-
----
-
-## Contact <a id="contact"></a>
-Contact information and channels for support and discussion.
