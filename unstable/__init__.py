@@ -7,9 +7,8 @@ from unstable.model_registry import ModelRegistry
 from unstable.game_scheduler import GameScheduler
 from unstable.types import TrainEnvSpec, EvalEnvSpec
 import unstable.samplers
-import unstable.samplers.env
-import unstable.samplers.model
-import unstable.samplers.model
+import unstable.samplers.env_samplers
+import unstable.samplers.model_samplers
 
 __all__ = ["Collector", "StepBuffer", "EpisodeBuffer", "REINFORCELearner", "A2CLearner", "Tracker", "ModelRegistry", "GameScheduler", "TerminalInterface", "TrainEnvSpec", "EvalEnvSpec"]
 __version__ = "0.2.0"

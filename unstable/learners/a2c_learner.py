@@ -1,14 +1,31 @@
-import ray, torch, tree
+import ray, torch, tree, random
 from typing import Optional
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
 
 
+def compute_gae(rewards, values, gamma=1.0, gae_lambda=1.0): # Compute gae (for policy learning) and return (for critic learning)
+    assert len(rewards) == len(values)
+    advantages = torch.zeros_like(rewards)
+    lastgaelam = 0
+    for t in reversed(range(len(rewards))):
+        if t == len(rewards) - 1:
+            nextnonterminal = 0  # Assume a complete episode
+            nextvalues = 0  # Does not matter
+        else:
+            nextnonterminal = 1.0
+            nextvalues = values[t + 1]
+        delta = rewards[t] + gamma * nextvalues * nextnonterminal - values[t]
+        advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
+    return advantages
+
 @ray.remote
 class A2CLearner(BaseLearner):
-    def initialize_algorithm(self, infer_mini_batch_size: int, critic_learning_rate: float, normalize_adv: bool=False, initial_lora_path: Optional[str]=None):
+    def initialize_algorithm(self, infer_mini_batch_size: int, critic_learning_rate: float, normalize_adv: bool=False, max_generation_len: Optional[int]=None, max_train_len: Optional[int]=None, initial_lora_path: Optional[str]=None):
         self.infer_mini_batch_size = infer_mini_batch_size
         self.normalize_adv = normalize_adv
+        self.max_train_len = max_train_len
+        self.max_generation_len = max_generation_len
 
         # build the critic
         self.critic, _ = build_peft_model(self.model_name, self.device, self.lora_cfg, initial_lora_path, critic_model=True)
@@ -57,7 +74,7 @@ class A2CLearner(BaseLearner):
 
 
     def _update(self, batch):
-        all_samples = tree.flatten(batch_episodes)
+        all_samples = tree.flatten(batch)
         num_samples = len(all_samples)
 
         # construct value targets
@@ -65,14 +82,14 @@ class A2CLearner(BaseLearner):
         for i in range(0, len(all_samples), self.infer_mini_batch_size):
             batch_steps = all_samples[i : i + self.infer_mini_batch_size]
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                _, state_enc, _, _, _, _, _ = self.algorithm.prepare_batch(batch_steps)
+                _, state_enc, _, _, _, _, _ = self._prepare_batch(batch_steps)
                 with torch.no_grad():
                     # take the first token's output
                     target_values = self.critic(**state_enc)[:, 0]
                     all_values.append(target_values)
         all_values = torch.cat(all_values).float().cpu()
-        ep_values = torch.split(all_values, [len(ep) for ep in batch_episodes])
-        ep_rewards = [torch.tensor([step.reward for step in ep]) for ep in batch_episodes]
+        ep_values = torch.split(all_values, [len(ep) for ep in batch])
+        ep_rewards = [torch.tensor([step.reward for step in ep]) for ep in batch]
         ep_advantages = []
         ep_returns = []
         for rewards, values in zip(ep_rewards, ep_values):
@@ -81,7 +98,7 @@ class A2CLearner(BaseLearner):
             ep_returns.append(adv + values)
 
         batch = []
-        for i, ep in enumerate(batch_episodes):
+        for i, ep in enumerate(batch):
             for j, step in enumerate(ep):
                 step = replace(step, reward=ep_advantages[i][j].item())
                 step = replace(step, step_info={**step.step_info, "return": ep_returns[i][j].item(), "advantage": ep_advantages[i][j].item()})
@@ -95,7 +112,7 @@ class A2CLearner(BaseLearner):
 
         batch = random.sample(batch, self.batch_size)
         num_steps = self.batch_size // self.mini_batch_size
-        print(f"Got {num_samples} many samples. Running for {num_steps} steps (i.e. mini batch size: {self.mini_batch_size})")
+        self.logger.info(f"Got {num_samples} many samples. Running for {num_steps} steps (i.e. mini batch size: {self.mini_batch_size})")
 
         if self.normalize_adv: batch = NormalizeRewardsByEnv(True)(batch)
         for i in range(num_steps):
@@ -123,7 +140,7 @@ class A2CLearner(BaseLearner):
         critic_grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.critic.parameters() if p.grad is not None)** 0.5)
         log.update({
             "step": self._step, "samples_seen": self._samples_seen, "lr": self.optimizer.param_groups[0]["lr"], 
-            "grad_norm": grad_norm, "critic_lr": self.critic_optimizer.param_groups[0]["lr"], "grad_norm": critic_grad_norm,
+            "grad_norm": grad_norm, "critic_lr": self.critic_optimizer.param_groups[0]["lr"], "critic_grad_norm": critic_grad_norm,
         })
 
 

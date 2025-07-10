@@ -82,12 +82,7 @@ class Tracker(BaseTracker):
         self._buffer.update(self._agg('collection-')); self._flush_if_due()
 
     def log_model_registry(self, ts_dict: dict[str, dict[str, float]], match_counts: dict[tuple[str, str], int]):
-        # top = sorted(match_counts.items(), key=lambda kv: kv[1], reverse=True) # TODO fix this up
-        # if top:
-        #     tbl = wandb.Table(columns=["uid_a", "uid_b", "games"], data=[[*pair, cnt] for pair, cnt in top])
-        #     self._buffer["pool/top_matchups"] = tbl
         self._interface_stats.update({"TS": ts_dict, "exploration": None, "match_counts": match_counts})
-        # self._buffer.update({f"exploration/{env_id}/Pct. Unique Action {n_gram}": pct for env_id in exploration.keys() for n_gram, pct in exploration[env_id].items()})
 
     def log_inference(self, actor: str, gpu_ids: list[int], stats: dict[str, float]):
         for key in stats: self._put(f"inference/{actor}/{key}", stats[key])

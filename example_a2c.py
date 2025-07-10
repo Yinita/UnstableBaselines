@@ -3,7 +3,7 @@ import unstable.reward_transformations as retra
 
 # always uses 1 learner and the remainder of the GPUS as actors
 COLLECTION_WORKERS = 384
-EVALUATION_WORKERS = 0
+EVALUATION_WORKERS = 16
 ITERATIONS = 200
 MODEL_NAME = "Qwen/Qwen3-0.6B-Base"
 # MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
@@ -37,8 +37,10 @@ vllm_config = {
 # Ray init
 ray.init(namespace="unstable")  
 
+
+
 # initialize environment scheduler
-env_sampler = unstable.samplers.env.UniformRandomEnvSampler(
+env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
         unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
         unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
@@ -47,24 +49,26 @@ env_sampler = unstable.samplers.env.UniformRandomEnvSampler(
         unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
 ])
 
-# initialize model registry
-model_registry = unstable.ModelRegistry.options(name="ModelRegistry").remote()
-ray.get(model_registry.add_checkpoint.remote(uid="base", path=None, iteration=0))
-ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
-
-
-# initialize model sampler
-model_sampler = unstable.samplers.model.BaseModelSampler(model_registry=model_registry) # TODO extend, but now ok for mirror self-play. unstable.model_sampler. # pass model registry here as well
-
-# build game scheduler
-game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler)
-
-
 # Tracker
 tracker = unstable.Tracker.options(name="Tracker").remote(
     run_name=f"Test-{MODEL_NAME.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", 
     wandb_project="UnstableBaselines"
 ) 
+
+# initialize model registry
+model_registry = unstable.ModelRegistry.options(name="ModelRegistry").remote(tracker=tracker)
+ray.get(model_registry.add_checkpoint.remote(uid="base", path=None, iteration=0))
+ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
+
+
+# initialize model sampler
+model_sampler = unstable.samplers.model_samplers.BaseModelSampler(model_registry=model_registry) # TODO extend, but now ok for mirror self-play. unstable.model_sampler. # pass model registry here as well
+
+# build game scheduler
+game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler)
+
+
+
 
 
 # Data Buffer
@@ -97,7 +101,7 @@ learner = unstable.A2CLearner.options(num_gpus=1, name="Learner").remote(
     gradient_checkpointing=GRADIENT_CHECKPOINTING,
     use_trainer_cache=USE_TRAINER_CACHE
 )
-ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=1e-5, normalize_adv=True)) # this part will depend on the algorithm used.
+ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_generation_len=MAX_GENERATION_LENGTH, max_train_len=MAX_TRAIN_SEQ_LEN)) # this part will depend on the algorithm used.
 
 
 

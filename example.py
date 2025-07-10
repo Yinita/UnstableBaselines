@@ -101,7 +101,7 @@ learner = unstable.REINFORCELearner.options(num_gpus=1, name="Learner").remote(
     gradient_checkpointing=GRADIENT_CHECKPOINTING,
     use_trainer_cache=USE_TRAINER_CACHE
 )
-ray.get(learner.initialize_algorithm.remote(cfg={"max_train_len": MAX_TRAIN_SEQ_LEN, "max_generation_len": MAX_GENERATION_LENGTH})) # this part will depend on the algorithm used.
+ray.get(learner.initialize_algorithm.remote(max_train_len=MAX_TRAIN_SEQ_LEN, max_generation_len=MAX_GENERATION_LENGTH))
 
 
 

@@ -57,7 +57,10 @@ v0.2.0 1,267 (wip)
 
 ## Introduction
 
-Brief overview of Unstable Baselines, goals, and main features.
+The logical flow of the code is as follows:
+
+The key piece holding unstable baselines together is the `Collector`. It maintains a pool of `max_train_workers` and `max_eval_workers` in parallel running games. The games to be run are scheduled by the `GameScheduler` which in turns samples the information from the `env_samplers` and `model_samplers` (the latter is for opponent sampling). Once a game is done, the relevant information is passed to the `Tracker` for logging, and the collected Trajectories are passed to the buffer (either `StepBuffer` or `EpisodeBuffer` depending on the algorithm used). Once enough samples are accumulated in the buffer, the `Learner` pulls one batch and trains on it, updating the current checkpoint in the `ModelRegistry`.
+
 
 ---
 
@@ -155,30 +158,28 @@ As can be seen in the plots the Win-Rate against a fixed opponent (in this case 
 
 The runtime can be thought of as three asynchronous loops:
 ```
-                                                ┌───────────────┐
-                                                │               │
-                                                │   Algorithm   │
-                                                │               │
-                                                └───────────────┘
-                                                        ▲        
-                                                        │ Get Loss &
-                                                        │ update weights
-                                                        ▼
-    ┌───────────────┐                           ┌───────────────┐
-    │               │    Register new lora      │               │
-    │   Model Pool  │◀──────────────────────────│    Learner    │
-    │               │       checkpoint          │               │
-    └───────────────┘                           └───────────────┘
-           ▲ │                                         ▲ │ 
-           │ │ Sample                        If enough │ │ Check if enough
-    Update │ │ Opponent                     data, pull │ │ data for training
- Trueskill │ │                          the next batch │ │ is available
-           │ ▼                                         │ ▼
-    ┌───────────────┐                           ┌───────────────┐
-    │               │     Process and store     │               │
-    │   Collector   │──────────────────────────▶│   StepBuffer  │
-    │               │  collected Trajectories   │               │
-    └───────────────┘                           └───────────────┘
+ ┌─────────┐ ┌─────────┐             ┌────────────┐
+ │   Env   │ │  Model  │ Get Models  │    Model   │
+ │ Sampler │ │ Sampler │◀─────────── │  Registry  │
+ └─────────┘ └─────────┘             └────────────┘ 
+      │Sample    │Sample                   ▲    
+      │Env       │Opponent                 │Push
+      ▼          ▼                         │Checkpoint
+    ┌───────────────┐              ┌───────────────┐
+    │               │              │               │
+    │ GameScheduler │              │    Learner    │
+    │               │              │               │
+    └───────────────┘              └───────────────┘
+           ▲ │                            ▲ │ 
+           │ │ Sample           If enough │ │ Check if enough
+    Update │ │ GameSpec        data, pull │ │ data for training
+           │ │             the next batch │ │ is available
+           │ ▼                            │ ▼
+    ┌───────────────┐               ┌────────────┐
+    │               │      Send     │            │
+    │   Collector   │──────────────▶│   Buffer   │
+    │               │ Trajectories  │            │
+    └───────────────┘               └────────────┘
            ▲ │
            │ │ Maintain
     return │ │ Pool of 
@@ -190,6 +191,9 @@ Trajectory │ │ n parallel
      │  train\eval │
      └─────────────┘
 ```
+
+
+
 
 * **Collector** instances roll games with the latest learner checkpoint vs. opponents sampled by the **ModelPool**.
 * End‑of‑game rewards & formatted trajectories land in the **StepBuffer**.

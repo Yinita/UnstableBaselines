@@ -1,12 +1,11 @@
 import ray, torch
 from unstable.learners.base import BaseLearner
 
-
 @ray.remote
 class REINFORCELearner(BaseLearner):
-    def initialize_algorithm(self, cfg):
-        self.max_train_len = cfg.get("max_train_len")
-        self.max_generation_len = cfg["max_generation_len"] # for Dr. GRPO trick
+    def initialize_algorithm(self, max_train_len: int, max_generation_len: int):
+        self.max_train_len = max_train_len
+        self.max_generation_len = max_generation_len # for Dr. GRPO trick
 
     def _prepare_batch(self, steps):
         obs, acts, advs = zip(*[(s.obs, s.act, s.reward) for s in steps])
@@ -44,7 +43,6 @@ class REINFORCELearner(BaseLearner):
                 metrics_acc[k] = metrics_acc.get(k, 0.0) + v
             self.logger.info(f"Mini-step metrics: {update_metrics}")
         self.logger.info(f"Step metrics: {metrics_acc}")
-        # update weights
         torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.grad_clip)
         self.policy_optimizer.step()
         return metrics_acc, self.gradient_acc_steps
