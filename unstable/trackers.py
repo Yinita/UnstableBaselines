@@ -70,16 +70,19 @@ class Tracker(BaseTracker):
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
 
     def add_eval_game_information(self, game_information: GameInformation, env_id: str):
-        eval_reward = game_information.final_rewards.get(game_information.eval_model_pid, 0.0)
-        _prefix = f"evaluation-{env_id}" if not game_information.eval_opponent_name else f"evaluation-{env_id} ({game_information.eval_opponent_name})"
-        self._put(f"{_prefix}/Reward", eval_reward)
-        self._put(f"{_prefix}/Reward (pid={game_information.eval_model_pid})", eval_reward)
-        self._put(f"{_prefix}/Win Rate",  int(eval_reward>0))
-        self._put(f"{_prefix}/Loss Rate", int(eval_reward<0))
-        self._put(f"{_prefix}/Draw Rate", int(eval_reward==0))
-        self._n[_prefix] = self._n.get(_prefix, 0) + 1
-        self._put(f"{_prefix}/step", self._n[_prefix])
-        self._buffer.update(self._agg('collection-')); self._flush_if_due()
+        try:
+            eval_reward = game_information.final_rewards.get(game_information.eval_model_pid, 0.0)
+            _prefix = f"evaluation-{env_id}" if not game_information.eval_opponent_name else f"evaluation-{env_id} ({game_information.eval_opponent_name})"
+            self._put(f"{_prefix}/Reward", eval_reward)
+            self._put(f"{_prefix}/Reward (pid={game_information.eval_model_pid})", eval_reward)
+            self._put(f"{_prefix}/Win Rate",  int(eval_reward>0))
+            self._put(f"{_prefix}/Loss Rate", int(eval_reward<0))
+            self._put(f"{_prefix}/Draw Rate", int(eval_reward==0))
+            self._n[_prefix] = self._n.get(_prefix, 0) + 1
+            self._put(f"{_prefix}/step", self._n[_prefix])
+            self._buffer.update(self._agg('evaluation-')); self._flush_if_due()
+        except Exception as exc:
+            self.logger.info(f"Exception when adding game_info to tracker: {exc}")
 
     def log_model_registry(self, ts_dict: dict[str, dict[str, float]], match_counts: dict[tuple[str, str], int]):
         self._interface_stats.update({"TS": ts_dict, "exploration": None, "match_counts": match_counts})
