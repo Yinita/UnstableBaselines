@@ -24,7 +24,7 @@ class GameScheduler:
                     self._running_jobs[self._game_idx]["models"].append({"uid": current_ckpt_uid, "pid": pid, "type": "model"})
                     agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
                 else: # sample opponent and add
-                    opp_uid, kind, opp_lora_path, opp_openrouter_name = ray.get(self.model_sampler.sample_opponent()) 
+                    opp_uid, kind, opp_lora_path, opp_openrouter_name = self.model_sampler.sample_opponent()
                     agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_openrouter_name)) # TODO might have to adjust what is passed
                     self._running_jobs[self._game_idx]["models"].append({"uid": opp_uid, "pid": pid, "type": "opponent"})
             game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs) # populate GameSpec
@@ -32,6 +32,8 @@ class GameScheduler:
             return game_spec
         except Exception as exc:
             self.logger.info(f"Exception in 'next_train_job': {exc}")
+            import time 
+            time.sleep(500)
 
     def next_eval_job(self):
         try:
@@ -46,6 +48,8 @@ class GameScheduler:
             return game_spec
         except Exception as exc:
             self.logger.info(f"Exception in 'next_eval_job': {exc}")
+            import time 
+            time.sleep(500)
 
     def update(self, game_info: GameInformation):
         job_info = self._running_jobs.pop(game_info.game_idx, None)

@@ -47,12 +47,11 @@ class VLLMActor:
         self._last_step_time = time.monotonic()  # Add health check flag
 
     async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> str:
+        if lora_path is not None and not isinstance(lora_path, str): lora_path = str(lora_path)
         fut = asyncio.Future()
         self._queued += 1
         self._queue.append((prompt, lora_path, fut))
         return await fut
-
-        
 
     async def _batch_loop(self):
         while True:
@@ -78,6 +77,7 @@ class VLLMActor:
                         self.logger.info(lora_req)
                     else:
                         lora_req = None
+                    self.logger.info(f"Using {lora_req}")
                     try:
                         self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
                         self.logger.debug(f"Added request {req_id} with lora {lora}")

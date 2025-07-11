@@ -40,23 +40,27 @@ class BaseLearner:
         self.logger.info("Starting training loop")
 
         while self._step < iterations:
-            while (ray.get(self.buffer.size.remote()) < self.batch_size * 1.5): time.sleep(0.2) # wait until enough data is available
-            self.logger.info("Enough data, starting learning step")
-            batch: List = ray.get(self.buffer.get_batch.remote(self.batch_size)); self._samples_seen += self.batch_size
-            accumulated_metrics, update_steps = self._update(batch=batch) # handled by specific algo implementations
-
-            log = {f"{k}": v / update_steps for k, v in accumulated_metrics.items()}
-            log.update({"step": self._step,  "samples_seen": self._samples_seen,  "lr": self.policy_optimizer.param_groups[0]["lr"], "grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5})
-            self.tracker.log_learner.remote(log)
-
-            # save & register the updated checkpoint
-            ckpt_path = self._save_checkpoint()
             try:
-                self.model_registry.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step)
+                while (ray.get(self.buffer.size.remote()) < self.batch_size * 1.5): time.sleep(0.2) # wait until enough data is available
+                self.logger.info("Enough data, starting learning step")
+                batch: List = ray.get(self.buffer.get_batch.remote(self.batch_size)); self._samples_seen += self.batch_size
+                accumulated_metrics, update_steps = self._update(batch=batch) # handled by specific algo implementations
+
+                log = {f"{k}": v / update_steps for k, v in accumulated_metrics.items()}
+                log.update({"step": self._step,  "samples_seen": self._samples_seen,  "lr": self.policy_optimizer.param_groups[0]["lr"], "grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5})
+                self.tracker.log_learner.remote(log)
+
+                # save & register the updated checkpoint
+                ckpt_path = self._save_checkpoint()
+                try:
+                    self.model_registry.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step)
+                    self.logger.info(f"Registered new ckpt: {ckpt_path}, ckpt-{self._step}")
+                except Exception as exc:
+                    self.logger.info(f"Exception when adding checkpoint: {exc}")
+                self.logger.info(f"registered new ckpt -> {ckpt_path} for iteration{self._step}")
+                self._step += 1
             except Exception as exc:
-                self.logger.info(f"Exception when adding checkpoint: {exc}")
-            self.logger.info(f"registered new ckpt -> {ckpt_path} for iteration{self._step}")
-            self._step += 1
+                    self.logger.info(f"Exception in learner loop: {exc}")
 
         self.logger.info("[Learner] training finished.")
         self.step_buffer.stop.remote()
@@ -65,4 +69,5 @@ class BaseLearner:
         ckpt_dir = self.ckpt_dir / f"iteration-{self._step}"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.policy_model.save_pretrained(ckpt_dir, save_adapter=True)
+        return ckpt_dir
 

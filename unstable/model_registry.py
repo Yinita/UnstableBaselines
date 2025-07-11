@@ -4,6 +4,7 @@ from collections import defaultdict
 from typing import Dict, List
 
 from unstable.types import ModelMeta
+from unstable.utils import setup_logger
 
 
 @ray.remote
@@ -15,6 +16,7 @@ class ModelRegistry:
         self._exploration = defaultdict(lambda: defaultdict(dict))
         self._current_ckpt_uid : str | None = None 
         self._tracker = tracker; self._update_step: int = 1
+        self.logger = setup_logger("model_registry", ray.get(self._tracker.get_log_dir.remote()))
 
     @staticmethod
     def _scores_to_ranks(scores: List[float]) -> List[int]:
@@ -26,10 +28,12 @@ class ModelRegistry:
         return ranks
 
     def add_checkpoint(self, uid: str, path: str, iteration: int, inherit: bool=True):
+        self.logger.info(f"tryin to add ckpt: {uid}, path {path}, iteration {iteration}, inherit: {inherit}")
         if uid in self._db: return
         rating = self.TS.Rating(mu=self._db[self._current_ckpt_uid].rating.mu, sigma=self._db[self._current_ckpt_uid].rating.sigma*2) if (inherit and self._current_ckpt_uid in self._db) else self.TS.create_rating()
         self._db[uid] = ModelMeta(uid=uid, kind="checkpoint", path_or_name=path, rating=rating, iteration=iteration)
         self._current_ckpt_uid = uid # make it current
+        self.logger.info(f"added ckpt: {uid}, path {path}, iteration {iteration}, inherit: {inherit}")
 
     def get_all_models(self): return copy.deepcopy(self._db)
     def get_current_ckpt(self) -> str|None: return self._current_ckpt_uid
