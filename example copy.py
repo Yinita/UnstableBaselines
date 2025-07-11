@@ -62,10 +62,10 @@ ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001")
 
 
 # initialize model sampler
-model_sampler = unstable.samplers.model_samplers.FixedOpponentModelSampler(model_registry=model_registry) # TODO extend, but now ok for mirror self-play. unstable.model_sampler. # pass model registry here as well
+model_sampler = unstable.samplers.model_samplers.BaseModelSampler(model_registry=model_registry) # TODO extend, but now ok for mirror self-play. unstable.model_sampler. # pass model registry here as well
 
 # build game scheduler
-game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler, logging_dir=ray.get(tracker.get_log_dir.remote()))
+game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler)
 
 
 

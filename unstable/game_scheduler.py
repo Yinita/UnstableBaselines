@@ -1,43 +1,51 @@
 import ray, random
+from unstable.utils import setup_logger
 from unstable.types import AgentSpec, GameSpec, GameInformation
 
 @ray.remote
 class GameScheduler:
-    def __init__(self, model_sampler, env_sampler):
+    def __init__(self, model_sampler, env_sampler, logging_dir: str):
+        self.logger = setup_logger("game_scheduler", logging_dir)
         self.model_sampler = model_sampler
         self.env_sampler = env_sampler
         self._game_idx = 0
         self._running_jobs = {}
 
     def next_train_job(self):
-        env_spec = self.env_sampler.sample(kind="train") # sample the env spec
-        current_ckpt_uid, current_ckpt_lora_path = self.model_sampler.get_current_ckpt() # sample the current checkpoint
-        # build the game spec and agent specs
-        pids = list(range(env_spec.num_players))
-        random.shuffle(pids); agent_specs = []
-        self._running_jobs[self._game_idx] = {"env_id": env_spec.env_id, "models": []}
-        for i, pid in enumerate(pids):
-            if i < env_spec.num_actors: # add current ckpt
-                self._running_jobs[self._game_idx]["models"].append({"uid": current_ckpt_uid, "pid": pid, "type": "model"})
-                agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
-            else: # sample opponent and add
-                opp_uid, kind, opp_lora_path, opp_openrouter_name = ray.get(self.model_sampler.sample.remote()) 
-                agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_openrouter_name)) # TODO might have to adjust what is passed
-                self._running_jobs[self._game_idx]["models"].append({"uid": opp_uid, "pid": pid, "type": "opponent"})
-        game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs) # populate GameSpec
-        self._game_idx += 1
-        return game_spec
+        try:
+            env_spec = self.env_sampler.sample(kind="train") # sample the env spec
+            current_ckpt_uid, current_ckpt_lora_path = self.model_sampler.get_current_ckpt() # sample the current checkpoint
+            # build the game spec and agent specs
+            pids = list(range(env_spec.num_players))
+            random.shuffle(pids); agent_specs = []
+            self._running_jobs[self._game_idx] = {"env_id": env_spec.env_id, "models": []}
+            for i, pid in enumerate(pids):
+                if i < env_spec.num_actors: # add current ckpt
+                    self._running_jobs[self._game_idx]["models"].append({"uid": current_ckpt_uid, "pid": pid, "type": "model"})
+                    agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
+                else: # sample opponent and add
+                    opp_uid, kind, opp_lora_path, opp_openrouter_name = ray.get(self.model_sampler.sample_opponent()) 
+                    agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_openrouter_name)) # TODO might have to adjust what is passed
+                    self._running_jobs[self._game_idx]["models"].append({"uid": opp_uid, "pid": pid, "type": "opponent"})
+            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs) # populate GameSpec
+            self._game_idx += 1
+            return game_spec
+        except Exception as exc:
+            self.logger.info(f"Exception in 'next_train_job': {exc}")
 
     def next_eval_job(self):
-        env_spec = self.env_sampler.sample(kind="eval")
-        current_ckpt_uid, current_ckpt_lora_path = self.model_sampler.get_current_ckpt() # sample the current checkpoint
-        pids = list(range(env_spec.num_players))
-        random.shuffle(pids); agent_specs = []
-        for i, pid in enumerate(pids):
-            if i == 0:  agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn)) # only one actor, rest fixed
-            else:       agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=env_spec.fixed_opponent)) # sample opponent and add
-        game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=env_spec.fixed_opponent) # populate GameSpec
-        return game_spec
+        try:
+            env_spec = self.env_sampler.sample(kind="eval")
+            current_ckpt_uid, current_ckpt_lora_path = self.model_sampler.get_current_ckpt() # sample the current checkpoint
+            pids = list(range(env_spec.num_players))
+            random.shuffle(pids); agent_specs = []
+            for i, pid in enumerate(pids):
+                if i == 0:  agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn)) # only one actor, rest fixed
+                else:       agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=env_spec.fixed_opponent)) # sample opponent and add
+            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=env_spec.fixed_opponent) # populate GameSpec
+            return game_spec
+        except Exception as exc:
+            self.logger.info(f"Exception in 'next_eval_job': {exc}")
 
     def update(self, game_info: GameInformation):
         job_info = self._running_jobs.pop(game_info.game_idx, None)
