@@ -48,7 +48,7 @@ class BaseLearner:
 
                 log = {f"{k}": v / update_steps for k, v in accumulated_metrics.items()}
                 log.update({"step": self._step,  "samples_seen": self._samples_seen,  "lr": self.policy_optimizer.param_groups[0]["lr"], "grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5})
-                self.tracker.log_learner.remote(log)
+                self.tracker.log_learner.remote(log, self._step)
 
                 # save & register the updated checkpoint
                 ckpt_path = self._save_checkpoint()

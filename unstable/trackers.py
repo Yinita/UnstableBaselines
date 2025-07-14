@@ -34,11 +34,12 @@ class Tracker(BaseTracker):
         super().__init__(run_name=run_name)
         self.logger = setup_logger("tracker", self.get_log_dir())
         self.use_wandb = False
-        if wandb_project: wandb.init(project=wandb_project, name=run_name); self.use_wandb = True
+        if wandb_project: wandb.init(project=wandb_project, name=run_name); self.use_wandb = True; wandb.define_metric("*", step_metric="learner/step")
         self._m: Dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=512))
         self._buffer: Dict[str, Scalar] = {}
         self._n = {}
         self._last_flush = time.monotonic()
+        self._learner_step = 0
         self._interface_stats = {"gpu_tok_s": {}, "TS": {}, "exploration": {}, "match_counts": {}, "format_success": None, "inv_move_rate": None, "game_len": None}
 
     def _put(self, k: str, v: Scalar): self._m[k].append(v)
@@ -65,6 +66,7 @@ class Tracker(BaseTracker):
                 for k, v in traj.format_feedbacks[idx].items(): self._put(f"collection-{env_id}/Format Success Rate - {k}", v)
             self._n[f"collection-{env_id}"] = self._n.get(f"collection-{env_id}", 0) + 1
             self._put(f"collection-{env_id}/step", self._n[f"collection-{env_id}"])
+            self._put(f"collection-{env_id}/learner-step", self._learner_step)
             self._buffer.update(self._agg('collection-')); self._flush_if_due()
         except Exception as exc:
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
@@ -80,6 +82,7 @@ class Tracker(BaseTracker):
             self._put(f"{_prefix}/Draw Rate", int(eval_reward==0))
             self._n[_prefix] = self._n.get(_prefix, 0) + 1
             self._put(f"{_prefix}/step", self._n[_prefix])
+            self._put(f"{_prefix}/learner-step", self._learner_step)
             self._buffer.update(self._agg('evaluation-')); self._flush_if_due()
         except Exception as exc:
             self.logger.info(f"Exception when adding game_info to tracker: {exc}")
@@ -92,8 +95,10 @@ class Tracker(BaseTracker):
         for gpu_id in gpu_ids: self._interface_stats["gpu_tok_s"][gpu_id] = stats["tok_s"]
         self._buffer.update(self._agg('inference'))
     
-    def log_learner(self, info: dict):
+    def log_learner(self, info: dict, learner_step: int):
+        self._learner_step = learner_step
         self._m.update({f"learner/{k}": v for k, v in info.items()})
+        self._m.update()
         self._buffer.update(self._agg("learner")); self._flush_if_due()
 
     def get_interface_info(self): 

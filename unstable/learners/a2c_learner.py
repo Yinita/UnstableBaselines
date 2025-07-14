@@ -134,7 +134,7 @@ class A2CLearner(BaseLearner):
         except Exception as exc:
             self.logger.exception(f"optimizer.step crashed on step {self._step} -\n\n{exc}\n\n")
             raise
-        self._step += 1
+        # self._step += 1 double increment. Already handled in base
 
         log = {f"{k}": v / num_steps for k, v in metrics_acc.items()}
         grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.model.parameters() if p.grad is not None) ** 0.5)
