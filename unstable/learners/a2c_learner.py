@@ -1,8 +1,9 @@
 import ray, torch, tree, random
 from typing import Optional
+from dataclasses import replace
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
-
+from unstable.reward_transformations.transformation_sampling import NormalizeRewardsByEnv
 
 def compute_gae(rewards, values, gamma=1.0, gae_lambda=1.0): # Compute gae (for policy learning) and return (for critic learning)
     assert len(rewards) == len(values)
@@ -47,9 +48,9 @@ class A2CLearner(BaseLearner):
         return enc, state_enc, advs, rets, obs, avg_len, pct_truncated
 
     def _mini_batch_update_step(self, steps, scaling: float = 1.0):
-        enc, state_enc, advs, rets, obs, avg_len, pct_truncated = self.prepare_batch(steps=steps)
+        enc, state_enc, advs, rets, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
         # Learn policy
-        out = self.model(**enc)
+        out = self.policy_model(**enc)
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tgt_ids = enc.input_ids[:, 1:]
         tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
@@ -136,7 +137,7 @@ class A2CLearner(BaseLearner):
         self._step += 1
 
         log = {f"{k}": v / num_steps for k, v in metrics_acc.items()}
-        grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.model.parameters() if p.grad is not None) ** 0.5)
+        grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5)
         critic_grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.critic.parameters() if p.grad is not None)** 0.5)
         log.update({
             "step": self._step, "samples_seen": self._samples_seen, "lr": self.optimizer.param_groups[0]["lr"], 

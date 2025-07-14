@@ -2,19 +2,18 @@ import time, ray, unstable
 import unstable.reward_transformations as retra
 
 # always uses 1 learner and the remainder of the GPUS as actors
-COLLECTION_WORKERS = 384
-EVALUATION_WORKERS = 16
+COLLECTION_WORKERS = 128
+EVALUATION_WORKERS = 0
 ITERATIONS = 200
-MODEL_NAME = "Qwen/Qwen3-0.6B-Base"
+MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
 # MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
-BATCH_SIZE = 16
+BATCH_SIZE = 8
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
 LR = 1e-5
 GRAD_CLIP = 0.2
 MAX_TRAIN_SEQ_LEN = None
 MAX_GENERATION_LENGTH = 4096 
-SAMPLE_MODE = "mirror"
 
 # vRAM optimization
 ACTIVATION_CHECKPOINTING = True
@@ -65,7 +64,7 @@ ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001")
 model_sampler = unstable.samplers.model_samplers.BaseModelSampler(model_registry=model_registry) # TODO extend, but now ok for mirror self-play. unstable.model_sampler. # pass model registry here as well
 
 # build game scheduler
-game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler)
+game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler, logging_dir=ray.get(tracker.get_log_dir.remote()))
 
 
 
