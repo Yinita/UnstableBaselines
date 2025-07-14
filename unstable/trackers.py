@@ -2,7 +2,7 @@ import os, re, ray, time, wandb, collections, datetime, logging, numpy as np
 from typing import Optional, Union, Dict
 from unstable.utils import setup_logger
 
-from unstable.types import PlayerTrajectory, GameInformation
+from unstable._types import PlayerTrajectory, GameInformation
 
 Scalar = Union[int, float, bool]
 

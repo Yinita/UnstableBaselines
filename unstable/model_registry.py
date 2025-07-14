@@ -3,7 +3,7 @@ from dataclasses import dataclass, asdict
 from collections import defaultdict
 from typing import Dict, List
 
-from unstable.types import ModelMeta
+from unstable._types import ModelMeta
 from unstable.utils import setup_logger
 
 

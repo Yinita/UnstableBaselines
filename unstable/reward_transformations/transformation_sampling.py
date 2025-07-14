@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Optional
 from collections import defaultdict
-from unstable.types import Step
+from unstable._types import Step
 
 class SamplingRewardTransform:
     def __call__(self, steps: List[Step], env_id: Optional[str] = None) -> List[Step]: raise NotImplementedError

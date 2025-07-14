@@ -1,5 +1,6 @@
 import ray, torch, tree, random
 from typing import Optional
+from dataclasses import replace
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
 

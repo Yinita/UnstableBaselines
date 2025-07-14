@@ -11,7 +11,7 @@ assert ta.__version__ >= "0.6.16", f"TextArena package version is too old: {ta._
 
 # local imports
 from unstable.actor import VLLMActor
-from unstable.types import GameSpec, GameInformation, PlayerTrajectory, TaskMeta
+from unstable._types import GameSpec, GameInformation, PlayerTrajectory, TaskMeta
 from unstable.utils.logging import setup_logger
 from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING
 

@@ -1,5 +1,6 @@
-import ray, asyncio, psutil, time, collections, re, pynvml
+import ray, asyncio, psutil, time, re, pynvml
 from typing import Dict, Any, Tuple
+import collections
 from collections import deque
 from itertools import zip_longest
 

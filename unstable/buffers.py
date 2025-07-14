@@ -5,7 +5,7 @@ from typing import List, Dict, Optional, Tuple, Callable
 
 # local imports
 from unstable.utils.logging import setup_logger
-from unstable.types import PlayerTrajectory, Step
+from unstable._types import PlayerTrajectory, Step
 # from unstable.core import BaseTracker
 from unstable.trackers import BaseTracker
 from unstable.utils import write_training_data_to_file
