@@ -14,13 +14,11 @@ LR = 1e-5
 GRAD_CLIP = 0.2
 MAX_TRAIN_SEQ_LEN = None
 MAX_GENERATION_LENGTH = 4096 
-SAMPLE_MODE = "mirror"
 
 # vRAM optimization
 ACTIVATION_CHECKPOINTING = True
 GRADIENT_CHECKPOINTING = True
 USE_TRAINER_CACHE = False
-
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
@@ -33,20 +31,18 @@ vllm_config = {
 }
 
 
-
 # Ray init
 ray.init(namespace="unstable")  
-
-
 
 # initialize environment scheduler
 env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
-        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=1, prompt_template="qwen3-zs"),
+        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"), # if num_players == num_actors, it's mirror self-play and no opponents will be sampled
         # unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
     ],
     eval_env_specs=[
         unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
+        unstable.EvalEnvSpec(env_id="KuhnPoker-v0-train", num_players=2, prompt_template="qwen3-zs"),
 ])
 
 # Tracker
@@ -67,10 +63,6 @@ model_sampler = unstable.samplers.model_samplers.FixedOpponentModelSampler(model
 # build game scheduler
 game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler, logging_dir=ray.get(tracker.get_log_dir.remote()))
 
-
-
-
-
 # Data Buffer
 step_buffer = unstable.StepBuffer.options(name="Buffer").remote(
     max_buffer_size=BUFFER_SIZE, tracker=tracker,
@@ -79,12 +71,10 @@ step_buffer = unstable.StepBuffer.options(name="Buffer").remote(
     sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
 )
 
-
 # initialize the collector
 collector = unstable.Collector.options(name="Collector").remote(
     vllm_config=vllm_config, tracker=tracker, buffer=step_buffer, game_scheduler=game_scheduler,
 )
-
 
 # initialize the learner
 learner = unstable.REINFORCELearner.options(num_gpus=1, name="Learner").remote(
@@ -102,7 +92,6 @@ learner = unstable.REINFORCELearner.options(num_gpus=1, name="Learner").remote(
     use_trainer_cache=USE_TRAINER_CACHE
 )
 ray.get(learner.initialize_algorithm.remote(max_train_len=MAX_TRAIN_SEQ_LEN, max_generation_len=MAX_GENERATION_LENGTH))
-
 
 
 try:

@@ -97,26 +97,26 @@ class A2CLearner(BaseLearner):
             ep_advantages.append(adv)
             ep_returns.append(adv + values)
 
-        batch = []
+        train_batch = []
         for i, ep in enumerate(batch):
             for j, step in enumerate(ep):
                 step = replace(step, reward=ep_advantages[i][j].item())
                 step = replace(step, step_info={**step.step_info, "return": ep_returns[i][j].item(), "advantage": ep_advantages[i][j].item()})
-                batch.append(step)
-        assert len(batch) >= self.batch_size
+                train_batch.append(step)
+        assert len(train_batch) >= self.batch_size
 
         self.policy_optimizer.zero_grad(set_to_none=True)
         self.critic_optimizer.zero_grad(set_to_none=True)
 
         metrics_acc: Dict[str, float] = {}
 
-        batch = random.sample(batch, self.batch_size)
+        train_batch = random.sample(train_batch, self.batch_size)
         num_steps = self.batch_size // self.mini_batch_size
         self.logger.info(f"Got {num_samples} many samples. Running for {num_steps} steps (i.e. mini batch size: {self.mini_batch_size})")
 
-        if self.normalize_adv: batch = NormalizeRewardsByEnv(True)(batch)
+        if self.normalize_adv: train_batch = NormalizeRewardsByEnv(True)(train_batch)
         for i in range(num_steps):
-            sub = batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
+            sub = train_batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                 update_metrics = self._mini_batch_update_step(sub, scaling=num_steps)
             for k, v in update_metrics.items():

@@ -63,7 +63,7 @@ class BaseLearner:
                     self.logger.info(f"Exception in learner loop: {exc}")
 
         self.logger.info("[Learner] training finished.")
-        self.step_buffer.stop.remote()
+        self.buffer.stop.remote()
 
     def _save_checkpoint(self):
         ckpt_dir = self.ckpt_dir / f"iteration-{self._step}"
