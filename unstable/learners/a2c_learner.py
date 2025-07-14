@@ -143,6 +143,7 @@ class A2CLearner(BaseLearner):
             "step": self._step, "samples_seen": self._samples_seen, "lr": self.policy_optimizer.param_groups[0]["lr"], 
             "grad_norm": grad_norm, "critic_lr": self.critic_optimizer.param_groups[0]["lr"], "critic_grad_norm": critic_grad_norm,
         })
+        return log, 1
 
 
 
