@@ -125,7 +125,7 @@ class A2CLearner(BaseLearner):
             self.logger.info(f"Mini-step metrics: {update_metrics}")
         self.logger.info(f"Step metrics: {metrics_acc}")
 
-        torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(),policy_model self.grad_clip)
+        torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.grad_clip)
         torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip)
 
         try:
