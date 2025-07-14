@@ -4,8 +4,10 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Tuple, Protocol, Optional
 
 import ray
-import textarena as ta
 from ray.exceptions import RayActorError, RayTaskError
+
+import textarena as ta
+assert ta.__version__ >= "0.6.16", f"TextArena package version is too old: {ta.__version__}. Required version is at least 0.6.16."
 
 # local imports
 from unstable.actor import VLLMActor
