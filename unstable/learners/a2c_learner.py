@@ -3,7 +3,7 @@ from typing import Optional
 from dataclasses import replace
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
-
+from unstable.reward_transformations.transformation_sampling import NormalizeRewardsByEnv
 
 def compute_gae(rewards, values, gamma=1.0, gae_lambda=1.0): # Compute gae (for policy learning) and return (for critic learning)
     assert len(rewards) == len(values)
@@ -48,9 +48,9 @@ class A2CLearner(BaseLearner):
         return enc, state_enc, advs, rets, obs, avg_len, pct_truncated
 
     def _mini_batch_update_step(self, steps, scaling: float = 1.0):
-        enc, state_enc, advs, rets, obs, avg_len, pct_truncated = self.prepare_batch(steps=steps)
+        enc, state_enc, advs, rets, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
         # Learn policy
-        out = self.model(**enc)
+        out = self.policy_model(**enc)
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tgt_ids = enc.input_ids[:, 1:]
         tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
@@ -65,11 +65,13 @@ class A2CLearner(BaseLearner):
         # Learn value
         value_pred = self.critic(**state_enc)[:, 0]
         value_loss = 0.5 * ((value_pred - rets) ** 2).mean()
+        value_mae = (value_pred - rets).abs().mean()
+        value_dir_acc = ((value_pred > 0) == (rets > 0)).float().mean()
         value_loss.backward()
         torch.cuda.empty_cache()
 
         return {
-            "policy_loss": loss.item(), "value_loss": value_loss.item(), "logp_mean": seq_logp.mean().item(),
+            "policy_loss": loss.item(), "value_loss": value_loss.item(), "logp_mean": seq_logp.mean().item(), "value_mae": value_mae.item(), "value_dir_acc": value_dir_acc.item(),
             "logp_std": seq_logp.std().item(), "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
         }
 
@@ -134,16 +136,16 @@ class A2CLearner(BaseLearner):
         except Exception as exc:
             self.logger.exception(f"optimizer.step crashed on step {self._step} -\n\n{exc}\n\n")
             raise
-        # self._step += 1 double increment. Already handled in base
+        self._step += 1
 
         log = {f"{k}": v / num_steps for k, v in metrics_acc.items()}
-        grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.model.parameters() if p.grad is not None) ** 0.5)
+        grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5)
         critic_grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.critic.parameters() if p.grad is not None)** 0.5)
         log.update({
-            "step": self._step, "samples_seen": self._samples_seen, "lr": self.optimizer.param_groups[0]["lr"], 
+            "step": self._step, "samples_seen": self._samples_seen, "lr": self.policy_optimizer.param_groups[0]["lr"], 
             "grad_norm": grad_norm, "critic_lr": self.critic_optimizer.param_groups[0]["lr"], "critic_grad_norm": critic_grad_norm,
         })
-
+        return log
 
 
 
