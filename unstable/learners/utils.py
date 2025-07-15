@@ -6,6 +6,7 @@ from peft import LoraConfig, get_peft_model, set_peft_model_state_dict
 try:                from torch.utils.checkpoint import CheckpointImpl
 except ImportError: from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import CheckpointImpl
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
+from unstable.learners.model import get_critic_model
 
 def build_critic_cls(base_cls, base_pretrain_cls, value_head_prefix):
     class CriticModel(base_pretrain_cls):
