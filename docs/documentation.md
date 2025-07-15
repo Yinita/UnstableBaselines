@@ -5,11 +5,12 @@
 > This release introduces a dedicated **sampler** layer (`samplers/`), a composable **runtime** builder (`unstable.build()`), and separate **REINFORCE** / **A2C** learners.  `ModelPool` has been renamed **ModelRegistry**, and the data layer now exposes both **StepBuffer** *and* **EpisodeBuffer**.
 
 ---
-
-code‑line counts
-`v0.1.0`  1 144
-`v0.2.0`  1 267 (TODO confirm and plot final)
-
+```
+Lines of Code per Release
+-------------------------
+0.1.0  | ######################     1,144       -> initial release
+0.2.0  | ########################   1,288       -> added A2C, runtime object, environment scheduling
+```
 ---
 
 ## Table of Contents
