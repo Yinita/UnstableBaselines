@@ -97,9 +97,11 @@ class Tracker(BaseTracker):
         self._buffer.update(self._agg('inference'))
     
     def log_learner(self, info: dict):
-        self._m.update({f"learner/{k}": v for k, v in info.items()})
-        self._m.update()
-        self._buffer.update(self._agg("learner")); self._flush_if_due()
+        try:
+            self._m.update({f"learner/{k}": v for k, v in info.items()})
+            self._buffer.update(self._agg("learner")); self._flush_if_due()
+        except Exception as exc:
+            self.logger.info(f"Exception in log_learner: {exc}")
 
     def get_interface_info(self): 
         for inf_key in ["Game Length", "Format Success Rate - correct_answer_format", "Format Success Rate - invalid_move"]: 

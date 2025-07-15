@@ -1,7 +1,8 @@
 import time, ray, unstable
 import unstable.reward_transformations as retra
 
-COLLECTION_WORKERS = 384
+# always uses 1 learner and the remainder of the GPUS as actors
+COLLECTION_WORKERS = 200
 EVALUATION_WORKERS = 16
 ITERATIONS = 200
 MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
@@ -10,7 +11,7 @@ MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = None
+MAX_TRAIN_SEQ_LEN = 3000
 MAX_GENERATION_LENGTH = 4096 
 
 lora_config = {
@@ -29,7 +30,7 @@ ray.init(namespace="unstable")
 # initialize environment scheduler
 env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
-        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"), # if num_players == num_actors, it's mirror self-play and no opponents will be sampled
+        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
     ],
     eval_env_specs=[
         unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
