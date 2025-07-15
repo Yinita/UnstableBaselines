@@ -1,2 +1,0 @@
-- store train trajectory
-- store eval trajectory

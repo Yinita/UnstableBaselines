@@ -1,8 +1,8 @@
 # Unstable Baselines Documentation
 
-> **Version:** 0.2 · **Last Updated:** 2025-07-10
+> **Version:** 0.2 · **Last Updated:** 2025-07-15
 >
-> This release introduces a dedicated **sampler** layer (`samplers/`), a composable **runtime** builder (`runtime.build()`), and separate **REINFORCE** / **A2C** learners.  `ModelPool` has been renamed **ModelRegistry**, and the data layer now exposes both **StepBuffer** *and* **EpisodeBuffer**.
+> This release introduces a dedicated **sampler** layer (`samplers/`), a composable **runtime** builder (`unstable.build()`), and separate **REINFORCE** / **A2C** learners.  `ModelPool` has been renamed **ModelRegistry**, and the data layer now exposes both **StepBuffer** *and* **EpisodeBuffer**.
 
 ---
 
@@ -16,9 +16,9 @@ code‑line counts
 
 1. [Introduction](#introduction)
 2. [Getting Started](#getting-started)
-
    * Installation
-   * Quick Start
+   * Minimal Script
+   * Standard Script
 3. [Architecture Overview](#architecture-overview)
 4. [Core Modules](#core-modules)
 5. [Reward Transformations](#reward-transformations)
@@ -29,7 +29,7 @@ code‑line counts
 
 ## Introduction <a id="introduction"></a>
 
-The key piece holding **Unstable Baselines** together is the **Collector**.  It maintains a pool of `num_train_workers` and `num_eval_workers` games in flight.  A **GameScheduler** decides *what* to run next by querying the **EnvSampler** (which environment?) and **ModelSampler** (which opponent?).  When a game finishes, trajectories stream into a replay **Buffer**, metrics go to the **Tracker**, and TrueSkill updates flow back to the **ModelRegistry**.
+The key piece holding **Unstable Baselines** together is the **Collector**.  It maintains a pool of `num_train_workers` and `num_eval_workers` games in flight.  A **GameScheduler** decides *what* to run next by querying the **EnvSampler** (which environment?) and **ModelSampler** (which opponent?).  When a game finishes, trajectories stream into a replay **Buffer**, metrics go to the **Tracker**, and TrueSkill updates flow back to the **ModelRegistry**. Once enough samples are available in the **Buffer**, the **Learner** (currently either **REINFORCELeanrner** or **A2CLearner**) pulls them and trains. The new checkpoint will be added to the **ModelRegistry**.
 
 ---
 
@@ -41,51 +41,169 @@ The key piece holding **Unstable Baselines** together is the **Collector**.  I
 pip install unstable-rl
 ```
 
-### Quick Start
-
-Below we reproduce the *classic* quick‑start snippet in the same style as earlier docs – numbered comments explain each line.
+### Minimal Script
+TO offer and easier starting off point, in `v0.2.0` we added a runner that handles all necessary initializations etc. Here is an example script for training `Qwen/Qwen3-1.7B-Base` on `SimpleTak-v0-train` via mirror self-play and evaluating it on `SimpleTak-v0-train` and `KuhnPoker-v0-train` against **google/gemini-2.0-flash-lite-001** (our default fixed opponent).
 
 ```python
-# 1) import the high‑level facade
 import unstable
 
-# 2) declare the training & evaluation environments
-train_envs = [
-    unstable.TrainEnvSpec(
-        env_id="SimpleTak",       # game name
-        num_players=2,             # 2‑player zero‑sum
-        num_actors=1,              # 1 learner actor, rest are opponents
-        prompt_template="qwen3-zs" # prompt formatting key
-    )
-]
-
-# fixed baseline for eval
-GEMINI = "google/gemini-2.0-flash-lite-001"
-
-eval_envs = [
-    unstable.EvalEnvSpec(env_id="SimpleTak", num_players=2, prompt_template="qwen3-zs"),
-    unstable.EvalEnvSpec(env_id="KuhnPoker", num_players=2, prompt_template="qwen3-zs")
-]
-
-# 3) spawn every actor via the runtime builder
-run = unstable.runtime.build(
-    model_name="Qwen/Qwen3-1.7B-Base",   # HF base model
-    train_envs=train_envs,
-    eval_envs=eval_envs,
-    algorithm="reinforce",              # learner algo
-    iterations=200,                      # learner update steps
-    opponent_fixed=[GEMINI],             # baseline list
-    num_train_workers=384,               # concurrent self‑play games
-    num_eval_workers=16,                 # concurrent eval games
+run = unstable.build(
+    model_name = "Qwen/Qwen3-1.7B-Base",
+    train_envs = [unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs")],
+    eval_envs = [
+        unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
+        unstable.EvalEnvSpec(env_id="KuhnPoker-v0-train", num_players=2, prompt_template="qwen3-zs")
+    ]
 )
+run.start(learning_steps=200, num_collection_workers=256, num_eval_workers=16)
+```
+The `unstable.build(...)` setup includes a lot of default choices that are somewhat hidden. To make using this easier, here is a table of parameters, expected formats and the default choices:
 
-# 4) asynchronous execution helpers
-run.start()  # launches Collector + Learner
-# run.wait()   # block until Learner finishes (200 updates)
-run.stop()   # tear down actors & Ray runtime
+| **Parameter**                | **Type / Accepted values**         | **Default**                                                 | **What it does / notes**                                                                                                    |
+| ---------------------------- | ---------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------|
+| `model_name`                 | `str` (HF repo, GGUF path, etc.)   | **required**                                                | Base LM to fine-tune / RL-train.                                                                                            |
+| `train_envs`                 | `Sequence[TrainEnvSpec]`           | **required**                                                | Environments used for data collection / learning.                                                                           |
+| `eval_envs`                  | `Sequence[EvalEnvSpec] \| None`    | `None`                                                      | Optional evaluation envs; if omitted, no eval runs.                                                                         |
+| `env_sampling_strategy`      | `"random"` *(only option for now)* | `"random"`                                                  | Chooses the env sampler. Maps to `UniformRandomEnvSampler`.                                                                 |
+| `opponent_sampling_strategy` | `"none"`, `"mirror"`, `"fixed"`    | `"none"`                                                    | How collectors pick opponent models.<br/>• **none**/**mirror** → self-play<br/>• **fixed** → sample from `fixed_opponents`. |
+| `fixed_opponents`            | `Sequence[str]`                    | `["google/gemini-2.0-flash-lite-001"]`                      | Only used when `opponent_sampling_strategy="fixed"`.                                                                        |
+| `algorithm`                  | `"reinforce"` or `"a2c"`           | `"reinforce"`                                               | Chooses learner class and buffer shape.                                                                                     |
+| `max_train_len`              | `int \| None`                      | `None`                                                      | Truncation length for *training* prompts; fed into `vllm_config["max_tokens"]`.                                             |
+| `max_generation_len`         | `int`                              | `4096`                                                      | Truncation length for *inference* continuation and Dr. GRPO Trick.                                                          |
+| `batch_size`                 | `int`                              | `384`                                                       | Global batch per learner update (pulled from buffer).                                                                       |
+| `mini_batch_size`            | `int`                              | `1`                                                         | Micro-batch size inside each update step.                                                                                   |
+| `learning_rate`              | `float`                            | `1e-5`                                                      | AdamW base LR.                                                                                                              |
+| `gradient_clipping`          | `float`                            | `0.2`                                                       | Global‐norm clip.                                                                                                           |
+| `activation_checkpointing`   | `bool`                             | `True`                                                      | Enables selective `torch.utils.checkpoint` on forwards.                                                                     |
+| `gradient_checkpointing`     | `bool`                             | `True`                                                      | Turns on HF-style gradient ckpt in transformer blocks.                                                                      |
+| `use_trainer_cache`          | `bool`                             | `False`                                                     | Re-use a cached HF `Trainer` between restarts.                                                                              |
+| `buffer_size`                | `int \| None`                      | `batch_size × 2`                                            | Capacity of the shared replay buffer.                                                                                       |
+| `lora_config`                | `dict \| None`                     | `None` → falls back to **\_DEFAULT\_LORA\_CFG** (see below) | LoRA hyper-params applied to the model.                                                                                     |
+| `vllm_config`                | `dict \| None`                     | `None` → auto-built by **\_default\_vllm\_cfg**             | Passed straight to `Collector` for vLLM engine.                                                                             |
+| `wandb_project`              | `str`                              | `"UnstableBaselines"`                                       | Which Weights & Biases project to log into.                                                                                 |
+
+```python
+_DEFAULT_LORA_CFG = {
+    "lora_rank": 32,
+    "lora_alpha": 32,
+    "lora_dropout": 0.0,
+    "target_modules": ["q_proj","k_proj","v_proj","o_proj", 
+                       "gate_proj","up_proj","down_proj"],
+}
+```
+```python
+def _default_vllm_cfg(model_name, lora_cfg, max_generation_len):
+    return {
+        "model_name": model_name,
+        "temperature": 0.6,
+        "max_tokens": max_generation_len,   # <- None means vLLM will infer
+        "max_parallel_seq": 128,
+        "max_loras": 8,
+        "lora_config": lora_cfg,
+        "max_model_len": 8192,
+    }
+
 ```
 
-In a nutshell, the **Collector** will keep `384` self‑play and `16` evaluation games running in parallel.  The **Learner** polls the **StepBuffer**; once ≥ `batch_size` steps are available it performs one gradient step, saves a new LoRA adapter, and registers it with the **ModelRegistry**.
+
+### Standard Script
+
+If you are looking for a bit more control and flexibility, here is how we usually run the code:
+
+```python
+import time, ray, unstable
+import unstable.reward_transformations as retra
+
+COLLECTION_WORKERS = 384
+EVALUATION_WORKERS = 16
+ITERATIONS = 200
+MODEL_NAME = "Qwen/Qwen3-4B-Base"
+BATCH_SIZE = 384
+MINI_BATCH_SIZE = 1
+BUFFER_SIZE = 384*2
+LR = 1e-5
+GRAD_CLIP = 0.2
+MAX_TRAIN_SEQ_LEN = None
+MAX_GENERATION_LENGTH = 4096 
+
+lora_config = {
+    "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
+    "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]
+}
+vllm_config = {
+    "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": MAX_GENERATION_LENGTH,
+    "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_config,
+    "max_model_len": 8192
+}
+
+# Ray init
+ray.init(namespace="unstable")  
+
+# initialize environment scheduler
+env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
+    train_env_specs=[
+        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"), # if num_players == num_actors, it's mirror self-play and no opponents will be sampled
+    ],
+    eval_env_specs=[
+        unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
+        unstable.EvalEnvSpec(env_id="KuhnPoker-v0-train", num_players=2, prompt_template="qwen3-zs"),
+])
+
+# Tracker
+tracker = unstable.Tracker.options(name="Tracker").remote(
+    run_name=f"Test-{MODEL_NAME.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", 
+    wandb_project="UnstableBaselines"
+) 
+
+# initialize model registry
+model_registry = unstable.ModelRegistry.options(name="ModelRegistry").remote(tracker=tracker)
+ray.get(model_registry.add_checkpoint.remote(uid="base", path=None, iteration=0))
+ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
+
+# initialize model sampler
+model_sampler = unstable.samplers.model_samplers.BaseModelSampler(model_registry=model_registry) 
+
+# build game scheduler
+game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler, logging_dir=ray.get(tracker.get_log_dir.remote()))
+
+# Data Buffer
+step_buffer = unstable.StepBuffer.options(name="Buffer").remote(
+    max_buffer_size=BUFFER_SIZE, tracker=tracker,
+    final_reward_transformation=retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()]),
+    step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
+    sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
+)
+
+# initialize the collector
+collector = unstable.Collector.options(name="Collector").remote(
+    vllm_config=vllm_config, tracker=tracker, buffer=step_buffer, game_scheduler=game_scheduler,
+)
+
+# initialize the learner
+learner = unstable.REINFORCELearner.options(num_gpus=1, name="Learner").remote(
+    model_name=MODEL_NAME,
+    lora_cfg=lora_config,
+    batch_size=BATCH_SIZE,
+    mini_batch_size=MINI_BATCH_SIZE,
+    learning_rate=LR,
+    grad_clip=GRAD_CLIP,
+    buffer=step_buffer,
+    tracker=tracker,
+    model_registry=model_registry,
+    activation_checkpointing=True,
+    gradient_checkpointing=True,
+    use_trainer_cache=False
+)
+ray.get(learner.initialize_algorithm.remote(max_train_len=MAX_TRAIN_SEQ_LEN, max_generation_len=MAX_GENERATION_LENGTH))
+
+
+try:
+    collector.collect.remote(num_train_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS)
+    ray.get(learner.train.remote(ITERATIONS))
+finally:
+    ray.kill(collector, no_restart=True)
+    ray.shutdown()
+```
 
 ---
 
