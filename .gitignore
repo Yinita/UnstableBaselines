@@ -187,3 +187,5 @@ checkpoint*
 
 outputs/*
 sandbox.rst
+
+_local/*
