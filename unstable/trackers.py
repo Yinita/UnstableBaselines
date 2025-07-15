@@ -2,8 +2,8 @@ import os, re, ray, time, wandb, collections, datetime, logging, numpy as np
 from typing import Optional, Union, Dict
 from unstable.utils import setup_logger
 
-from unstable.types import PlayerTrajectory, GameInformation
-
+from unstable._types import PlayerTrajectory, GameInformation
+from unstable.utils import write_game_information_to_file
 Scalar = Union[int, float, bool]
 
 class BaseTracker:
@@ -34,7 +34,7 @@ class Tracker(BaseTracker):
         super().__init__(run_name=run_name)
         self.logger = setup_logger("tracker", self.get_log_dir())
         self.use_wandb = False
-        if wandb_project: wandb.init(project=wandb_project, name=run_name); self.use_wandb = True
+        if wandb_project: wandb.init(project=wandb_project, name=run_name); self.use_wandb = True; wandb.define_metric("*", step_metric="learner/step")
         self._m: Dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=512))
         self._buffer: Dict[str, Scalar] = {}
         self._n = {}
@@ -81,6 +81,10 @@ class Tracker(BaseTracker):
             self._n[_prefix] = self._n.get(_prefix, 0) + 1
             self._put(f"{_prefix}/step", self._n[_prefix])
             self._buffer.update(self._agg('evaluation-')); self._flush_if_due()
+
+            # try storing the eval info to file
+            write_game_information_to_file(game_info=game_information, filename=os.path.join(self.get_eval_dir(), f"{env_id}-{game_information.game_idx}.csv"))
+
         except Exception as exc:
             self.logger.info(f"Exception when adding game_info to tracker: {exc}")
 

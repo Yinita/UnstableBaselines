@@ -6,7 +6,6 @@ COLLECTION_WORKERS = 200
 EVALUATION_WORKERS = 16
 ITERATIONS = 200
 MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
-# MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 BATCH_SIZE = 384
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
@@ -14,12 +13,6 @@ LR = 1e-5
 GRAD_CLIP = 0.2
 MAX_TRAIN_SEQ_LEN = 3000
 MAX_GENERATION_LENGTH = 4096 
-
-# vRAM optimization
-ACTIVATION_CHECKPOINTING = True
-GRADIENT_CHECKPOINTING = True
-USE_TRAINER_CACHE = False
-
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
@@ -31,18 +24,13 @@ vllm_config = {
     "max_model_len": 8192
 }
 
-
-
 # Ray init
 ray.init(namespace="unstable")  
-
-
 
 # initialize environment scheduler
 env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
         unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
-        # unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
     ],
     eval_env_specs=[
         unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
@@ -60,16 +48,11 @@ model_registry = unstable.ModelRegistry.options(name="ModelRegistry").remote(tra
 ray.get(model_registry.add_checkpoint.remote(uid="base", path=None, iteration=0))
 ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
 
-
 # initialize model sampler
-model_sampler = unstable.samplers.model_samplers.BaseModelSampler(model_registry=model_registry) # TODO extend, but now ok for mirror self-play. unstable.model_sampler. # pass model registry here as well
+model_sampler = unstable.samplers.model_samplers.BaseModelSampler(model_registry=model_registry) 
 
 # build game scheduler
 game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler, logging_dir=ray.get(tracker.get_log_dir.remote()))
-
-
-
-
 
 # Data Buffer
 step_buffer = unstable.EpisodeBuffer.options(name="Buffer").remote(
@@ -79,12 +62,10 @@ step_buffer = unstable.EpisodeBuffer.options(name="Buffer").remote(
     sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
 )
 
-
 # initialize the collector
 collector = unstable.Collector.options(name="Collector").remote(
     vllm_config=vllm_config, tracker=tracker, buffer=step_buffer, game_scheduler=game_scheduler,
 )
-
 
 # initialize the learner
 learner = unstable.A2CLearner.options(num_gpus=1, name="Learner").remote(
@@ -97,12 +78,11 @@ learner = unstable.A2CLearner.options(num_gpus=1, name="Learner").remote(
     buffer=step_buffer,
     tracker=tracker,
     model_registry=model_registry,
-    activation_checkpointing=ACTIVATION_CHECKPOINTING,
-    gradient_checkpointing=GRADIENT_CHECKPOINTING,
-    use_trainer_cache=USE_TRAINER_CACHE
+    activation_checkpointing=True,
+    gradient_checkpointing=True,
+    use_trainer_cache=False
 )
-ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_generation_len=MAX_GENERATION_LENGTH, max_train_len=MAX_TRAIN_SEQ_LEN)) # this part will depend on the algorithm used.
-
+ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=32, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=MAX_TRAIN_SEQ_LEN, max_generation_len=MAX_GENERATION_LENGTH))
 
 
 try:
@@ -111,7 +91,3 @@ try:
 finally:
     ray.kill(collector, no_restart=True)
     ray.shutdown()
-
-
-
-

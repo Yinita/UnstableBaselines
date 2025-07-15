@@ -1,5 +1,5 @@
 from typing import List
-from unstable.types import PlayerTrajectory
+from unstable._types import PlayerTrajectory
 
 class StepRewardTransform:
     def __call__(self, player_traj: PlayerTrajectory, step_index: int, reward: float) -> float: raise NotImplementedError

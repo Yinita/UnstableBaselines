@@ -1,6 +1,6 @@
 import ray, random
 from unstable.utils import setup_logger
-from unstable.types import AgentSpec, GameSpec, GameInformation
+from unstable._types import AgentSpec, GameSpec, GameInformation
 
 @ray.remote
 class GameScheduler:
