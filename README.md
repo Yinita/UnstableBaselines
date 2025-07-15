@@ -23,7 +23,7 @@ An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning mode
 > **Work in progress — interfaces will change.**
 
 ## Updates
-* 15/07/2025: v0.2.0: A2C, runtime object, environment scheduling
+* 15/07/2025: __v0.2.0__ A2C, runtime object, environment scheduling
 * 23/06/2025: Early release of the pip package (`pip install unstable-rl`)
 * 22/06/2025: Early release of the code base
 
@@ -195,6 +195,7 @@ unstable-terminal
 ```
 The rendered interface will currently look something like this: (please not that it might change in the future as UnstableBaselines is very much still under development)
 ![](https://github.com/LeonGuertler/UnstableBaselines/blob/main/docs/terminal_interface.gif)
+
 The .gif doesn't do it justice, looks nice when you run it yourself haha.
 
 ### Results
