@@ -48,8 +48,7 @@ class StepBuffer(BaseBuffer):
                 self.steps.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
         self.logger.info(f"Buffer size: {len(self.steps)}, added {len(player_traj.obs)} steps")
         # downsample if necessary
-        excess_num_samples = max(0, len(self.steps) - self.max_buffer_size)
-        self.logger.info(f"Excess Num Samples: {excess_num_samples}")
+        excess_num_samples = max(0, len(self.steps) - self.max_buffer_size); self.logger.info(f"Excess Num Samples: {excess_num_samples}")
         if excess_num_samples > 0:
             self.logger.info(f"Downsampling buffer because of excess samples")
             with self.mutex: 
