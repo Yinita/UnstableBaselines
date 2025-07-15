@@ -18,18 +18,11 @@ class _UBRun:
     def start(self, learning_steps: int = 200, num_collection_workers: int = 256, num_eval_workers: int = 16):
         try:
             self.collector.collect.remote(num_train_workers=num_collection_workers, num_eval_workers=num_eval_workers)
-            print("Collector started succesfully, starting learner loop now.\nYou can track your run on WandB as well as via the 'unstable-terminal' command in a new terminal window.")
             ray.get(self.learner.train.remote(learning_steps))
         finally:
-            ray.kill(collector, no_restart=True)
-            ray.shutdown()
+            ray.kill(collector, no_restart=True); ray.shutdown()
 
-def build(
-    *,
-    model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_envs: Optional[Sequence[unstable.EvalEnvSpec]]=None, env_sampling_strategy: str = "random", opponent_sampling_strategy: str = "none", fixed_opponents: Sequence[str] = ["google/gemini-2.0-flash-lite-001"],
-    algorithm: str = "reinforce", max_train_len: Optional[int]=None, max_generation_len: int=4096, batch_size: int=384, mini_batch_size: int=1, learning_rate: float=1e-5, gradient_clipping: float=0.2, activation_checkpointing: bool=True, gradient_checkpointing: bool=True,
-    use_trainer_cache: bool = False, buffer_size: Optional[int]=None, lora_config: Optional[dict]=None, vllm_config: Optional[dict]=None, wandb_project: str="UnstableBaselines"
-):
+def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_envs: Optional[Sequence[unstable.EvalEnvSpec]]=None, env_sampling_strategy: str = "random", opponent_sampling_strategy: str = "none", fixed_opponents: Sequence[str] = ["google/gemini-2.0-flash-lite-001"], algorithm: str = "reinforce", max_train_len: Optional[int]=None, max_generation_len: int=4096, batch_size: int=384, mini_batch_size: int=1, learning_rate: float=1e-5, gradient_clipping: float=0.2, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool = False, buffer_size: Optional[int]=None, lora_config: Optional[dict]=None, vllm_config: Optional[dict]=None, wandb_project: str="UnstableBaselines"):
     # Ray init
     ray.init(namespace="unstable")  
     
@@ -64,10 +57,7 @@ def build(
 
     # initialize the learner
     assert algorithm in _ALGOS, f"algorithm='{algorithm}' not found. Please use one of: {list(_ALGOS.keys())}"
-    learner = _ALGOS[algorithm].options(num_gpus=1, name="Learner").remote(
-        model_name=model_name, lora_cfg=_lora_cfg, batch_size=batch_size, mini_batch_size=mini_batch_size, learning_rate=learning_rate, grad_clip=gradient_clipping,
-        buffer=buffer, tracker=tracker, model_registry=model_registry, activation_checkpointing=activation_checkpointing, gradient_checkpointing=gradient_checkpointing, use_trainer_cache=use_trainer_cache
-    )
+    learner = _ALGOS[algorithm].options(num_gpus=1, name="Learner").remote(model_name=model_name, lora_cfg=_lora_cfg, batch_size=batch_size, mini_batch_size=mini_batch_size, learning_rate=learning_rate, grad_clip=gradient_clipping, buffer=buffer, tracker=tracker, model_registry=model_registry, activation_checkpointing=activation_checkpointing, gradient_checkpointing=gradient_checkpointing, use_trainer_cache=use_trainer_cache)
     match algorithm:
         case "reinforce":   ray.get(learner.initialize_algorithm.remote(max_train_len=max_train_len, max_generation_len=max_generation_len))
         case "a2c":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len)) # TODO find better solution

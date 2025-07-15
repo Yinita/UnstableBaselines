@@ -9,7 +9,7 @@
 Lines of Code per Release
 -------------------------
 0.1.0  | ######################     1,144       -> initial release
-0.2.0  | ########################   1,288       -> added A2C, runtime object, environment scheduling
+0.2.0  | ########################   1,269       -> added A2C, runtime object, environment scheduling
 ```
 ---
 

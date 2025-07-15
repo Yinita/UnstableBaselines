@@ -55,12 +55,10 @@ class BaseLearner:
                 try:
                     self.model_registry.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step)
                     self.logger.info(f"Registered new ckpt: {ckpt_path}, ckpt-{self._step}")
-                except Exception as exc:
-                    self.logger.info(f"Exception when adding checkpoint: {exc}")
+                except Exception as exc: self.logger.info(f"Exception when adding checkpoint: {exc}")
                 self.logger.info(f"registered new ckpt -> {ckpt_path} for iteration{self._step}")
                 self._step += 1
-            except Exception as exc:
-                    self.logger.info(f"Exception in learner loop: {exc}")
+            except Exception as exc: self.logger.info(f"Exception in learner loop: {exc}")
 
         self.logger.info("[Learner] training finished.")
         self.buffer.stop.remote()

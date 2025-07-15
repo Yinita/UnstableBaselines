@@ -72,8 +72,7 @@ class TerminalInterface:
             gpu_panels.append(Panel(Group(line1, line2, line3), title=f"GPU{gpu_d['id']} - {role}", box=box.SQUARE, padding=(0, 1)))
         
         # build a 2-column grid (rows = ceil(N/2))
-        tbl = Table.grid(expand=True, padding=0)
-        tbl.add_column(ratio=1); tbl.add_column(ratio=1)
+        tbl = Table.grid(expand=True, padding=0); tbl.add_column(ratio=1); tbl.add_column(ratio=1)
         for a, b in zip_longest(gpu_panels[0::2], gpu_panels[1::2], fillvalue=Panel("\n\n")): tbl.add_row(a, b) # filler for odd counts
         return Panel(tbl, title="GPU Performance", box=box.DOUBLE)
 
@@ -120,8 +119,7 @@ class TerminalInterface:
 
     def _exploration(self) -> Panel: return Panel(Text("Not Implemented"), title="Exploration", box=box.DOUBLE) 
     async def run(self):
-        layout = Layout()
-        layout.split_column(Layout(name="grid"), Layout(name="gpu", size=5*((self.gpu_count+self.gpu_count%2)//2)+2))
+        layout = Layout(); layout.split_column(Layout(name="grid"), Layout(name="gpu", size=5*((self.gpu_count+self.gpu_count%2)//2)+2))
         layout["grid"].split_row(Layout(name="col1"), Layout(name="col2")); layout["col1"].split_column(Layout(name="exploration",ratio=1), Layout(name="heatmap", ratio=2))
         layout["col2"].split_column(Layout(name="ts"), Layout(name="bs", size=6)); asyncio.create_task(self._fetch_loop())  # Start background fetcher
         with Live(layout, console=self.console, auto_refresh=False) as live:

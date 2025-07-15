@@ -17,11 +17,9 @@ def build_critic_cls(base_cls, base_pretrain_cls, value_head_prefix):
             setattr(self, value_head_prefix, torch.nn.Linear(config.hidden_size, 1, bias=False))
 
         def forward(self, input_ids: torch.LongTensor=None, attention_mask: Optional[torch.Tensor]=None, return_output=False, **_) -> torch.Tensor:
-            position_ids = attention_mask.long().cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 1)
+            position_ids = attention_mask.long().cumsum(-1) - 1; position_ids.masked_fill_(attention_mask == 0, 1)
             outputs = getattr(self, self.base_model_prefix)(input_ids, attention_mask=attention_mask, position_ids=position_ids)
-            last_hidden_states = outputs["last_hidden_state"]
-            values = getattr(self, self.value_head_prefix)(last_hidden_states).squeeze(-1)
+            last_hidden_states = outputs["last_hidden_state"]; values = getattr(self, self.value_head_prefix)(last_hidden_states).squeeze(-1)
             if return_output:   return (values, outputs)
             else:               return values
     return CriticModel
@@ -52,9 +50,8 @@ def _build_lora(model, lora_cfg: Dict[str, Any], task_type: str):
     ))
 
 def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any]|None, initial_lora_path: Optional[str]=None, freeze_base: bool=True, critic_model: bool=False, value_head_prefix: str="value_head") -> Tuple[torch.nn.Module, "transformers.PreTrainedTokenizer"]:
-    dtype = torch.bfloat16
     task_type = "TOKEN_CLS" if critic_model else "CAUSAL_LM"
-    base = get_critic_model(base_name, device, torch_dtype=dtype, value_head_prefix=value_head_prefix) if critic_model else _load_base(base_name, dtype, device)
+    base = get_critic_model(base_name, device, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix) if critic_model else _load_base(base_name, torch.bfloat16, device)
     if freeze_base: _freeze(base, None if not critic_model else value_head_prefix)
     model = _build_lora(base, lora_cfg or {}, task_type).to(device)
     if initial_lora_path: _load_lora_state(model, initial_lora_path)
@@ -70,7 +67,6 @@ def enable_full_activation_ckpt(model):
     def checkpoint_everything(mod):
         if isinstance(mod, LoraLayer): return False
         for _, child in mod.named_modules():
-            if isinstance(child, LoraLayer):
-                return False
+            if isinstance(child, LoraLayer): return False
         return True
-    apply_activation_checkpointing(model, checkpoint_wrapper_fn=lambda m: checkpoint_wrapper(m, checkpoint_impl=CheckpointImpl.NO_REENTRANT), check_fn=checkpoint_everything)  # “always recompute”
+    apply_activation_checkpointing(model, checkpoint_wrapper_fn=lambda m: checkpoint_wrapper(m, checkpoint_impl=CheckpointImpl.NO_REENTRANT), check_fn=checkpoint_everything)  # "always recompute"

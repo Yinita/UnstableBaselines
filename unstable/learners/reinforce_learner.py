@@ -39,8 +39,7 @@ class REINFORCELearner(BaseLearner):
             sub = batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16): 
                 update_metrics = self._mini_batch_update_step(sub, scaling=self.gradient_acc_steps)
-            for k, v in update_metrics.items():
-                metrics_acc[k] = metrics_acc.get(k, 0.0) + v /  self.gradient_acc_steps
+            for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v /  self.gradient_acc_steps
             self.logger.info(f"Mini-step metrics: {update_metrics}")
         self.logger.info(f"Step metrics: {metrics_acc}")
         torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.grad_clip)

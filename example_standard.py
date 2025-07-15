@@ -1,15 +1,7 @@
 import time, ray, unstable
 import unstable.reward_transformations as retra
 
-COLLECTION_WORKERS = 384
-EVALUATION_WORKERS = 16
-ITERATIONS = 200
-MODEL_NAME = "Qwen/Qwen3-4B-Base"
-BATCH_SIZE = 384
-MINI_BATCH_SIZE = 1
-BUFFER_SIZE = 384*2
-LR = 1e-5
-GRAD_CLIP = 0.2
+MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
 MAX_TRAIN_SEQ_LEN = None
 MAX_GENERATION_LENGTH = 4096 
 
@@ -55,7 +47,7 @@ game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(mod
 
 # Data Buffer
 step_buffer = unstable.StepBuffer.options(name="Buffer").remote(
-    max_buffer_size=BUFFER_SIZE, tracker=tracker,
+    max_buffer_size=384*2, tracker=tracker,
     final_reward_transformation=retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()]),
     step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
     sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
@@ -70,10 +62,10 @@ collector = unstable.Collector.options(name="Collector").remote(
 learner = unstable.REINFORCELearner.options(num_gpus=1, name="Learner").remote(
     model_name=MODEL_NAME,
     lora_cfg=lora_config,
-    batch_size=BATCH_SIZE,
-    mini_batch_size=MINI_BATCH_SIZE,
-    learning_rate=LR,
-    grad_clip=GRAD_CLIP,
+    batch_size=384,
+    mini_batch_size=1,
+    learning_rate=1e-5,
+    grad_clip=0.2,
     buffer=step_buffer,
     tracker=tracker,
     model_registry=model_registry,
@@ -85,8 +77,8 @@ ray.get(learner.initialize_algorithm.remote(max_train_len=MAX_TRAIN_SEQ_LEN, max
 
 
 try:
-    collector.collect.remote(num_train_workers=COLLECTION_WORKERS, num_eval_workers=EVALUATION_WORKERS)
-    ray.get(learner.train.remote(ITERATIONS))
+    collector.collect.remote(num_train_workers=384, num_eval_workers=16)
+    ray.get(learner.train.remote(200))
 finally:
     ray.kill(collector, no_restart=True)
     ray.shutdown()
