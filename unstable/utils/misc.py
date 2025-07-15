@@ -1,5 +1,4 @@
-
-import csv
+import csv, json
 from unstable._types import GameInformation
 
 
