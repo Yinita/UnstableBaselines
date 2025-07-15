@@ -189,3 +189,5 @@ outputs/*
 sandbox.rst
 
 _local/*
+
+count_lines.py
