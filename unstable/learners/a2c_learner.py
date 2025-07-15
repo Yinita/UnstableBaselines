@@ -66,11 +66,12 @@ class A2CLearner(BaseLearner):
         value_pred = self.critic(**state_enc)[:, 0]
         value_loss = 0.5 * ((value_pred - rets) ** 2).mean()
         value_mae = (value_pred - rets).abs().mean()
+        value_dir_acc = ((value_pred > 0) == (rets > 0)).float().mean()
         value_loss.backward()
         torch.cuda.empty_cache()
 
         return {
-            "policy_loss": loss.item(), "value_loss": value_loss.item(), "logp_mean": seq_logp.mean().item(), "value_mae": value_mae.item(),
+            "policy_loss": loss.item(), "value_loss": value_loss.item(), "logp_mean": seq_logp.mean().item(), "value_mae": value_mae.item(), "value_dir_acc": value_dir_acc.item(),
             "logp_std": seq_logp.std().item(), "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
         }
 
