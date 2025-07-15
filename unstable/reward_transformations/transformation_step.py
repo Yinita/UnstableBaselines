@@ -1,32 +1,23 @@
 from typing import List
-from unstable.core import Trajectory
+from unstable._types import PlayerTrajectory
 
 class StepRewardTransform:
-    def __call__(self, trajectory: Trajectory, step_index: int, base_reward: float) -> float: raise NotImplementedError
+    def __call__(self, player_traj: PlayerTrajectory, step_index: int, reward: float) -> float: raise NotImplementedError
 
 class ComposeStepRewardTransforms:
-    def __init__(self, transforms: List[StepRewardTransform]):  self.transforms = transforms
-    def __repr__(self):                                         return f"{self.__class__.__name__}({self.transforms})"
-    def register(self, transform: StepRewardTransform):         self.transforms.append(transform)
-    def __call__(self, trajectory: Trajectory, step_index: int, base_reward: float) -> float:
-        for t in self.transforms:
-            base_reward = t(trajectory, step_index, base_reward)
-        return base_reward
+    def __init__(self, transforms: List[StepRewardTransform]): self.transforms = transforms
+    def __call__(self, player_traj: PlayerTrajectory, step_index: int, reward: float) -> float:
+        for transform in self.transforms: reward = transform(player_traj, step_index, reward)
+        return reward
 
 class RewardForFormat(StepRewardTransform):
-    def __init__(self, reward: float=0, penalty: float=0):
-        self.reward = reward
-        self.penalty = penalty
-    def __call__(self, trajectory: Trajectory, step_index: int, base_reward: float) -> float:
-        if trajectory.format_feedbacks[step_index].get("correct_answer_format"):    base_reward += self.reward
-        else:                                                                       base_reward += self.penalty
-        return base_reward
+    def __init__(self, reward: float=0, penalty: float=0): self.reward, self.penalty = reward, penalty
+    def __call__(self, player_traj: PlayerTrajectory, step_index: int, reward: float) -> float:
+        reward += (self.reward if player_traj.format_feedbacks[step_index].get("correct_answer_format") else self.penalty)
+        return reward
 
 class PenaltyForInvalidMove(StepRewardTransform):
-    def __init__(self, reward: float=0, penalty: float=0):
-        self.reward = reward
-        self.penalty = penalty
-    def __call__(self, trajectory: Trajectory, step_index: int, base_reward: float) -> float:
-        if trajectory.format_feedbacks[step_index].get("invalid_move"): base_reward += self.penalty
-        else:                                                           base_reward += self.reward
-        return base_reward
+    def __init__(self, reward: float=0, penalty: float=0): self.reward, self.penalty = reward, penalty
+    def __call__(self, player_traj: PlayerTrajectory, step_index: int, reward: float) -> float:
+        reward += (self.penalty if player_traj.format_feedbacks[step_index].get("invalid_move") else self.reward)
+        return reward

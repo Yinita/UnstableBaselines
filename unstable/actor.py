@@ -47,18 +47,18 @@ class VLLMActor:
         self._last_step_time = time.monotonic()  # Add health check flag
 
     async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> str:
+        if lora_path is not None and not isinstance(lora_path, str): lora_path = str(lora_path)
         fut = asyncio.Future()
         self._queued += 1
         self._queue.append((prompt, lora_path, fut))
         return await fut
 
-        
-
     async def _batch_loop(self):
         while True:
             try:
                 await asyncio.sleep(0.02)
-                if time.monotonic() - self._last_step_time > 30: self.logger.error(f"Potential deadlock detected - no engine steps for {now - self._last_step_time:.1f} seconds\nRunning requests: {dict(self._running)}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
+                if time.monotonic() - self._last_step_time > 30: 
+                    self.logger.error(f"Potential deadlock detected - no engine steps for {time.monotonic() - self._last_step_time:.1f} seconds\nRunning requests: {dict(self._running)}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
                 while self._queue:
                     prompt, path, fut = self._queue.popleft()
                     lora = path or "base"
@@ -73,12 +73,9 @@ class VLLMActor:
                             self._lora_ids[path] = self._next_lora_id
                             self._next_lora_id += 1
                         lora_req = LoRARequest(path, self._lora_ids[path], path)
-                        self.logger.info(lora_req)
                     else:
                         lora_req = None
-                    try:
-                        self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
-                        self.logger.debug(f"Added request {req_id} with lora {lora}")
+                    try: self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
                     except Exception as e:
                         self.logger.error(f"Failed to add request {req_id}: {e}")
                         self._running -= 1
@@ -106,7 +103,8 @@ class VLLMActor:
                     self._prev_tok_cnt[req_id] = len(tok_ids)
 
                     now = time.monotonic()
-                    for _ in range(new_tok): self._tok_hist.append(now)
+                    for _ in range(new_tok): 
+                        self._tok_hist.append(now)
                     if segment.finish_reason is not None:
                         fut = self._futures.pop(req_id, None)
                         if fut and not fut.done():

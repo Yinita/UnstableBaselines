@@ -23,6 +23,7 @@ An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning mode
 > **Work in progress — interfaces will change.**
 
 ## Updates
+* 15/07/2025: __v0.2.0__ A2C, runtime object, environment scheduling
 * 23/06/2025: Early release of the pip package (`pip install unstable-rl`)
 * 22/06/2025: Early release of the code base
 
@@ -30,7 +31,12 @@ An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning mode
 ## Introduction
 UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simplicity and hackability. Since multiple recent papers showed the sufficiency of LoRA for reasoning tuning, and the fact that opponent sampling for self-play strategies beyond mirror self-play work best when using LoRA weights (since vLLM allows for hot-swapping), we built UnstableBaselines as a LoRA first RL library. We tried to keep the code as straight forward as possible. It is currently around **1.2K** lines long and semi-readable. The main focus of unstable-baselines is to enable fast prototyping/research. For something a bit more production ready we recommend to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers).
 
-
+```
+Lines of Code per Release
+-------------------------
+0.1.0  | ######################     1,144       -> initial release
+0.2.0  | ########################   1,269       -> added A2C, runtime object, environment scheduling
+```
 
 ## Key Features
 * **Asynchronous collection & learning** – actors generate data while learners train.
@@ -40,31 +46,30 @@ UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simpl
 
 
 ## Structure
-```text
-                                                ┌───────────────┐
-                                                │               │
-                                                │   Algorithm   │
-                                                │               │
-                                                └───────────────┘
-                                                        ▲        
-                                                        │ Get Loss &
-                                                        │ update weights
-                                                        ▼
-    ┌───────────────┐                           ┌───────────────┐
-    │               │    Register new lora      │               │
-    │   Model Pool  │◀──────────────────────────│    Learner    │
-    │               │       checkpoint          │               │
-    └───────────────┘                           └───────────────┘
-           ▲ │                                         ▲ │ 
-           │ │ Sample                        If enough │ │ Check if enough
-    Update │ │ Opponent                     data, pull │ │ data for training
- Trueskill │ │                          the next batch │ │ is available
-           │ ▼                                         │ ▼
-    ┌───────────────┐                           ┌───────────────┐
-    │               │     Process and store     │               │
-    │   Collector   │──────────────────────────▶│   StepBuffer  │
-    │               │  collected Trajectories   │               │
-    └───────────────┘                           └───────────────┘
+```
+ ┌─────────┐ ┌─────────┐             ┌────────────┐
+ │   Env   │ │  Model  │ Get Models  │    Model   │
+ │ Sampler │ │ Sampler │◀─────────── │  Registry  │
+ └─────────┘ └─────────┘             └────────────┘ 
+      │          │                         ▲
+      │Sample    │Sample                   │Push
+      │Env       │Opponent                 │Checkpoint 
+      ▼          ▼                         │
+    ┌───────────────┐              ┌───────────────┐
+    │               │              │               │
+    │ GameScheduler │              │    Learner    │
+    │               │              │               │
+    └───────────────┘              └───────────────┘
+           ▲ │                            ▲ │ 
+           │ │ Sample           If enough │ │ Check if enough
+    Update │ │ GameSpec        data, pull │ │ data for training
+           │ │             the next batch │ │ is available
+           │ ▼                            │ ▼
+    ┌───────────────┐               ┌────────────┐
+    │               │      Send     │            │
+    │   Collector   │──────────────▶│   Buffer   │
+    │               │ Trajectories  │            │
+    └───────────────┘               └────────────┘
            ▲ │
            │ │ Maintain
     return │ │ Pool of 
@@ -73,7 +78,7 @@ Trajectory │ │ n parallel
            │ ▼
      ┌─────────────┐
      │  run_game() │
-     │  train\eval │
+     │  train/eval │
      └─────────────┘
 ```
 
@@ -91,66 +96,90 @@ To get you started, in this short example we will run you through the process of
 ### Training script
 
 ```python
-import ray, unstable
+import time, ray, unstable
 import unstable.reward_transformations as retra
 
-ray.init(namespace="unstable")
+MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
+MAX_TRAIN_SEQ_LEN = None
+MAX_GENERATION_LENGTH = 4096 
 
-tracker = unstable.Tracker.options(name="Tracker").remote(run_name="demo", wandb_project="UB")
+lora_config = {
+    "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
+    "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]
+}
+vllm_config = {
+    "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": MAX_GENERATION_LENGTH,
+    "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_config,
+    "max_model_len": 8192
+}
 
-step_buffer = unstable.StepBuffer.options(name="StepBuffer").remote(
-    max_buffer_size=768, 
-    tracker=tracker,
+# Ray init
+ray.init(namespace="unstable")  
+
+# initialize environment scheduler
+env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
+    train_env_specs=[
+        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"), # if num_players == num_actors, it's mirror self-play and no opponents will be sampled
+    ],
+    eval_env_specs=[
+        unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
+        unstable.EvalEnvSpec(env_id="KuhnPoker-v0-train", num_players=2, prompt_template="qwen3-zs"),
+])
+
+# Tracker
+tracker = unstable.Tracker.options(name="Tracker").remote(
+    run_name=f"Test-{MODEL_NAME.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", 
+    wandb_project="UnstableBaselines"
+) 
+
+# initialize model registry
+model_registry = unstable.ModelRegistry.options(name="ModelRegistry").remote(tracker=tracker)
+ray.get(model_registry.add_checkpoint.remote(uid="base", path=None, iteration=0))
+ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
+
+# initialize model sampler
+model_sampler = unstable.samplers.model_samplers.BaseModelSampler(model_registry=model_registry) 
+
+# build game scheduler
+game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=model_sampler, env_sampler=env_sampler, logging_dir=ray.get(tracker.get_log_dir.remote()))
+
+# Data Buffer
+step_buffer = unstable.StepBuffer.options(name="Buffer").remote(
+    max_buffer_size=384*2, tracker=tracker,
     final_reward_transformation=retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()]),
     step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
     sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
 )
 
-model_pool = unstable.ModelPool.options(name="ModelPool").remote(sample_mode="mirror", max_active_lora=3, tracker=tracker)
-ray.get(model_pool.add_checkpoint.remote(path=None, iteration=-1)) # set initial checkpoint as no LoRA
-
-lora_cfg = {
-    "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
-    "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]
-}
+# initialize the collector
 collector = unstable.Collector.options(name="Collector").remote(
-    num_actors=2, 
-    step_buffer=step_buffer, 
-    model_pool=model_pool, 
-    tracker=tracker,
-    vllm_config={
-        "model_name": "Qwen/Qwen3-1.7B-base", 
-        "max_parallel_seq": 128,
-        "max_tokens": 4096, 
-        "max_loras": 5, 
-        "lora_config": lora_cfg, 
-        "max_model_len": 8192
-    },
-    training_envs=[("SimpleTak-v0-train", 2, "qwen3-zs")], # (env-id, num players, prompt template)
-    evaluation_envs=[("SimpleTak-v0-train", 2, "qwen3-zs"), ("KuhnPoker-v0-train", 2, "qwen3-zs")],
-    evaluation_opponent="google/gemini-2.0-flash-lite-001",
+    vllm_config=vllm_config, tracker=tracker, buffer=step_buffer, game_scheduler=game_scheduler,
 )
 
-learner = unstable.StandardLearner.options(num_gpus=1, name="Learner").remote(
-    model_name="Qwen/Qwen3-1.7B-base", 
-    step_buffer=step_buffer,
-    model_pool=model_pool,
-    tracker=tracker,
-    algorithm=unstable.algorithms.Reinforce(),
+# initialize the learner
+learner = unstable.REINFORCELearner.options(num_gpus=1, name="Learner").remote(
+    model_name=MODEL_NAME,
+    lora_cfg=lora_config,
     batch_size=384,
     mini_batch_size=1,
     learning_rate=1e-5,
     grad_clip=0.2,
-    lora_cfg=lora_cfg,
-    activation_checkpointing=False,
-    gradient_checkpointing=False,
-    max_train_len=None, # always train on the full sequence
-    max_generation_len=4096, # important for Dr. GRPO
+    buffer=step_buffer,
+    tracker=tracker,
+    model_registry=model_registry,
+    activation_checkpointing=True,
+    gradient_checkpointing=True,
+    use_trainer_cache=False
 )
+ray.get(learner.initialize_algorithm.remote(max_train_len=MAX_TRAIN_SEQ_LEN, max_generation_len=MAX_GENERATION_LENGTH))
 
-# start the collection and training loops
-collector.collect.remote(num_workers=384, num_eval_workers=16)  
-ray.get(learner.train.remote(200)) # total update steps
+
+try:
+    collector.collect.remote(num_train_workers=384, num_eval_workers=16)
+    ray.get(learner.train.remote(200))
+finally:
+    ray.kill(collector, no_restart=True)
+    ray.shutdown()
 ```
 In a Nutshell, the **Collector** will maintain `384` and `16` in parallel running collection and evaluation games (respectively). Whenever a game finishes, the trajectory is passed to the **StepBuffer** and a new game is started. The **StepBuffer** splits each trajectory into steps and applies the specified reward transformations (on the game and step level first; and batch level once the Learner pulls the next batch).
 
@@ -166,6 +195,7 @@ unstable-terminal
 ```
 The rendered interface will currently look something like this: (please not that it might change in the future as UnstableBaselines is very much still under development)
 ![](https://github.com/LeonGuertler/UnstableBaselines/blob/main/docs/terminal_interface.gif)
+
 The .gif doesn't do it justice, looks nice when you run it yourself haha.
 
 ### Results
