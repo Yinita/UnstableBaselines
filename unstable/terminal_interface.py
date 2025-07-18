@@ -129,7 +129,11 @@ class TerminalInterface:
                 live.refresh()
                 await asyncio.sleep(2)
 
-if __name__ == "__main__":
+
+def main():
     ray.init(address="auto", namespace="unstable")   # connect to existing cluster
     term = TerminalInterface(tracker=ray.get_actor("Tracker"), buffer=ray.get_actor("Buffer"))
     asyncio.run(term.run())
+
+if __name__ == "__main__": main()
+
