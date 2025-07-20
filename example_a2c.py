@@ -5,7 +5,7 @@ import unstable.reward_transformations as retra
 COLLECTION_WORKERS = 200
 EVALUATION_WORKERS = 16
 ITERATIONS = 200
-MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
+MODEL_NAME = "Qwen/Qwen3-8B-Base"
 BATCH_SIZE = 384
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2

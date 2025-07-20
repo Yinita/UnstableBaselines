@@ -22,14 +22,14 @@ class CallableActorWrapper:
         self._actor, self._lora, self._fmt, self._extract = actor, lora_path, obs_fmt_fn, extract_fn
 
     def __call__(self, observation: str) -> str: 
-        _, extracted, _, _ = self.act_full(observation)
+        _, extracted, _, _, _ = self.act_full(observation)
         return extracted
 
-    def act_full(self, observation: str) -> Tuple[str, str, str, dict]:
+    def act_full(self, observation: str) -> Tuple[str, str, str, dict, float]:
         prompt = self._fmt(observation=observation)
-        raw = ray.get(self._actor.submit_prompt.remote(prompt=prompt, lora_path=self._lora))
+        raw, logp = ray.get(self._actor.submit_prompt.remote(prompt=prompt, lora_path=self._lora))
         extracted, format_feedback = self._extract(raw_action=raw)
-        return raw, extracted, prompt, format_feedback
+        return raw, extracted, prompt, format_feedback, logp
 
 @ray.remote(num_cpus=0)
 def run_game(game_spec: GameSpec, actor: VLLMActor):
@@ -44,14 +44,14 @@ def run_game(game_spec: GameSpec, actor: VLLMActor):
         pid, obs = env.get_observation()
         # get model (or opponent) action
         if agents[pid]["traj"] == None: raw = extracted = agents[pid]["model"](obs) # fix opponent
-        else: raw, extracted, prompt, format_feedback = agents[pid]["model"].act_full(obs)
+        else: raw, extracted, prompt, format_feedback, logp = agents[pid]["model"].act_full(obs)
         done, step_info = env.step(extracted); turn+= 1 # execute the action & increment turn counter
         # general tracking
         game_information.pid.append(pid); game_information.obs.append(obs); game_information.full_actions.append(raw)
         game_information.extracted_actions.append(extracted); game_information.step_infos.append(step_info); game_information.names[pid] = agents[pid]["name"]
         # player specific trackering
         if agents[pid]["traj"] != None:
-            agents[pid]["traj"].obs.append(obs); agents[pid]["traj"].actions.append(raw); agents[pid]["traj"].extracted_actions.append(extracted)
+            agents[pid]["traj"].obs.append(obs); agents[pid]["traj"].actions.append(raw); agents[pid]["traj"].extracted_actions.append(extracted); agents[pid]["traj"].logps.append(logp)
             format_feedback["invalid_move"] = False; agents[pid]["traj"].format_feedbacks.append(format_feedback); agents[pid]["traj"].step_infos.append(step_info)
         if done: break
     final_rewards, game_info = env.close()

@@ -10,6 +10,7 @@ class Step:
     act: str
     reward: float
     env_id: str
+    logp: float
     step_info: Optional[Dict]
 
 @dataclass
@@ -19,6 +20,7 @@ class PlayerTrajectory:
     obs:                List[str] = field(default_factory=list)
     actions:            List[str] = field(default_factory=list)
     extracted_actions:  List[str] = field(default_factory=list)
+    logps:              List[float] = field(default_factory=list)
     format_feedbacks:   List[Dict] = field(default_factory=list)
     step_infos:         List[Dict] = field(default_factory=list)
     game_info:          Dict = field(default_factory=dict)
@@ -95,5 +97,3 @@ class ModelMeta:
     draws: int = 0
     active: bool = True
     iteration: int|None = None
-
-

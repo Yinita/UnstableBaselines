@@ -1,6 +1,6 @@
 import os, time, asyncio
 from collections import defaultdict, deque
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 import ray
 from vllm import EngineArgs, LLMEngine, SamplingParams
@@ -26,7 +26,7 @@ class VLLMActor:
         self.logger.info(f"vLLM model path or name: {engine_args.model}")
         self.logger.info(f"Model architecture: {self.engine.model_config.__dict__}")
             
-        self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096))
+        self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096), logprobs=1)
 
         self._queue = deque()
         self._futures = {}
@@ -46,7 +46,7 @@ class VLLMActor:
         self._next_lora_id = 1
         self._last_step_time = time.monotonic()  # Add health check flag
 
-    async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> str:
+    async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> Tuple[str, float]:
         if lora_path is not None and not isinstance(lora_path, str): lora_path = str(lora_path)
         fut = asyncio.Future()
         self._queued += 1
@@ -108,7 +108,7 @@ class VLLMActor:
                     if segment.finish_reason is not None:
                         fut = self._futures.pop(req_id, None)
                         if fut and not fut.done():
-                            fut.set_result(segment.text)
+                            fut.set_result((segment.text, segment.cumulative_logprob))
                         self._running -= 1
                         self._req2lora.pop(req_id, None)
                         self._prev_tok_cnt.pop(req_id, None)
