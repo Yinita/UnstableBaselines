@@ -16,14 +16,14 @@ from envs.ThreePlayerIPD import *  # This will register the environment
 COLLECTION_WORKERS = 200
 EVALUATION_WORKERS = 16
 ITERATIONS = 200
-MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
+MODEL_NAME = "Qwen/Qwen3-8B"
 BATCH_SIZE = 384
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = 8000
-MAX_GENERATION_LENGTH = 8000
+MAX_TRAIN_SEQ_LEN = 30000
+MAX_GENERATION_LENGTH = 30000
 
 # GSPO specific parameters
 GROUP_SIZE = 4  # Number of responses per query for group-based advantage estimation
@@ -31,12 +31,12 @@ CLIP_RATIO = 0.2  # Sequence-level clipping ratio
 NORMALIZE_LENGTH = True  # Whether to apply length normalization to importance ratios
 
 # OpenAI Agent configuration
-OPENAI_MODEL_NAME = "gpt-4o-mini"  # You can change this to any OpenAI model
+OPENAI_MODEL_NAME = "gpt-4o"  # You can change this to any OpenAI model
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
 
 # Custom opponent identifier for OpenAI agent
-OPENAI_OPPONENT_NAME = "openai-gpt4o-mini"
+OPENAI_OPPONENT_NAME = "openai-gpt4o"
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
@@ -45,7 +45,7 @@ lora_config = {
 vllm_config = {
     "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": MAX_GENERATION_LENGTH,
     "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_config,
-    "max_model_len": 8192
+    "max_model_len": 30000
 }
 
 # Apply the patch to support OpenAI agents BEFORE initializing Ray
@@ -88,12 +88,12 @@ env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
             fixed_opponent=OPENAI_OPPONENT_NAME
         ),
         # Additional evaluation: standard 2-player setup for comparison
-        unstable.EvalEnvSpec(
-            env_id="KuhnPoker-v0-train", 
-            num_players=2, 
-            prompt_template="qwen3-zs", 
-            fixed_opponent=OPENAI_OPPONENT_NAME
-        ),
+        # unstable.EvalEnvSpec(
+        #     env_id="KuhnPoker-v0-train", 
+        #     num_players=2, 
+        #     prompt_template="qwen3-zs", 
+        #     fixed_opponent=OPENAI_OPPONENT_NAME
+        # ),
     ]
 )
 

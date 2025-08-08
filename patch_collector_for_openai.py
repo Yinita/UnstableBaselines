@@ -90,7 +90,7 @@ def patched_run_game_impl(game_spec: GameSpec, actor: VLLMActor, openai_config: 
             raw = extracted = agents[pid]["model"](obs)
         else:  
             # Training model
-            raw, extracted, prompt, format_feedback = agents[pid]["model"].act_full(obs)
+            raw, extracted, prompt, format_feedback, logp = agents[pid]["model"].act_full(obs)
         
         # Execute the action & increment turn counter
         done, step_info = env.step(extracted)
