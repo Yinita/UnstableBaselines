@@ -1,5 +1,5 @@
-import ray, torch, tree, random
-from typing import Optional
+import ray, torch, tree, random, math
+from typing import Optional, Dict
 from dataclasses import replace
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
@@ -45,7 +45,20 @@ class PPOLearner(BaseLearner):
         self.critic_optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.critic.parameters()), lr=critic_learning_rate,)
 
     def _prepare_batch(self, steps):
-        obs, acts, advs, rets, old_logps = zip(*[(s.obs, s.act, s.reward, s.step_info.get("return", torch.nan), s.logp) for s in steps])
+        # filter steps with missing/invalid logp
+        clean_steps = []
+        dropped = 0
+        for s in steps:
+            lp = getattr(s, "logp", None)
+            if lp is None or (isinstance(lp, float) and (math.isnan(lp) or math.isinf(lp))):
+                dropped += 1
+                continue
+            clean_steps.append(s)
+        if dropped > 0:
+            self.logger.warning(f"Dropped {dropped}/{len(steps)} steps due to invalid old_logps")
+        if len(clean_steps) == 0:
+            raise RuntimeError("All steps in minibatch have invalid/missing old_logps")
+        obs, acts, advs, rets, old_logps = zip(*[(s.obs, s.act, s.reward, s.step_info.get("return", torch.nan), s.logp) for s in clean_steps])
         advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
         rets = torch.tensor(rets, dtype=torch.float32, device=self.device)
         old_logps = torch.tensor(old_logps, dtype=torch.float32, device=self.device)
@@ -67,16 +80,24 @@ class PPOLearner(BaseLearner):
         tgt_ids = enc.input_ids[:, 1:]
         tok_logp = logp_dist[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
         
-        mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)
-        for i, o_len in enumerate(state_enc["attention_mask"].sum(1)):
-            mask[i, :o_len-1] = False
+        # Build mask from attention_mask to exclude padding, then remove prompt tokens
+        mask = enc.attention_mask.bool()
+        for i, o in enumerate(obs):
+            prompt_len = len(self.tokenizer(o, add_special_tokens=False)["input_ids"])
+            mask[i, :prompt_len] = False
         mask = mask[:, 1:]
 
-        new_logps = (tok_logp * mask).sum(1) / self.max_generation_len
+        # Normalize by actual number of generated (non-pad, non-prompt) tokens
+        denom = mask.sum(1).clamp_min(1)
+        if mask.sum() == 0:
+            self.logger.warning("Mask has zero valid tokens; check tokenization and max_train_len")
+        new_logps = (tok_logp * mask).sum(1) / denom
 
-        # Entropy calculation
-        prob_dist = torch.exp(logp_dist)
-        entropy = (-(prob_dist * logp_dist).sum(-1) * mask).sum() / mask.sum()
+        # Entropy calculation aligned to token positions used in tok_logp/mask
+        token_logp = logp_dist[:, :-1, :]
+        prob_dist = torch.exp(token_logp)
+        token_entropy = -(prob_dist * token_logp).sum(-1)  # [B, T-1]
+        entropy = (token_entropy * mask).sum() / mask.sum()
 
         # --- Value Function Calculation ---
         value_pred = self.critic(**state_enc)[:, 0]
@@ -94,10 +115,15 @@ class PPOLearner(BaseLearner):
         loss.backward()
         torch.cuda.empty_cache()
 
+        clip_high = 1 + self.clip_coef
+        clip_low = 1 - self.clip_coef
+        clip_frac = ((ratio > clip_high) | (ratio < clip_low)).float().mean().item()
         return {
             "policy_loss": pg_loss.item(), "value_loss": v_loss.item(), "entropy": entropy.item(),
             "logp_mean": new_logps.mean().item(), "value_mae": (value_pred-rets).abs().mean().item(),
-            "logp_std": new_logps.std().item(), "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
+            "logp_std": new_logps.std().item(), "num_steps": len(clean_steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
+            "old_logp_mean": old_logps.mean().item(), "ratio_mean": ratio.mean().item(), "ratio_std": ratio.std().item(), "clip_frac": clip_frac,
+            "denom_mean": denom.float().mean().item(),
         }
 
 

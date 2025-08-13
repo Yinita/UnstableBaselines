@@ -46,7 +46,7 @@ class VLLMActor:
         self._next_lora_id = 1
         self._last_step_time = time.monotonic()  # Add health check flag
 
-    async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> Tuple[str, float]:
+    async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> Tuple[str, float, int]:
         if lora_path is not None and not isinstance(lora_path, str): lora_path = str(lora_path)
         fut = asyncio.Future()
         self._queued += 1
@@ -108,7 +108,9 @@ class VLLMActor:
                     if segment.finish_reason is not None:
                         fut = self._futures.pop(req_id, None)
                         if fut and not fut.done():
-                            fut.set_result((segment.text, segment.cumulative_logprob))
+                            # token_ids are generated token ids; use length as generated token count
+                            gen_tok = len(tok_ids) if tok_ids is not None else 0
+                            fut.set_result((segment.text, segment.cumulative_logprob, gen_tok))
                         self._running -= 1
                         self._req2lora.pop(req_id, None)
                         self._prev_tok_cnt.pop(req_id, None)

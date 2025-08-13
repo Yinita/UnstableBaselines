@@ -99,9 +99,16 @@ class EpisodeBuffer(BaseBuffer):
     def add_player_trajectory(self, player_traj: PlayerTrajectory, env_id: str):
         episode = []
         reward = self.final_reward_transformation(reward=player_traj.final_reward, pid=player_traj.pid, env_id=env_id) if self.final_reward_transformation else player_traj.final_reward
-        for idx in range(len(player_traj.obs)):
+        obs_len = len(player_traj.obs)
+        act_len = len(player_traj.actions)
+        logp_len = len(player_traj.logps) if getattr(player_traj, "logps", None) is not None else 0
+        min_len = min(obs_len, act_len, logp_len if logp_len > 0 else obs_len)
+        if not (obs_len == act_len == logp_len):
+            self.logger.warning(f"Trajectory length mismatch for pid={player_traj.pid}, env={env_id}: obs={obs_len}, acts={act_len}, logps={logp_len}. Using first {min_len} steps.")
+        for idx in range(min_len):
             step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=reward) if self.step_reward_transformation else reward
-            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, logp=player_traj.logps[idx], step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
+            lp = player_traj.logps[idx] if idx < logp_len else None
+            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, logp=lp, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
         with self.mutex:
             self.episodes.append(episode)
             excess_num_samples = max(0, len(tree.flatten(self.episodes)) - self.max_buffer_size)

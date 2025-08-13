@@ -1,5 +1,5 @@
 import ray, torch, tree, random
-from typing import Optional
+from typing import Optional, Dict
 from dataclasses import replace
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
@@ -54,10 +54,20 @@ class A2CLearner(BaseLearner):
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tgt_ids = enc.input_ids[:, 1:]
         tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
-        mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)  # build prompt mask
-        for i, o in enumerate(obs): mask[i, : len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
+        # build mask from attention_mask to exclude padding, then remove prompt tokens
+        mask = enc.attention_mask.bool()
+        for i, o in enumerate(obs):
+            mask[i, : len(self.tokenizer(o, add_special_tokens=False)["input_ids"]) ] = False
         mask = mask[:, 1:]
-        seq_logp = (tok_logp * mask).sum(1) / self.max_generation_len
+        # normalize by actual generated token count (avoid counting pads); clamp to avoid div-by-zero
+        denom = mask.sum(1).clamp_min(1)
+        if mask.sum() == 0:
+            self.logger.warning("Mask has zero valid tokens; check tokenization and max_train_len (A2C)")
+        seq_logp = (tok_logp * mask).sum(1) / denom
+        # entropy over the same masked positions
+        probs = torch.nn.functional.softmax(out.logits, dim=-1)
+        tok_ent = -(probs[:, :-1, :] * logp[:, :-1, :]).sum(-1)
+        seq_entropy = (tok_ent * mask).sum(1) / denom
         loss = -(advs * seq_logp).mean() / scaling
         loss.backward()
         torch.cuda.empty_cache()
@@ -71,6 +81,7 @@ class A2CLearner(BaseLearner):
         return {
             "policy_loss": loss.item(), "value_loss": value_loss.item(), "logp_mean": seq_logp.mean().item(), "value_mae": (value_pred-rets).abs().mean().item(), "value_dir_acc": ((value_pred > 0) == (rets > 0)).float().mean().item(),
             "logp_std": seq_logp.std().item(), "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
+            "entropy": seq_entropy.mean().item(), "denom_mean": denom.float().mean().item(),
         }
 
 

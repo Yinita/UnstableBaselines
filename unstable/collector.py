@@ -27,9 +27,16 @@ class CallableActorWrapper:
 
     def act_full(self, observation: str) -> Tuple[str, str, str, dict, float]:
         prompt = self._fmt(observation=observation)
-        raw, logp = ray.get(self._actor.submit_prompt.remote(prompt=prompt, lora_path=self._lora))
+        try:
+            raw, cum_logp, gen_tok = ray.get(self._actor.submit_prompt.remote(prompt=prompt, lora_path=self._lora))
+        except Exception as e:
+            logging.getLogger("collector").exception(f"act_full submit_prompt failed: {e}")
+            raise
+        # average per-token logp for generated tokens; guard against zero tokens
+        avg_logp = (cum_logp / gen_tok) if gen_tok and gen_tok > 0 else float(cum_logp)
+        logging.getLogger("collector").debug(f"Generated tokens: {gen_tok}, cum_logp: {cum_logp:.4f}, avg_logp: {avg_logp:.4f}")
         extracted, format_feedback = self._extract(raw_action=raw)
-        return raw, extracted, prompt, format_feedback, logp
+        return raw, extracted, prompt, format_feedback, avg_logp
 
 @ray.remote(num_cpus=0)
 def run_game(game_spec: GameSpec, actor: VLLMActor):
@@ -43,8 +50,15 @@ def run_game(game_spec: GameSpec, actor: VLLMActor):
     while True:
         pid, obs = env.get_observation()
         # get model (or opponent) action
-        if agents[pid]["traj"] == None: raw = extracted = agents[pid]["model"](obs) # fix opponent
-        else: raw, extracted, prompt, format_feedback, logp = agents[pid]["model"].act_full(obs)
+        if agents[pid]["traj"] == None:
+            raw = extracted = agents[pid]["model"](obs) # fix opponent
+            logging.getLogger("collector").debug(f"Opponent pid={pid} produced action.")
+        else:
+            try:
+                raw, extracted, prompt, format_feedback, logp = agents[pid]["model"].act_full(obs)
+            except Exception as e:
+                logging.getLogger("collector").exception(f"act_full failed for pid={pid}: {e}")
+                raise
         done, step_info = env.step(extracted); turn+= 1 # execute the action & increment turn counter
         # general tracking
         game_information.pid.append(pid); game_information.obs.append(obs); game_information.full_actions.append(raw)
@@ -53,11 +67,19 @@ def run_game(game_spec: GameSpec, actor: VLLMActor):
         if agents[pid]["traj"] != None:
             agents[pid]["traj"].obs.append(obs); agents[pid]["traj"].actions.append(raw); agents[pid]["traj"].extracted_actions.append(extracted); agents[pid]["traj"].logps.append(logp)
             format_feedback["invalid_move"] = False; agents[pid]["traj"].format_feedbacks.append(format_feedback); agents[pid]["traj"].step_infos.append(step_info)
+            if turn % 10 == 0:
+                ol = len(agents[pid]["traj"].obs); al = len(agents[pid]["traj"].actions); ll = len(agents[pid]["traj"].logps)
+                logging.getLogger("collector").info(f"turn={turn} pid={pid} lengths obs={ol} acts={al} logps={ll}")
         if done: break
     final_rewards, game_info = env.close()
     for pid in agents.keys():
-        if agents[pid]["traj"]!=None: agents[pid]["traj"].final_reward=final_rewards[pid]; agents[pid]["traj"].game_info=game_info[pid]; agents[pid]["traj"].num_turns=turn
-        if game_info[pid]["invalid_move"] and agents[pid]["traj"]!=None: agents[pid]["traj"].format_feedbacks[-1]["invalid_move"]=True
+        if agents[pid]["traj"]!=None:
+            agents[pid]["traj"].final_reward=final_rewards[pid]; agents[pid]["traj"].game_info=game_info[pid]; agents[pid]["traj"].num_turns=turn
+            ol = len(agents[pid]["traj"].obs); al = len(agents[pid]["traj"].actions); ll = len(agents[pid]["traj"].logps)
+            if not (ol == al == ll):
+                logging.getLogger("collector").warning(f"END GAME length mismatch pid={pid}: obs={ol} acts={al} logps={ll}")
+    
+    if game_info[pid]["invalid_move"] and agents[pid]["traj"]!=None: agents[pid]["traj"].format_feedbacks[-1]["invalid_move"]=True
     game_information.final_rewards=final_rewards; game_information.num_turns=turn; game_information.game_info=game_info
     return game_information, [agents[pid]["traj"] for pid in agents.keys() if agents[pid]["traj"]!=None]
 

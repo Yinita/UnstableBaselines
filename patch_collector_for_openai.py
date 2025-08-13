@@ -4,6 +4,7 @@ This module monkey-patches the run_game function to handle custom OpenAI agents.
 """
 
 import ray
+import logging
 import sys
 import os
 from typing import Dict, Any
@@ -109,9 +110,13 @@ def patched_run_game_impl(game_spec: GameSpec, actor: VLLMActor, openai_config: 
             agents[pid]["traj"].obs.append(obs)
             agents[pid]["traj"].actions.append(raw)
             agents[pid]["traj"].extracted_actions.append(extracted)
+            agents[pid]["traj"].logps.append(logp)
             format_feedback["invalid_move"] = False
             agents[pid]["traj"].format_feedbacks.append(format_feedback)
             agents[pid]["traj"].step_infos.append(step_info)
+            if turn % 10 == 0:
+                ol = len(agents[pid]["traj"].obs); al = len(agents[pid]["traj"].actions); ll = len(agents[pid]["traj"].logps)
+                logging.getLogger("collector").info(f"turn={turn} pid={pid} lengths obs={ol} acts={al} logps={ll}")
         
         if done:
             break
