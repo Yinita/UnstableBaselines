@@ -10,7 +10,7 @@ from patch_collector_for_openai import patch_collector_for_openai
 COLLECTION_WORKERS = 200
 EVALUATION_WORKERS = 16
 ITERATIONS = 200
-MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
+MODEL_NAME = "Qwen/Qwen3-8B"
 BATCH_SIZE = 384
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
@@ -25,12 +25,12 @@ CLIP_RATIO = 0.2  # Sequence-level clipping ratio
 NORMALIZE_LENGTH = True  # Whether to apply length normalization to importance ratios
 
 # OpenAI Agent configuration
-OPENAI_MODEL_NAME = "gpt-4o-mini"  # You can change this to any OpenAI model
+OPENAI_MODEL_NAME = "gpt-4o"  # You can change this to any OpenAI model
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
 
 # Custom opponent identifier for OpenAI agent
-OPENAI_OPPONENT_NAME = "openai-gpt4o-mini"
+OPENAI_OPPONENT_NAME = "openai-gpt4o"
 
 lora_config = {
     "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
