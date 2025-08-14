@@ -7,17 +7,17 @@ import os
 from patch_collector_for_openai import patch_collector_for_openai
 
 # always uses 1 learner and the remainder of the GPUS as actors
-COLLECTION_WORKERS = 200
+COLLECTION_WORKERS = 100
 EVALUATION_WORKERS = 16
 ITERATIONS = 200
 MODEL_NAME = "Qwen/Qwen3-8B"
-BATCH_SIZE = 384
+BATCH_SIZE = 80
 MINI_BATCH_SIZE = 1
-BUFFER_SIZE = 384 * 2
+BUFFER_SIZE = 80 * 2
 LR = 1e-5
 GRAD_CLIP = 0.2
 MAX_TRAIN_SEQ_LEN = 8000
-MAX_GENERATION_LENGTH = 8000
+MAX_GENERATION_LENGTH = 2000
 
 # GSPO specific parameters
 GROUP_SIZE = 4  # Number of responses per query for group-based advantage estimation
@@ -33,17 +33,17 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
 OPENAI_OPPONENT_NAME = "openai-gpt4o"
 
 lora_config = {
-    "lora_rank": 32,
-    "lora_alpha": 32,
+    "lora_rank": 16,
+    "lora_alpha": 16,
     "lora_dropout": 0.0,
     "target_modules": [
         "q_proj",
         "k_proj",
         "v_proj",
-        "o_proj",
-        "gate_proj",
-        "up_proj",
-        "down_proj",
+        # "o_proj",
+        # "gate_proj",
+        # "up_proj",
+        # "down_proj",
     ],
 }
 
@@ -54,7 +54,7 @@ vllm_config = {
     "max_parallel_seq": 128,
     "max_loras": 8,
     "lora_config": lora_config,
-    "max_model_len": 8192,
+    "max_model_len": 10000,
 }
 
 # Apply the patch to support OpenAI agents BEFORE initializing Ray
@@ -152,7 +152,7 @@ learner = unstable.GSPOLearner.options(num_gpus=1, name="Learner").remote(
 # Initialize GSPO algorithm with specific parameters
 ray.get(
     learner.initialize_algorithm.remote(
-        infer_mini_batch_size=32,
+        infer_mini_batch_size=16,
         group_size=GROUP_SIZE,
         clip_ratio=CLIP_RATIO,
         normalize_length=NORMALIZE_LENGTH,
