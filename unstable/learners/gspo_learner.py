@@ -17,8 +17,10 @@ def compute_sequence_importance_ratio(old_logprobs, new_logprobs, response_lengt
     """
     if normalize_length:
         # Length normalization to reduce variance
-        old_logprobs = old_logprobs / response_lengths
-        new_logprobs = new_logprobs / response_lengths
+        # Guard against zero-length responses which would cause division by zero
+        safe_lengths = response_lengths.clamp_min(1.0)
+        old_logprobs = old_logprobs / safe_lengths
+        new_logprobs = new_logprobs / safe_lengths
     
     # Sequence-level importance ratio
     importance_ratio = torch.exp(new_logprobs - old_logprobs)
@@ -169,6 +171,8 @@ class GSPOLearner(BaseLearner):
         importance_ratios = compute_sequence_importance_ratio(
             old_seq_logprobs, seq_logprobs, response_lengths, self.normalize_length
         )
+        # Sanitize to prevent NaNs/Infs from propagating to the loss/metrics
+        importance_ratios = torch.nan_to_num(importance_ratios, nan=1.0, posinf=1e4, neginf=1e-4)
         
         # Compute group-based advantages
         advantages = compute_group_advantages(rewards, self.group_size)
@@ -194,9 +198,9 @@ class GSPOLearner(BaseLearner):
         return {
             "policy_loss": policy_loss.item(),
             "importance_ratio_mean": importance_ratios.mean().item(),
-            "importance_ratio_std": importance_ratios.std().item(),
+            "importance_ratio_std": importance_ratios.std(unbiased=False).item(),
             "advantages_mean": advantages.mean().item(),
-            "advantages_std": advantages.std().item(),
+            "advantages_std": advantages.std(unbiased=False).item(),
             "clipped_fraction": clipped_fraction.item(),
             "num_steps": len(steps),
             "avg_train_len": avg_len,
