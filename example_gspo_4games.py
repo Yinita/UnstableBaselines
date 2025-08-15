@@ -9,10 +9,10 @@ from patch_collector_for_openai import patch_collector_for_openai
 # always uses 1 learner and the remainder of the GPUS as actors
 COLLECTION_WORKERS = 100
 EVALUATION_WORKERS = 16
-ITERATIONS = 200
+ITERATIONS = 100
 MODEL_NAME = "Qwen/Qwen3-8B"
 BATCH_SIZE = 80
-MINI_BATCH_SIZE = 4
+MINI_BATCH_SIZE = 2
 BUFFER_SIZE = 80 * 2
 LR = 1e-5
 GRAD_CLIP = 0.2
@@ -20,7 +20,7 @@ MAX_TRAIN_SEQ_LEN = 8000
 MAX_GENERATION_LENGTH = 2000
 
 # GSPO specific parameters
-GROUP_SIZE = 4  # Number of responses per query for group-based advantage estimation
+GROUP_SIZE = 5  # Number of responses per query for group-based advantage estimation
 CLIP_RATIO = 0.2  # Sequence-level clipping ratio
 NORMALIZE_LENGTH = True  # Whether to apply length normalization to importance ratios
 
@@ -51,10 +51,10 @@ vllm_config = {
     "model_name": MODEL_NAME,
     "temperature": 0.6,
     "max_tokens": MAX_GENERATION_LENGTH,
-    "max_parallel_seq": 128,
+    "max_parallel_seq": 32,
     "max_loras": 8,
     "lora_config": lora_config,
-    "max_model_len": 20000,
+    "max_model_len": 10000,
 }
 
 # Apply the patch to support OpenAI agents BEFORE initializing Ray
