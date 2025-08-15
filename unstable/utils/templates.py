@@ -28,6 +28,13 @@ TEMPLATE_PARTS = {
         "user": lambda obs: f"<|start_header_id|>user<|end_header_id|>\n\nCurrent Observation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|eot_id|>\n",
         "assistant": "<|start_header_id|>assistant<|end_header_id|>"
     },
+
+    "qwen3-no-reasoning": {
+        "user": lambda obs: f"<|im_start|>user\nYou are a competitive game player. Make sure you read the game instructions carefully, and always follow the required format.\n\n{obs}<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n<think>\n</think>"
+    },
+
+    
 }
 def apply_template(template_name: str, observation: str) -> str:
     parts = TEMPLATE_PARTS.get(template_name)

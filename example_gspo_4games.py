@@ -10,7 +10,8 @@ from patch_collector_for_openai import patch_collector_for_openai
 COLLECTION_WORKERS = 100
 EVALUATION_WORKERS = 16
 ITERATIONS = 100
-MODEL_NAME = "Qwen/Qwen3-8B"
+# MODEL_NAME = "Qwen/Qwen3-8B"
+MODEL_NAME = "yinita/qwen3-8b-v1-lora-0812-3epochs"
 BATCH_SIZE = 80
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 80 * 2
@@ -78,16 +79,16 @@ print(f"  - OpenAI Base URL: {OPENAI_BASE_URL}")
 # initialize environment sampler with OpenAI agent as fixed opponent for eval
 env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
-        unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=4, prompt_template="qwen3-zs"),
-        unstable.TrainEnvSpec(env_id="SecretMafia-v0-train", num_players=6, num_actors=6, prompt_template="qwen3-zs"),
-        unstable.TrainEnvSpec(env_id="ThreePlayerIPD-v0-train", num_players=3, num_actors=3, prompt_template="qwen3-zs"),
-        unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
+        unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=4, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="SecretMafia-v0-train", num_players=6, num_actors=6, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="ThreePlayerIPD-v0-train", num_players=3, num_actors=3, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning"),
     ],
     eval_env_specs=[
-        unstable.EvalEnvSpec(env_id="Codenames-v0", num_players=4, prompt_template="qwen3-zs", fixed_opponent=OPENAI_OPPONENT_NAME),
-        unstable.EvalEnvSpec(env_id="SecretMafia-v0", num_players=6, prompt_template="qwen3-zs", fixed_opponent=OPENAI_OPPONENT_NAME),
-        unstable.EvalEnvSpec(env_id="ThreePlayerIPD-v0", num_players=3, prompt_template="qwen3-zs", fixed_opponent=OPENAI_OPPONENT_NAME),
-        unstable.EvalEnvSpec(env_id="ColonelBlotto-v0", num_players=2, prompt_template="qwen3-zs", fixed_opponent=OPENAI_OPPONENT_NAME),
+        unstable.EvalEnvSpec(env_id="Codenames-v0", num_players=4, prompt_template="qwen3-no-reasoning", fixed_opponent=OPENAI_OPPONENT_NAME),
+        unstable.EvalEnvSpec(env_id="SecretMafia-v0", num_players=6, prompt_template="qwen3-no-reasoning", fixed_opponent=OPENAI_OPPONENT_NAME),
+        unstable.EvalEnvSpec(env_id="ThreePlayerIPD-v0", num_players=3, prompt_template="qwen3-no-reasoning", fixed_opponent=OPENAI_OPPONENT_NAME),
+        unstable.EvalEnvSpec(env_id="ColonelBlotto-v0", num_players=2, prompt_template="qwen3-no-reasoning", fixed_opponent=OPENAI_OPPONENT_NAME),
     ],
 )
 
