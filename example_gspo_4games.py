@@ -12,9 +12,9 @@ EVALUATION_WORKERS = 16
 ITERATIONS = 100
 MODEL_NAME = "Qwen/Qwen3-8B"
 BATCH_SIZE = 80
-MINI_BATCH_SIZE = 2
+MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 80 * 2
-LR = 1e-5
+LR = 2e-5
 GRAD_CLIP = 0.2
 MAX_TRAIN_SEQ_LEN = 8000
 MAX_GENERATION_LENGTH = 2000
@@ -54,7 +54,7 @@ vllm_config = {
     "max_parallel_seq": 32,
     "max_loras": 8,
     "lora_config": lora_config,
-    "max_model_len": 10000,
+    "max_model_len": 8000,
 }
 
 # Apply the patch to support OpenAI agents BEFORE initializing Ray
