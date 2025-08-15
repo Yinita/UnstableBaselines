@@ -54,7 +54,7 @@ vllm_config = {
     "max_parallel_seq": 128,
     "max_loras": 8,
     "lora_config": lora_config,
-    "max_model_len": 10000,
+    "max_model_len": 20000,
 }
 
 # Apply the patch to support OpenAI agents BEFORE initializing Ray
