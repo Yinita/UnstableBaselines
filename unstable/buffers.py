@@ -69,7 +69,8 @@ class StepBuffer(BaseBuffer):
 
     def stop(self):                 self.collect = False
     def size(self) -> int:          return len(self.steps)
-    def continue_collection(self):  return self.collect
+    def continue_collection(self):  return self.collect and len(self.steps) < self.max_buffer_size
+    def reset_collection(self):     self.collect = True
     def clear(self):                
         with self.mutex: 
             self.steps.clear()
@@ -135,7 +136,8 @@ class EpisodeBuffer(BaseBuffer):
 
     def stop(self):                 self.collect = False
     def size(self) -> int:          return len(tree.flatten(self.episodes))
-    def continue_collection(self):  return self.collect
+    def continue_collection(self):  return self.collect and len(self.episodes) < self.max_buffer_size
+    def reset_collection(self):     self.collect = True
     def clear(self):
         with self.mutex: 
             self.episodes.clear()

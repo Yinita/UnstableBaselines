@@ -134,9 +134,19 @@ class Collector:
     
     def collect(self, num_train_workers: int, num_eval_workers: Optional[int]=None):
         self.logger.info("entered collect func")
-        while ray.get(self.buffer.continue_collection.remote()):
-            self.logger.info("entered colelct loop")
-            self._launch_jobs(num_train_workers, num_eval_workers)
-            if not self.flight: continue
-            done_ref, _ = ray.wait(list(self.flight), num_returns=1)
-            self._handle_finished_job(done_ref[0])
+        while True:  # Run indefinitely, checking buffer state in the loop
+            if ray.get(self.buffer.continue_collection.remote()):
+                self.logger.info("entered collect loop")
+                self._launch_jobs(num_train_workers, num_eval_workers)
+                if not self.flight: 
+                    # No jobs in flight, wait a bit before checking again
+                    import time
+                    time.sleep(0.5)
+                    continue
+                done_ref, _ = ray.wait(list(self.flight), num_returns=1)
+                self._handle_finished_job(done_ref[0])
+            else:
+                # Buffer not collecting, wait before checking again
+                self.logger.info("Buffer not collecting, waiting...")
+                import time
+                time.sleep(2.0)  # Wait longer when buffer is not collecting

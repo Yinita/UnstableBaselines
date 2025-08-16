@@ -41,6 +41,13 @@ class BaseLearner:
 
         while self._step < iterations:
             try:
+                # Reset buffer collection state to ensure new data can be collected
+                try:
+                    self.buffer.reset_collection.remote()
+                    self.logger.info("Reset buffer collection state")
+                except Exception as exc:
+                    self.logger.warning(f"Failed to reset buffer collection: {exc}")
+                    
                 while (ray.get(self.buffer.size.remote()) < self.batch_size * 1.5): time.sleep(0.2) # wait until enough data is available
                 self.logger.info("Enough data, starting learning step")
                 batch: List = ray.get(self.buffer.get_batch.remote(self.batch_size)); self._samples_seen += self.batch_size
