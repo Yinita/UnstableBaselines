@@ -85,15 +85,25 @@ def run_game(game_spec: GameSpec, actor: VLLMActor):
 
 
 @ray.remote
+class TaskMeta:
+    def __init__(self, type: str, env_id: str, actor_id: int = -1):
+        self.type = type
+        self.env_id = env_id
+        self.actor_id = actor_id  # 跟踪使用的actor ID
+
+@ray.remote
 class Collector:
     def __init__(self, vllm_config, tracker, buffer, game_scheduler):
         self.logger = setup_logger("collector", ray.get(tracker.get_log_dir.remote()))
         self.tracker, self.buffer, self.game_scheduler = tracker, buffer, game_scheduler
-        # self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(ray.available_resources().get("GPU", 0))-1)]
-        self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(ray.available_resources().get("GPU", 0)))]
-        self._actor_iter = itertools.cycle(self.actors)
-
-        # thead keeping
+        
+        # 创建actors并初始化可用actor池
+        num_gpus = int(ray.available_resources().get("GPU", 0))
+        self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(num_gpus)]
+        self.available_actors = list(range(len(self.actors)))  # 使用索引跟踪可用actor
+        self.logger.info(f"[DEBUG] Initialized {len(self.actors)} actors, all available")
+        
+        # 任务跟踪
         self.flight: Dict[ray.ObjectRef, TaskMeta] = {}
         self._num_running = lambda typ: sum(meta.type == typ for meta in self.flight.values())
         self.logger.info("Collector initialized")
@@ -103,16 +113,29 @@ class Collector:
         eval_running = self._num_running("eval")
         self.logger.info(f"[DEBUG] _launch_jobs called - max_train={max_train}, max_eval={max_eval}, currently running: train={train_running}, eval={eval_running}")
         
-        while self._num_running("train") < max_train: # submit new train game
+        # 检查可用actor数量
+        available_actors = len(self.available_actors)
+        self.logger.info(f"[DEBUG] Available actors: {available_actors}, total actors: {len(self.actors)}")
+        
+        while self._num_running("train") < max_train and available_actors > 0: # submit new train game
             try:
                 self.logger.info(f"[DEBUG] Requesting next train job from scheduler")
                 game_spec: GameSpec = ray.get(self.game_scheduler.next_train_job.remote()) # sample game spec
                 self.logger.info(f"[DEBUG] Received train game_spec: {game_spec}")
-                actor: VLLMActor = next(self._actor_iter) # get actor
-                self.logger.info(f"[DEBUG] Launching train job with actor {actor}")
+                
+                # 从可用actor池中获取actor
+                if not self.available_actors:
+                    self.logger.warning(f"[DEBUG] No available actors, waiting for actors to be released")
+                    break
+                    
+                actor_id = self.available_actors.pop(0)
+                actor = self.actors[actor_id]
+                self.logger.info(f"[DEBUG] Launching train job with actor {actor} (ID: {actor_id})")
+                
                 ref = run_game.remote(game_spec, actor)
-                self.flight[ref] = TaskMeta("train", game_spec.env_id)
-                self.logger.info(f"[DEBUG] Added train job to flight, now running: {self._num_running('train')}/{max_train}")
+                self.flight[ref] = TaskMeta("train", game_spec.env_id, actor_id)
+                available_actors -= 1
+                self.logger.info(f"[DEBUG] Added train job to flight, now running: {self._num_running('train')}/{max_train}, available actors: {available_actors}")
             except Exception as exc:
                 self.logger.error(f"[DEBUG] Exception in train game: {exc}", exc_info=True)
 
@@ -121,17 +144,38 @@ class Collector:
                 self.logger.info(f"[DEBUG] Requesting next eval job from scheduler")
                 game_spec: GameSpec = ray.get(self.game_scheduler.next_eval_job.remote())
                 self.logger.info(f"[DEBUG] Received eval game_spec: {game_spec}")
-                actor: VLLMActor = next(self._actor_iter) # get actor
-                self.logger.info(f"[DEBUG] Launching eval job with actor {actor}")
-                ref = run_game.remote(game_spec, actor)
-                self.flight[ref] = TaskMeta("eval", game_spec.env_id)
-                self.logger.info(f"[DEBUG] Added eval job to flight, now running: {self._num_running('eval')}/{max_eval}")
+                # 处理评估任务
+                available_actors = len(self.available_actors)
+                while max_eval!=None and self._num_running("eval") < max_eval and available_actors > 0:
+                    try:
+                        game_spec: GameSpec = ray.get(self.game_scheduler.next_eval_job.remote())
+                        
+                        # 从可用actor池中获取actor
+                        if not self.available_actors:
+                            self.logger.warning(f"[DEBUG] No available actors for eval, waiting for actors to be released")
+                            break
+                            
+                        actor_id = self.available_actors.pop(0)
+                        actor = self.actors[actor_id]
+                        self.logger.info(f"[DEBUG] Launching eval job with actor {actor} (ID: {actor_id})")
+                        
+                        ref = run_game.remote(game_spec, actor)
+                        self.flight[ref] = TaskMeta("eval", game_spec.env_id, actor_id)
+                        available_actors -= 1
+                    except Exception as exc:
+                        self.logger.error(f"[DEBUG] Exception in eval game: {exc}", exc_info=True)
             except Exception as exc:
                 self.logger.error(f"[DEBUG] Exception in eval game: {exc}", exc_info=True)
 
     def _handle_finished_job(self, ref):
         meta = self.flight.pop(ref)
-        self.logger.info(f"[DEBUG] _handle_finished_job called for {meta.type} job, env={meta.env_id}")
+        self.logger.info(f"[DEBUG] _handle_finished_job called for {meta.type} job, env={meta.env_id}, actor_id={meta.actor_id}")
+        
+        # 将actor放回可用池
+        if meta.actor_id >= 0 and meta.actor_id < len(self.actors):
+            self.available_actors.append(meta.actor_id)
+            self.logger.info(f"[DEBUG] Returned actor {meta.actor_id} to available pool, now {len(self.available_actors)} available")
+        
         try: 
             self.logger.info(f"[DEBUG] Getting results for {meta.type} job")
             game_information, player_trajs = ray.get(ref)

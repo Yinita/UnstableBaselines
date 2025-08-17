@@ -128,3 +128,51 @@ Traceback (most recent call last):
     raise TypeError(str(exc)) from None
 TypeError: got an unexpected keyword argument 'share_backbone'
 [36m(pid=2881738)[0m INFO 08-17 19:39:47 [__init__.py:235] Automatically detected platform cuda.
+INFO 08-17 19:40:07 [__init__.py:235] Automatically detected platform cuda.
+2025-08-17 19:40:10,449	WARNING utils.py:438 -- Ray currently does not support initializing Ray with fractional cpus. Your num_cpus will be truncated from 90.16 to 90.
+2025-08-17 19:40:10,711	INFO worker.py:1927 -- Started a local Ray instance.
+[36m(Tracker pid=2888010)[0m wandb: Currently logged in as: yinita to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+[36m(Tracker pid=2888010)[0m wandb: Tracking run with wandb version 0.21.1
+[36m(Tracker pid=2888010)[0m wandb: Run data is saved locally in /home/aiscuser/mindgames/UnstableBaselines/wandb/run-20250817_194018-o3w580pl
+[36m(Tracker pid=2888010)[0m wandb: Run `wandb offline` to turn off syncing.
+[36m(Tracker pid=2888010)[0m wandb: Syncing run Test-Qwen3-8B-Base-Codenames-v0,SecretMafia-v0,ThreePlayerIPD-v0,ColonelBlotto-v0-1755459611
+[36m(Tracker pid=2888010)[0m wandb: ⭐️ View project at https://wandb.ai/yinita/UnstableBaselines
+[36m(Tracker pid=2888010)[0m wandb: 🚀 View run at https://wandb.ai/yinita/UnstableBaselines/runs/o3w580pl
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:  20%|██        | 1/5 [00:00<00:03,  1.03it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:  40%|████      | 2/5 [00:01<00:02,  1.02it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:  60%|██████    | 3/5 [00:02<00:01,  1.02it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:  80%|████████  | 4/5 [00:03<00:00,  1.14it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards: 100%|██████████| 5/5 [00:03<00:00,  1.51it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:03<00:00,  1.27it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:  20%|██        | 1/5 [00:00<00:03,  1.04it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:  40%|████      | 2/5 [00:01<00:02,  1.03it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:  60%|██████    | 3/5 [00:02<00:01,  1.04it/s]
+[36m(A2CLearner pid=2888029)[0m Loading checkpoint shards:  80%|████████  | 4/5 [00:03<00:00,  1.15it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:03<00:00,  1.38it/s]
+[36m(A2CLearner pid=2888029)[0m Some weights of CriticModel were not initialized from the model checkpoint at Qwen/Qwen3-8B-Base and are newly initialized: ['value_head.weight']
+[36m(A2CLearner pid=2888029)[0m You should probably TRAIN this model on a down-stream task to be able to use it for predictions and inference.
+Patching UnstableBaselines collector for OpenAI agent support...
+Collector patched successfully!
+[36m(pid=2888010)[0m INFO 08-17 19:40:16 [__init__.py:235] Automatically detected platform cuda.
+[36m(pid=2888100)[0m INFO 08-17 19:40:24 [__init__.py:235] Automatically detected platform cuda.[32m [repeated 2x across cluster] (Ray deduplicates logs by default. Set RAY_DEDUP_LOGS=0 to disable log deduplication, or see https://docs.ray.io/en/master/ray-observability/user-guides/configure-logging.html#log-deduplication for more options.)[0m
+[33m(raylet)[0m A worker died or was killed while executing a task by an unexpected system error. To troubleshoot the problem, check the logs for the dead worker. RayTask ID: ffffffffffffffffed60be655785989047ccc23701000000 Worker ID: c6ec428ff7f376ef6176e54191a3d829b4f281c9069518fc7711030a Node ID: 7eaa9bd61bccc6e41e5f22fbfda69c3db5010deba6a59e1eb3dfc74f Worker IP address: 100.64.19.43 Worker port: 42259 Worker PID: 2888029 Worker exit type: SYSTEM_ERROR Worker exit detail: Worker unexpectedly exits with a connection error code 2. End of file. There are some potential root causes. (1) The process is killed by SIGKILL by OOM killer due to high memory usage. (2) ray stop --force is called. (3) The worker is crashed unexpectedly due to SIGSEGV or other unexpected errors.
+[36m(pid=2888029)[0m INFO 08-17 19:40:24 [__init__.py:235] Automatically detected platform cuda.[32m [repeated 3x across cluster][0m
+Traceback (most recent call last):
+  File "/home/aiscuser/mindgames/UnstableBaselines/example_a2c.py", line 151, in <module>
+    ray.get(learner.train.remote(ITERATIONS))
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+    return fn(*args, **kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/client_mode_hook.py", line 104, in wrapper
+    return func(*args, **kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/worker.py", line 2858, in get
+    values, debugger_breakpoint = worker.get_objects(object_refs, timeout=timeout)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/worker.py", line 960, in get_objects
+    raise value
+ray.exceptions.ActorDiedError: The actor died unexpectedly before finishing this task.
+	class_name: A2CLearner
+	actor_id: ed60be655785989047ccc23701000000
+	pid: 2888029
+	name: Learner
+	namespace: unstable
+	ip: 100.64.19.43
+The actor is dead because its worker process has died. Worker exit type: SYSTEM_ERROR Worker exit detail: Worker unexpectedly exits with a connection error code 2. End of file. There are some potential root causes. (1) The process is killed by SIGKILL by OOM killer due to high memory usage. (2) ray stop --force is called. (3) The worker is crashed unexpectedly due to SIGSEGV or other unexpected errors.
