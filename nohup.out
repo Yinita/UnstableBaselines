@@ -16,3 +16,115 @@ Traceback (most recent call last):
   File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/external_storage.py", line 584, in setup_external_storage
     _external_storage = FileSystemStorage(node_id, **config["params"])
 KeyError: 'params'
+INFO 08-17 19:29:06 [__init__.py:235] Automatically detected platform cuda.
+2025-08-17 19:29:08,615	WARNING node.py:1882 -- The object spilling config is specified from an unstable API - system config or environment variable. This is subject to change in the future. You can use the stable API - --object-spilling-directory in ray start or object_spilling_directory in ray.init() to specify the object spilling directory instead. If you need more advanced settings, please open a github issue with the Ray team.
+Patching UnstableBaselines collector for OpenAI agent support...
+Collector patched successfully!
+Traceback (most recent call last):
+  File "/home/aiscuser/mindgames/UnstableBaselines/example_a2c.py", line 64, in <module>
+    ray.init(
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/client_mode_hook.py", line 104, in wrapper
+    return func(*args, **kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/worker.py", line 1825, in init
+    _global_node = ray._private.node.Node(
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/node.py", line 259, in __init__
+    self.validate_external_storage()
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/node.py", line 1839, in validate_external_storage
+    storage = external_storage.setup_external_storage(
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/external_storage.py", line 584, in setup_external_storage
+    _external_storage = FileSystemStorage(node_id, **config["params"])
+TypeError: FileSystemStorage.__init__() got an unexpected keyword argument 'directory'
+INFO 08-17 19:32:59 [__init__.py:235] Automatically detected platform cuda.
+2025-08-17 19:33:02,200	WARNING utils.py:438 -- Ray currently does not support initializing Ray with fractional cpus. Your num_cpus will be truncated from 90.16 to 90.
+2025-08-17 19:33:02,459	INFO worker.py:1927 -- Started a local Ray instance.
+[36m(Tracker pid=2868126)[0m wandb: Currently logged in as: yinita to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+[36m(Tracker pid=2868126)[0m wandb: Tracking run with wandb version 0.21.1
+[36m(Tracker pid=2868126)[0m wandb: Run data is saved locally in /home/aiscuser/mindgames/UnstableBaselines/wandb/run-20250817_193310-j27x1yv7
+[36m(Tracker pid=2868126)[0m wandb: Run `wandb offline` to turn off syncing.
+[36m(Tracker pid=2868126)[0m wandb: Syncing run Test-Qwen3-8B-Base-Codenames-v0,SecretMafia-v0,ThreePlayerIPD-v0,ColonelBlotto-v0-1755459183
+[36m(Tracker pid=2868126)[0m wandb: ⭐️ View project at https://wandb.ai/yinita/UnstableBaselines
+[36m(Tracker pid=2868126)[0m wandb: 🚀 View run at https://wandb.ai/yinita/UnstableBaselines/runs/j27x1yv7
+Patching UnstableBaselines collector for OpenAI agent support...
+Collector patched successfully!
+[36m(pid=2868126)[0m INFO 08-17 19:33:08 [__init__.py:235] Automatically detected platform cuda.
+Traceback (most recent call last):
+  File "/home/aiscuser/mindgames/UnstableBaselines/example_a2c.py", line 121, in <module>
+    learner = unstable.A2CLearner.options(
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/actor.py", line 1381, in remote
+    return actor_cls._remote(args=args, kwargs=kwargs, **updated_options)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+    return fn(*args, **kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/util/tracing/tracing_helper.py", line 384, in _invocation_actor_class_remote_span
+    return method(self, args, kwargs, *_args, **_kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/actor.py", line 1637, in _remote
+    creation_args = signature.flatten_args(function_signature, args, kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_common/signature.py", line 130, in flatten_args
+    validate_args(signature_parameters, args, kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_common/signature.py", line 101, in validate_args
+    raise TypeError(str(exc)) from None
+TypeError: got an unexpected keyword argument 'use_8bit_quant'
+[36m(pid=2868116)[0m INFO 08-17 19:33:08 [__init__.py:235] Automatically detected platform cuda.
+INFO 08-17 19:33:44 [__init__.py:235] Automatically detected platform cuda.
+2025-08-17 19:33:47,272	WARNING utils.py:438 -- Ray currently does not support initializing Ray with fractional cpus. Your num_cpus will be truncated from 90.16 to 90.
+2025-08-17 19:33:47,536	INFO worker.py:1927 -- Started a local Ray instance.
+[36m(Tracker pid=2874411)[0m wandb: Currently logged in as: yinita to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+[36m(Tracker pid=2874411)[0m wandb: Tracking run with wandb version 0.21.1
+[36m(Tracker pid=2874411)[0m wandb: Run data is saved locally in /home/aiscuser/mindgames/UnstableBaselines/wandb/run-20250817_193355-aa2vzfjc
+[36m(Tracker pid=2874411)[0m wandb: Run `wandb offline` to turn off syncing.
+[36m(Tracker pid=2874411)[0m wandb: Syncing run Test-Qwen3-8B-Base-Codenames-v0,SecretMafia-v0,ThreePlayerIPD-v0,ColonelBlotto-v0-1755459228
+[36m(Tracker pid=2874411)[0m wandb: ⭐️ View project at https://wandb.ai/yinita/UnstableBaselines
+[36m(Tracker pid=2874411)[0m wandb: 🚀 View run at https://wandb.ai/yinita/UnstableBaselines/runs/aa2vzfjc
+Patching UnstableBaselines collector for OpenAI agent support...
+Collector patched successfully!
+[36m(pid=2874411)[0m INFO 08-17 19:33:53 [__init__.py:235] Automatically detected platform cuda.
+Traceback (most recent call last):
+  File "/home/aiscuser/mindgames/UnstableBaselines/example_a2c.py", line 118, in <module>
+    learner = unstable.A2CLearner.options(
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/actor.py", line 1381, in remote
+    return actor_cls._remote(args=args, kwargs=kwargs, **updated_options)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+    return fn(*args, **kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/util/tracing/tracing_helper.py", line 384, in _invocation_actor_class_remote_span
+    return method(self, args, kwargs, *_args, **_kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/actor.py", line 1637, in _remote
+    creation_args = signature.flatten_args(function_signature, args, kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_common/signature.py", line 130, in flatten_args
+    validate_args(signature_parameters, args, kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_common/signature.py", line 101, in validate_args
+    raise TypeError(str(exc)) from None
+TypeError: got an unexpected keyword argument 'offload_to_cpu'
+[36m(pid=2874426)[0m INFO 08-17 19:33:53 [__init__.py:235] Automatically detected platform cuda.
+INFO 08-17 19:39:38 [__init__.py:235] Automatically detected platform cuda.
+2025-08-17 19:39:41,809	WARNING utils.py:438 -- Ray currently does not support initializing Ray with fractional cpus. Your num_cpus will be truncated from 90.16 to 90.
+2025-08-17 19:39:42,067	INFO worker.py:1927 -- Started a local Ray instance.
+[36m(Tracker pid=2881738)[0m wandb: Currently logged in as: yinita to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+[36m(Tracker pid=2881738)[0m wandb: Tracking run with wandb version 0.21.1
+[36m(Tracker pid=2881738)[0m wandb: Run data is saved locally in /home/aiscuser/mindgames/UnstableBaselines/wandb/run-20250817_193950-m38ky21x
+[36m(Tracker pid=2881738)[0m wandb: Run `wandb offline` to turn off syncing.
+[36m(Tracker pid=2881738)[0m wandb: Syncing run Test-Qwen3-8B-Base-Codenames-v0,SecretMafia-v0,ThreePlayerIPD-v0,ColonelBlotto-v0-1755459583
+[36m(Tracker pid=2881738)[0m wandb: ⭐️ View project at https://wandb.ai/yinita/UnstableBaselines
+[36m(Tracker pid=2881738)[0m wandb: 🚀 View run at https://wandb.ai/yinita/UnstableBaselines/runs/m38ky21x
+Patching UnstableBaselines collector for OpenAI agent support...
+Collector patched successfully!
+[36m(pid=2881745)[0m INFO 08-17 19:39:47 [__init__.py:235] Automatically detected platform cuda.
+Traceback (most recent call last):
+  File "/home/aiscuser/mindgames/UnstableBaselines/example_a2c.py", line 140, in <module>
+    ray.get(learner.initialize_algorithm.remote(
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/actor.py", line 676, in remote
+    return self._remote(args, kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_private/auto_init_hook.py", line 22, in auto_init_wrapper
+    return fn(*args, **kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/util/tracing/tracing_helper.py", line 422, in _start_span
+    return method(self, args, kwargs, *_args, **_kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/actor.py", line 856, in _remote
+    obj_ref = invocation(args, kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/actor.py", line 836, in invocation
+    return dst_actor._actor_method_call(
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/actor.py", line 2030, in _actor_method_call
+    list_args = signature.flatten_args(function_signature, args, kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_common/signature.py", line 130, in flatten_args
+    validate_args(signature_parameters, args, kwargs)
+  File "/home/aiscuser/miniconda3/envs/rl/lib/python3.10/site-packages/ray/_common/signature.py", line 101, in validate_args
+    raise TypeError(str(exc)) from None
+TypeError: got an unexpected keyword argument 'share_backbone'
+[36m(pid=2881738)[0m INFO 08-17 19:39:47 [__init__.py:235] Automatically detected platform cuda.

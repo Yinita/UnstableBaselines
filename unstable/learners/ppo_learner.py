@@ -121,7 +121,7 @@ class PPOLearner(BaseLearner):
         return {
             "policy_loss": pg_loss.item(), "value_loss": v_loss.item(), "entropy": entropy.item(),
             "logp_mean": new_logps.mean().item(), "value_mae": (value_pred-rets).abs().mean().item(),
-            "logp_std": new_logps.std().item(), "num_steps": len(clean_steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
+            "logp_std": new_logps.std().item(), "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
             "old_logp_mean": old_logps.mean().item(), "ratio_mean": ratio.mean().item(), "ratio_std": ratio.std().item(), "clip_frac": clip_frac,
             "denom_mean": denom.float().mean().item(),
         }

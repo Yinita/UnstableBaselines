@@ -23,9 +23,6 @@ GRAD_CLIP = 0.2
 MAX_TRAIN_SEQ_LEN = 10000  # Keep this as is for context length
 MAX_GENERATION_LENGTH = 4096
 
-# Memory optimization: Enable 8-bit and 4-bit quantization
-USE_8BIT_QUANT = True    # Use 8-bit quantization for policy model
-USE_4BIT_QUANT = True    # Use 4-bit quantization for critic model
 
 # OpenAI configuration
 OPENAI_MODEL_NAME = "gpt-4o"  # You can change this to any OpenAI model
@@ -60,15 +57,12 @@ vllm_config = {
 patch_collector_for_openai(openai_config)
 
 # Ray init
-# Ray init with memory management configuration
+# Ray init with memory management configuration - 使用简化配置
 ray.init(
     namespace="unstable",
     _memory=2**33,  # 8GB memory limit
     object_store_memory=2**33,  # 8GB object store memory
-    _system_config={
-        "object_spilling_config": "{\"type\": \"filesystem\"}",
-        "max_direct_call_object_size": 2**30,  # 1GB
-    }
+    object_spilling_directory="/tmp/ray_spill"  # 使用标准API指定溢出目录
 )
 env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
@@ -117,8 +111,8 @@ collector = unstable.Collector.options(name="Collector").remote(
     vllm_config=vllm_config, tracker=tracker, buffer=step_buffer, game_scheduler=game_scheduler,
 )
 
-# Memory optimization: Configure Ray to use object spilling to disk
-ray.init(namespace="unstable", _memory=2**33, object_store_memory=2**33, _system_config={"object_spilling_config": "{\"type\": \"filesystem\"}"})
+# 删除重复的ray.init调用，因为我们已经在前面初始化了Ray
+# 这里不需要重复初始化
 
 # initialize the learner with memory optimizations
 learner = unstable.A2CLearner.options(
@@ -139,10 +133,7 @@ learner = unstable.A2CLearner.options(
     activation_checkpointing=True,
     gradient_checkpointing=True,
     use_trainer_cache=False,
-    # Memory optimization: Additional parameters
-    use_8bit_quant=USE_8BIT_QUANT,
-    use_4bit_quant=USE_4BIT_QUANT,
-    offload_to_cpu=True  # Offload parameters to CPU when not in use
+
 )
 
 # Initialize with smaller inference batch size
@@ -152,7 +143,6 @@ ray.get(learner.initialize_algorithm.remote(
     normalize_adv=True,
     max_train_len=MAX_TRAIN_SEQ_LEN,
     max_generation_len=MAX_GENERATION_LENGTH,
-    share_backbone=True  # Share backbone between policy and critic to save memory
 ))
 
 
