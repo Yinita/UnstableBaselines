@@ -57,9 +57,11 @@ class StepBuffer(BaseBuffer):
                 self.logger.info(f"Buffer size after downsampling: {len(self.steps)}")
 
     def get_batch(self, batch_size: int) -> List[Step]:
+        self.logger.info(f"[DEBUG] StepBuffer.get_batch called - requesting {batch_size} samples, current buffer size: {len(self.steps)}")
         with self.mutex: 
             batch = random.sample(self.steps, batch_size)
             for b in batch: self.steps.remove(b)
+            self.logger.info(f"[DEBUG] StepBuffer.get_batch - removed {len(batch)} samples, remaining: {len(self.steps)}")
         batch = self.sampling_reward_transformation(batch) if self.sampling_reward_transformation is not None else batch
         self.logger.info(f"Sampling {len(batch)} samples from buffer.")
         try: write_training_data_to_file(batch=batch, filename=os.path.join(self.local_storage_dir, f"train_data_step_{self.training_steps}.csv"))
@@ -67,10 +69,23 @@ class StepBuffer(BaseBuffer):
         self.training_steps += 1
         return batch
 
-    def stop(self):                 self.collect = False
-    def size(self) -> int:          return len(self.steps)
-    def continue_collection(self):  return self.collect and len(self.steps) < self.max_buffer_size
-    def reset_collection(self):     self.collect = True
+    def stop(self):
+        self.collect = False
+        self.logger.info(f"[DEBUG] StepBuffer.stop called - collection stopped")
+        
+    def size(self) -> int:
+        size = len(self.steps)
+        self.logger.debug(f"[DEBUG] StepBuffer.size called - current size: {size}/{self.max_buffer_size}")
+        return size
+        
+    def continue_collection(self):
+        result = self.collect and len(self.steps) < self.max_buffer_size
+        self.logger.info(f"[DEBUG] StepBuffer.continue_collection called - result: {result} (collect={self.collect}, size={len(self.steps)}/{self.max_buffer_size})")
+        return result
+        
+    def reset_collection(self):
+        self.collect = True
+        self.logger.info(f"[DEBUG] StepBuffer.reset_collection called - collection reset to True")
     def clear(self):                
         with self.mutex: 
             self.steps.clear()
@@ -120,8 +135,10 @@ class EpisodeBuffer(BaseBuffer):
                 excess_num_samples = max(0, len(tree.flatten(self.episodes)) - self.max_buffer_size)
         
     def get_batch(self, batch_size: int) -> List[List[Step]]:
+        total_steps = len(tree.flatten(self.episodes))
+        self.logger.info(f"[DEBUG] EpisodeBuffer.get_batch called - requesting {batch_size} samples, current buffer size: {total_steps} steps in {len(self.episodes)} episodes")
         with self.mutex:
-            assert len(tree.flatten(self.episodes)) >= batch_size
+            assert len(tree.flatten(self.episodes)) >= batch_size, f"Not enough steps in buffer: {len(tree.flatten(self.episodes))} < {batch_size}"
             step_count = 0
             sampled_episodes = []
             random.shuffle(self.episodes)
@@ -130,14 +147,28 @@ class EpisodeBuffer(BaseBuffer):
                 step_count += len(ep)
                 if step_count >= batch_size: break
             for ep in sampled_episodes: self.episodes.remove(ep)
+            self.logger.info(f"[DEBUG] EpisodeBuffer.get_batch - removed {len(sampled_episodes)} episodes with {step_count} steps, remaining: {len(self.episodes)} episodes with {len(tree.flatten(self.episodes))} steps")
         self.logger.info(f"Sampling {len(sampled_episodes)} episodes from buffer.")
         self.training_steps += 1
         return sampled_episodes
 
-    def stop(self):                 self.collect = False
-    def size(self) -> int:          return len(tree.flatten(self.episodes))
-    def continue_collection(self):  return self.collect and len(self.episodes) < self.max_buffer_size
-    def reset_collection(self):     self.collect = True
+    def stop(self):
+        self.collect = False
+        self.logger.info(f"[DEBUG] EpisodeBuffer.stop called - collection stopped")
+        
+    def size(self) -> int:
+        size = len(tree.flatten(self.episodes))
+        self.logger.debug(f"[DEBUG] EpisodeBuffer.size called - current size: {size}/{self.max_buffer_size}")
+        return size
+        
+    def continue_collection(self):
+        result = self.collect and len(self.episodes) < self.max_buffer_size
+        self.logger.info(f"[DEBUG] EpisodeBuffer.continue_collection called - result: {result} (collect={self.collect}, size={len(self.episodes)}/{self.max_buffer_size})")
+        return result
+        
+    def reset_collection(self):
+        self.collect = True
+        self.logger.info(f"[DEBUG] EpisodeBuffer.reset_collection called - collection reset to True")
     def clear(self):
         with self.mutex: 
             self.episodes.clear()

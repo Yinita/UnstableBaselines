@@ -99,54 +99,102 @@ class Collector:
         self.logger.info("Collector initialized")
     
     def _launch_jobs(self, max_train: int, max_eval: Optional[int]):
+        train_running = self._num_running("train")
+        eval_running = self._num_running("eval")
+        self.logger.info(f"[DEBUG] _launch_jobs called - max_train={max_train}, max_eval={max_eval}, currently running: train={train_running}, eval={eval_running}")
+        
         while self._num_running("train") < max_train: # submit new train game
             try:
+                self.logger.info(f"[DEBUG] Requesting next train job from scheduler")
                 game_spec: GameSpec = ray.get(self.game_scheduler.next_train_job.remote()) # sample game spec
-                self.logger.info(f"received train game_spec: {game_spec}")
+                self.logger.info(f"[DEBUG] Received train game_spec: {game_spec}")
                 actor: VLLMActor = next(self._actor_iter) # get actor
+                self.logger.info(f"[DEBUG] Launching train job with actor {actor}")
                 ref = run_game.remote(game_spec, actor)
                 self.flight[ref] = TaskMeta("train", game_spec.env_id)
+                self.logger.info(f"[DEBUG] Added train job to flight, now running: {self._num_running('train')}/{max_train}")
             except Exception as exc:
-                self.logger.info(f"Exception in train game {game_spec}: {exc}")
+                self.logger.error(f"[DEBUG] Exception in train game: {exc}", exc_info=True)
 
         while max_eval!=None and self._num_running("eval") < max_eval:
             try:
+                self.logger.info(f"[DEBUG] Requesting next eval job from scheduler")
                 game_spec: GameSpec = ray.get(self.game_scheduler.next_eval_job.remote())
-                self.logger.info(f"received eval game_spec: {game_spec}")
+                self.logger.info(f"[DEBUG] Received eval game_spec: {game_spec}")
                 actor: VLLMActor = next(self._actor_iter) # get actor
+                self.logger.info(f"[DEBUG] Launching eval job with actor {actor}")
                 ref = run_game.remote(game_spec, actor)
                 self.flight[ref] = TaskMeta("eval", game_spec.env_id)
+                self.logger.info(f"[DEBUG] Added eval job to flight, now running: {self._num_running('eval')}/{max_eval}")
             except Exception as exc:
-                self.logger.info(f"Exception in eval game {game_spec}: {exc}")
+                self.logger.error(f"[DEBUG] Exception in eval game: {exc}", exc_info=True)
 
     def _handle_finished_job(self, ref):
         meta = self.flight.pop(ref)
-        try: game_information, player_trajs = ray.get(ref)
-        except (RayTaskError, RayActorError) as err: self.logger.error(f"Remote episode failed for {meta.type} task: env={meta.env_id}: {err}", exc_info=True); return
-        self._post_train(meta, game_information, player_trajs) if meta.type=="train" else self._post_eval(meta, game_information)
+        self.logger.info(f"[DEBUG] _handle_finished_job called for {meta.type} job, env={meta.env_id}")
+        try: 
+            self.logger.info(f"[DEBUG] Getting results for {meta.type} job")
+            game_information, player_trajs = ray.get(ref)
+            self.logger.info(f"[DEBUG] Successfully got results for {meta.type} job")
+        except (RayTaskError, RayActorError) as err: 
+            self.logger.error(f"[DEBUG] Remote episode failed for {meta.type} task: env={meta.env_id}: {err}", exc_info=True)
+            return
+        
+        if meta.type == "train":
+            self.logger.info(f"[DEBUG] Processing train job results")
+            self._post_train(meta, game_information, player_trajs)
+        else:
+            self.logger.info(f"[DEBUG] Processing eval job results")
+            self._post_eval(meta, game_information)
     
     def _post_train(self, meta: TaskMeta, game_information: GameInformation, player_trajs: List[PlayerTrajectory]):
-        for traj in player_trajs: self.buffer.add_player_trajectory.remote(traj, env_id=meta.env_id); self.tracker.add_player_trajectory.remote(traj, env_id=meta.env_id)
+        self.logger.info(f"[DEBUG] _post_train called with {len(player_trajs)} trajectories for env={meta.env_id}")
+        for i, traj in enumerate(player_trajs):
+            self.logger.info(f"[DEBUG] Adding trajectory {i+1}/{len(player_trajs)} to buffer and tracker")
+            self.buffer.add_player_trajectory.remote(traj, env_id=meta.env_id)
+            self.tracker.add_player_trajectory.remote(traj, env_id=meta.env_id)
+        self.logger.info(f"[DEBUG] Updating game scheduler with game information")
         self.game_scheduler.update.remote(game_info=game_information)
 
     def _post_eval(self, meta: TaskMeta, game_information: GameInformation):
         self.tracker.add_eval_game_information.remote(game_information=game_information, env_id=meta.env_id)
     
     def collect(self, num_train_workers: int, num_eval_workers: Optional[int]=None):
-        self.logger.info("entered collect func")
+        self.logger.info("[DEBUG] Collector.collect started")
+        iteration = 0
+        import time
+        
         while True:  # Run indefinitely, checking buffer state in the loop
-            if ray.get(self.buffer.continue_collection.remote()):
-                self.logger.info("entered collect loop")
+            iteration += 1
+            self.logger.info(f"[DEBUG] Collector loop iteration {iteration} - checking buffer.continue_collection")
+            buffer_continue = ray.get(self.buffer.continue_collection.remote())
+            
+            if buffer_continue:
+                self.logger.info(f"[DEBUG] Buffer continue_collection returned True - launching jobs")
                 self._launch_jobs(num_train_workers, num_eval_workers)
+                
                 if not self.flight: 
                     # No jobs in flight, wait a bit before checking again
-                    import time
+                    self.logger.info(f"[DEBUG] No jobs in flight, waiting before checking again")
                     time.sleep(0.5)
                     continue
-                done_ref, _ = ray.wait(list(self.flight), num_returns=1)
+                    
+                self.logger.info(f"[DEBUG] Waiting for jobs to complete - {len(self.flight)} jobs in flight")
+                done_ref, remaining_refs = ray.wait(list(self.flight), num_returns=1)
+                self.logger.info(f"[DEBUG] Job completed, handling finished job. {len(remaining_refs)} jobs still in flight")
                 self._handle_finished_job(done_ref[0])
             else:
                 # Buffer not collecting, wait before checking again
-                self.logger.info("Buffer not collecting, waiting...")
-                import time
+                self.logger.info(f"[DEBUG] Buffer continue_collection returned False - waiting before checking again")
                 time.sleep(2.0)  # Wait longer when buffer is not collecting
+                
+                # Print detailed status
+                self.logger.info(f"[DEBUG] Collector status: iteration={iteration}, flight_size={len(self.flight)}, train_running={self._num_running('train')}, eval_running={self._num_running('eval')}")
+                
+                # Try to get buffer size for debugging
+                try:
+                    buffer_size = ray.get(self.buffer.size.remote())
+                    self.logger.info(f"[DEBUG] Current buffer size: {buffer_size}")
+                except Exception as exc:
+                    self.logger.error(f"[DEBUG] Failed to get buffer size: {exc}")
+
