@@ -108,12 +108,8 @@ def patched_run_game_impl(game_spec: GameSpec, actor: VLLMActor, openai_config: 
         pid, obs = env.get_observation()
         
         # Get model (or opponent) action
-        if agents[pid]["traj"] is None:  
-            # Fixed opponent
-            raw = extracted = agents[pid]["model"](obs)
-        else:  
-            # Training model
-            raw, extracted, prompt, format_feedback, logp = agents[pid]["model"].act_full(obs)
+        # 统一使用act_full方法，确保返回5元组
+        raw, extracted, prompt, format_feedback, logp = agents[pid]["model"].act_full(obs)
         
         # Execute the action & increment turn counter
         done, step_info = env.step(extracted)

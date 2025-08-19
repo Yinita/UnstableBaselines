@@ -68,12 +68,16 @@ class VLLMActor:
                     self._queued -= 1
                     self._running += 1
 
-                    if path:
+                    # 只有当path存在且是有效的本地路径时才创建LoRARequest
+                    if path and os.path.exists(path):
+                        self.logger.debug(f"Using LoRA path: {path}")
                         if path not in self._lora_ids:
                             self._lora_ids[path] = self._next_lora_id
                             self._next_lora_id += 1
                         lora_req = LoRARequest(path, self._lora_ids[path], path)
                     else:
+                        if path:
+                            self.logger.warning(f"LoRA path does not exist or is invalid: {path}, using base model instead")
                         lora_req = None
                     try: self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
                     except Exception as e:

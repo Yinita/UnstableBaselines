@@ -250,6 +250,44 @@ class OpenAIAgent(Agent):
         result = self._retry_request(observation)
         print(self.model_name, "✈", observation[:50], "🎈", result[:50])
         return result
+        
+    def act_full(self, observation: str) -> Tuple[str, str, str, dict, float]:
+        """
+        Process the observation and return the full action information.
+        This method is compatible with the patched_run_game_impl function.
+        
+        Args:
+            observation (str): The input string to process.
+            
+        Returns:
+            Tuple[str, str, str, dict, float]: A tuple containing:
+                - raw: The raw response from the model
+                - extracted: The extracted action (same as raw for OpenAI agents)
+                - prompt: The prompt sent to the model
+                - format_feedback: Empty dict as format feedback
+                - logp: Log probability (0.0 as placeholder)
+        """
+        if not isinstance(observation, str):
+            raise ValueError(f"Observation must be a string. Received type: {type(observation)}")
+            
+        # Get the raw response
+        raw = self._retry_request(observation)
+        
+        # For OpenAI agents, extracted action is the same as raw response
+        extracted = raw
+        
+        # The prompt is the observation prepended with system prompt
+        prompt = f"{self.system_prompt}\n\n{observation}"
+        
+        # No format feedback for OpenAI agents
+        format_feedback = {}
+        
+        # No log probability for OpenAI agents
+        logp = 0.0
+        
+        print("act_full❀", self.model_name, "✈", observation[:50], "🎈", raw[:50])
+        
+        return raw, extracted, prompt, format_feedback, logp
 
 
 class HumanAgent(Agent):
