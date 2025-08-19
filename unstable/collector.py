@@ -67,8 +67,10 @@ class Collector:
     def __init__(self, vllm_config, tracker, buffer, game_scheduler):
         self.logger = setup_logger("collector", ray.get(tracker.get_log_dir.remote()))
         self.tracker, self.buffer, self.game_scheduler = tracker, buffer, game_scheduler
-        # self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(ray.available_resources().get("GPU", 0))-1)]
-        self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(ray.available_resources().get("GPU", 0)))]
+        num_gpus = int(ray.available_resources().get("GPU", 0))
+        if num_gpus == 0:
+            raise RuntimeError("No GPUs available for VLLMActor initialization")
+        self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(num_gpus)-1)]
         self._actor_iter = itertools.cycle(self.actors)
 
         # thead keeping
@@ -77,25 +79,64 @@ class Collector:
         self.logger.info("Collector initialized")
     
     def _launch_jobs(self, max_train: int, max_eval: Optional[int]):
+        # 训练任务调度
         while self._num_running("train") < max_train: # submit new train game
             try:
-                game_spec: GameSpec = ray.get(self.game_scheduler.next_train_job.remote()) # sample game spec
-                self.logger.info(f"received train game_spec: {game_spec}")
+                # 获取训练游戏规格
+                self.logger.info("Requesting next training job from scheduler...")
+                game_spec_ref = self.game_scheduler.next_train_job.remote()
+                game_spec: GameSpec = ray.get(game_spec_ref) # sample game spec
+                
+                # 验证游戏规格
+                if game_spec is None:
+                    self.logger.error("Received None game_spec from next_train_job")
+                    # 短暂休眠避免过于频繁的请求
+                    time.sleep(1)
+                    continue
+                    
+                self.logger.info(f"Received train game_spec: game_idx={game_spec.game_idx}, "
+                              f"env_id={game_spec.env_id}, seed={game_spec.seed}, "
+                              f"num_agents={len(game_spec.agent_specs)}")
+                
+                # 获取执行器并提交任务
                 actor: VLLMActor = next(self._actor_iter) # get actor
                 ref = run_game.remote(game_spec, actor)
                 self.flight[ref] = TaskMeta("train", game_spec.env_id)
+                self.logger.info(f"Submitted train job: game_idx={game_spec.game_idx}")
             except Exception as exc:
-                self.logger.info(f"Exception in train game {game_spec}: {exc}")
+                self.logger.error(f"Exception in train job scheduling: {exc}", exc_info=True)
+                # 短暂休眠避免过于频繁的请求
+                time.sleep(1)
 
+        # 评估任务调度
         while max_eval!=None and self._num_running("eval") < max_eval:
             try:
-                game_spec: GameSpec = ray.get(self.game_scheduler.next_eval_job.remote())
-                self.logger.info(f"received eval game_spec: {game_spec}")
+                # 获取评估游戏规格
+                self.logger.info("Requesting next evaluation job from scheduler...")
+                game_spec_ref = self.game_scheduler.next_eval_job.remote()
+                game_spec: GameSpec = ray.get(game_spec_ref)
+                
+                # 验证游戏规格
+                if game_spec is None:
+                    self.logger.error("Received None game_spec from next_eval_job")
+                    # 短暂休眠避免过于频繁的请求
+                    time.sleep(1)
+                    continue
+                    
+                self.logger.info(f"Received eval game_spec: game_idx={game_spec.game_idx}, "
+                              f"env_id={game_spec.env_id}, seed={game_spec.seed}, "
+                              f"eval_model_pid={game_spec.eval_model_pid}, "
+                              f"eval_opponent_name={game_spec.eval_opponent_name}")
+                
+                # 获取执行器并提交任务
                 actor: VLLMActor = next(self._actor_iter) # get actor
                 ref = run_game.remote(game_spec, actor)
                 self.flight[ref] = TaskMeta("eval", game_spec.env_id)
+                self.logger.info(f"Submitted eval job: game_idx={game_spec.game_idx}")
             except Exception as exc:
-                self.logger.info(f"Exception in eval game {game_spec}: {exc}")
+                self.logger.error(f"Exception in eval job scheduling: {exc}", exc_info=True)
+                # 短暂休眠避免过于频繁的请求
+                time.sleep(1)
 
     def _handle_finished_job(self, ref):
         meta = self.flight.pop(ref)

@@ -24,6 +24,7 @@ class BaseLearner:
 
         gpu_ids = ray.get_gpu_ids()
         self.device = (torch.device(f"cuda:{gpu_ids[0]}") if gpu_ids else torch.device("cpu"))
+        print(f"Using device: {self.device}")
         self.policy_model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, initial_lora_path)
         self.policy_model.to(torch.bfloat16)
 

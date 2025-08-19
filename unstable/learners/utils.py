@@ -35,8 +35,43 @@ def get_critic_model(pretrain_or_model: str, device: torch.device, torch_dtype, 
     return model
 
 def _load_base(name: str, dtype, device, **kwargs): 
-    with torch.device(device): 
-        return AutoModelForCausalLM.from_pretrained(name, torch_dtype=dtype, trust_remote_code=True, **kwargs)
+    # 安全地处理CUDA设备
+    try:
+        # 检查CUDA是否可用
+        if torch.cuda.is_available():
+            # 获取可用的CUDA设备数量
+            cuda_device_count = torch.cuda.device_count()
+            print(f"可用的CUDA设备数量: {cuda_device_count}")
+            
+            # 如果设备是CUDA设备，确保设备ID有效
+            if isinstance(device, torch.device) and device.type == 'cuda':
+                device_id = device.index if device.index is not None else 0
+                if device_id >= cuda_device_count:
+                    print(f"警告: 请求的CUDA设备ID {device_id} 超出了可用范围 (0-{cuda_device_count-1})")
+                    # 回退到第一个可用的CUDA设备
+                    device = torch.device('cuda:0')
+                    print(f"回退到设备: {device}")
+        
+        # 使用device_map='auto'让transformers自动处理设备分配
+        # 这比使用with torch.device(device)更可靠
+        return AutoModelForCausalLM.from_pretrained(
+            name, 
+            torch_dtype=dtype, 
+            trust_remote_code=True,
+            device_map='auto',  # 让transformers自动处理设备分配
+            **kwargs
+        )
+    except Exception as e:
+        print(f"加载模型时出错: {e}")
+        # 尝试在CPU上加载模型作为后备方案
+        print("尝试在CPU上加载模型...")
+        return AutoModelForCausalLM.from_pretrained(
+            name, 
+            torch_dtype=dtype, 
+            trust_remote_code=True,
+            device_map='cpu',  # 强制使用CPU
+            **kwargs
+        )
 
 def _freeze(model, ignore_substr: Optional[str] = None):
     for n, p in model.named_parameters():
@@ -50,14 +85,74 @@ def _build_lora(model, lora_cfg: Dict[str, Any], task_type: str):
     ))
 
 def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any]|None, initial_lora_path: Optional[str]=None, freeze_base: bool=True, critic_model: bool=False, value_head_prefix: str="value_head") -> Tuple[torch.nn.Module, "transformers.PreTrainedTokenizer"]:
+    # 打印设备信息以便调试
+    print(f"Using device: {device}")
+    
+    # 确保设备有效
+    safe_device = ensure_valid_device(device)
+    print(f"Safe device for model building: {safe_device}")
+    
     task_type = "TOKEN_CLS" if critic_model else "CAUSAL_LM"
-    base = get_critic_model(base_name, device, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix) if critic_model else _load_base(base_name, torch.bfloat16, device)
-    if freeze_base: _freeze(base, None if not critic_model else value_head_prefix)
-    model = _build_lora(base, lora_cfg or {}, task_type).to(device)
-    if initial_lora_path: _load_lora_state(model, initial_lora_path)
+    
+    # 使用安全设备加载基础模型
+    base = get_critic_model(base_name, safe_device, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix) if critic_model else _load_base(base_name, torch.bfloat16, safe_device)
+    
+    if freeze_base: 
+        _freeze(base, None if not critic_model else value_head_prefix)
+    
+    # 构建LoRA模型，但不立即移动到设备
+    try:
+        model = _build_lora(base, lora_cfg or {}, task_type)
+        print(f"LoRA模型构建成功，当前设备: {next(model.parameters()).device}")
+        
+        # 安全地将模型移动到目标设备
+        try:
+            # 尝试使用device_map参数而不是to(device)
+            model = model.to(safe_device)
+            print(f"模型成功移动到设备: {next(model.parameters()).device}")
+        except Exception as e:
+            print(f"移动模型到设备{safe_device}失败: {e}")
+            print("尝试使用CPU作为后备...")
+            model = model.to('cpu')
+            print(f"模型已移动到CPU: {next(model.parameters()).device}")
+    except Exception as e:
+        print(f"构建LoRA模型失败: {e}")
+        raise
+    
+    # 加载初始LoRA状态（如果提供）
+    if initial_lora_path: 
+        _load_lora_state(model, initial_lora_path)
+    
+    # 加载分词器
     tok = AutoTokenizer.from_pretrained(base_name, trust_remote_code=True)
     tok.pad_token = tok.eos_token
+    
     return model, tok
+
+# 辅助函数：确保设备有效
+def ensure_valid_device(device):
+    """确保设备有效，如果无效则回退到安全设备"""
+    try:
+        # 检查CUDA是否可用
+        if torch.cuda.is_available():
+            cuda_device_count = torch.cuda.device_count()
+            print(f"系统中可用的CUDA设备数量: {cuda_device_count}")
+            
+            # 如果是CUDA设备，验证设备ID是否有效
+            if isinstance(device, torch.device) and device.type == 'cuda':
+                device_id = device.index if device.index is not None else 0
+                if device_id >= cuda_device_count:
+                    print(f"警告: 请求的CUDA设备ID {device_id} 超出了可用范围 (0-{cuda_device_count-1})")
+                    # 回退到第一个可用的CUDA设备
+                    return torch.device('cuda:0')
+                return device
+            return device
+        else:
+            print("CUDA不可用，使用CPU")
+            return torch.device('cpu')
+    except Exception as e:
+        print(f"设备验证出错: {e}，回退到CPU")
+        return torch.device('cpu')
 
 def _json_safe(obj):
     if isinstance(obj, set): return list(obj) # turn sets into lists

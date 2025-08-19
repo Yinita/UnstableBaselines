@@ -1,41 +1,87 @@
 import time, ray, unstable
 import unstable.reward_transformations as retra
+import os
 
+# Import the patch for OpenAI agent support
+from patch_collector_for_openai import patch_collector_for_openai
 # always uses 1 learner and the remainder of the GPUS as actors
-COLLECTION_WORKERS = 200
-EVALUATION_WORKERS = 16
+COLLECTION_WORKERS = 64  # Reduced from 200 to lower memory pressure
+EVALUATION_WORKERS = 8   # Reduced from 16
 ITERATIONS = 200
-MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
-BATCH_SIZE = 384
-MINI_BATCH_SIZE = 1
-BUFFER_SIZE = 384*2
+MODEL_NAME = "Qwen/Qwen3-8B-Base"
+OPENAI_OPPONENT_NAME = "openai-gpt-4o"
+
+# Memory optimization: Reduced batch sizes
+BATCH_SIZE = 128         # Reduced from 384
+MINI_BATCH_SIZE = 1      # Keep at 1 for best results
+INFER_MINI_BATCH_SIZE = 8  # New parameter for inference batching
+BUFFER_SIZE = 256        # Reduced buffer size
+
+# Training parameters
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = 3000
-MAX_GENERATION_LENGTH = 4096 
+MAX_TRAIN_SEQ_LEN = 10000  # Keep this as is for context length
+MAX_GENERATION_LENGTH = 4096
 
+
+# OpenAI configuration
+OPENAI_MODEL_NAME = "gpt-4o"  # You can change this to any OpenAI model
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY environment variable is not set. Please set it before running this script.")
+    
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+openai_config = {
+    "model_name": OPENAI_MODEL_NAME,
+    "api_key": OPENAI_API_KEY,
+    "base_url": OPENAI_BASE_URL,
+    "verbose": True,
+}
+
+# Memory optimization: Reduced LoRA rank
 lora_config = {
-    "lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0,
-    "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]
+    "lora_rank": 16,       # Reduced from 32
+    "lora_alpha": 16,      # Reduced from 32
+    "lora_dropout": 0.0,
+    "target_modules": ["q_proj","k_proj","v_proj"] # ,"o_proj","gate_proj", "up_proj","down_proj"
 }
+
+# Memory optimization: Reduced parallel sequences
 vllm_config = {
-    "model_name": MODEL_NAME, "temperature": 0.6, "max_tokens": MAX_GENERATION_LENGTH,
-    "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_config,
-    "max_model_len": 8192
+    "model_name": MODEL_NAME, 
+    "temperature": 0.6, 
+    "max_tokens": MAX_GENERATION_LENGTH,
+    "max_parallel_seq": 32,  # Reduced from 128
+    "max_loras": 4,          # Reduced from 8
+    "lora_config": lora_config,
+    "max_model_len": 16000
 }
+
+patch_collector_for_openai(openai_config)
 
 # Ray init
-ray.init(namespace="unstable")  
-
-# initialize environment scheduler
+# Ray init with memory management configuration - 使用简化配置
+ray.init(
+    namespace="unstable",
+    _memory=2**33,  # 8GB memory limit
+    object_store_memory=2**33,  # 8GB object store memory
+    object_spilling_directory="/tmp/ray_spill"  # 使用标准API指定溢出目录
+)
 env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
-        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
+        unstable.TrainEnvSpec(env_id="Codenames-v0", num_players=4, num_actors=4, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="SecretMafia-v0", num_players=6, num_actors=6, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="ThreePlayerIPD-v0", num_players=3, num_actors=3, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="ColonelBlotto-v0", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning"),
     ],
     eval_env_specs=[
-        unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
-        unstable.EvalEnvSpec(env_id="KuhnPoker-v0-train", num_players=2, prompt_template="qwen3-zs"),
-])
+        unstable.EvalEnvSpec(env_id="Codenames-v0", num_players=4, prompt_template="qwen3-no-reasoning", fixed_opponent=OPENAI_OPPONENT_NAME),
+        unstable.EvalEnvSpec(env_id="SecretMafia-v0", num_players=6, prompt_template="qwen3-no-reasoning", fixed_opponent=OPENAI_OPPONENT_NAME),
+        unstable.EvalEnvSpec(env_id="ThreePlayerIPD-v0", num_players=3, prompt_template="qwen3-no-reasoning", fixed_opponent=OPENAI_OPPONENT_NAME),
+        unstable.EvalEnvSpec(env_id="ColonelBlotto-v0", num_players=2, prompt_template="qwen3-no-reasoning", fixed_opponent=OPENAI_OPPONENT_NAME),
+    ],
+)
+
 
 # Tracker
 tracker = unstable.Tracker.options(name="Tracker").remote(
@@ -46,7 +92,8 @@ tracker = unstable.Tracker.options(name="Tracker").remote(
 # initialize model registry
 model_registry = unstable.ModelRegistry.options(name="ModelRegistry").remote(tracker=tracker)
 ray.get(model_registry.add_checkpoint.remote(uid="base", path=None, iteration=0))
-ray.get(model_registry.add_fixed.remote(name="google/gemini-2.0-flash-lite-001"))
+# Add our OpenAI agent as a fixed opponent
+ray.get(model_registry.add_fixed.remote(name=OPENAI_OPPONENT_NAME))
 
 # initialize model sampler
 model_sampler = unstable.samplers.model_samplers.BaseModelSampler(model_registry=model_registry) 
@@ -67,8 +114,16 @@ collector = unstable.Collector.options(name="Collector").remote(
     vllm_config=vllm_config, tracker=tracker, buffer=step_buffer, game_scheduler=game_scheduler,
 )
 
-# initialize the learner
-learner = unstable.A2CLearner.options(num_gpus=1, name="Learner").remote(
+# 删除重复的ray.init调用，因为我们已经在前面初始化了Ray
+# 这里不需要重复初始化
+
+# initialize the learner with memory optimizations
+learner = unstable.A2CLearner.options(
+    num_gpus=4,  # Use all 4 GPUs for model parallelism
+    name="Learner",
+    memory=2**33,  # 8GB memory limit
+    object_store_memory=2**33  # 8GB object store memory
+).remote(
     model_name=MODEL_NAME,
     lora_cfg=lora_config,
     batch_size=BATCH_SIZE,
@@ -80,9 +135,18 @@ learner = unstable.A2CLearner.options(num_gpus=1, name="Learner").remote(
     model_registry=model_registry,
     activation_checkpointing=True,
     gradient_checkpointing=True,
-    use_trainer_cache=False
+    use_trainer_cache=False,
+
 )
-ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=32, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=MAX_TRAIN_SEQ_LEN, max_generation_len=MAX_GENERATION_LENGTH))
+
+# Initialize with smaller inference batch size
+ray.get(learner.initialize_algorithm.remote(
+    infer_mini_batch_size=INFER_MINI_BATCH_SIZE,  # Reduced from 32
+    critic_learning_rate=5e-5,
+    normalize_adv=True,
+    max_train_len=MAX_TRAIN_SEQ_LEN,
+    max_generation_len=MAX_GENERATION_LENGTH,
+))
 
 
 try:

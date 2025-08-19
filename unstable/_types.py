@@ -80,7 +80,7 @@ class EvalEnvSpec:
     num_players: int 
     prompt_template: str
     action_extraction_fn: str = "default"
-    fixed_opponent: str = "google/gemini-2.0-flash-lite-001"
+    fixed_opponent: str = "openai-gpt-4o"
     # forced_pid: Optional[List] = None # whether to force a specific pid for the collection models
 
 
