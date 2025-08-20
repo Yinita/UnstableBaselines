@@ -12,7 +12,12 @@ openai_global_config = {
 model_name = "Qwen/Qwen3-8B"
 # 定义固定对手
 fixed_opponents = ["openai-gpt-4o", "openai-gpt-4o-mini", "openai-gpt-5", "openai-gpt-5-chat"]
-
+lora_config={
+        "lora_rank": 16,
+        "lora_alpha": 16,
+        "lora_dropout": 0.0,
+        "target_modules": ["q_proj","k_proj","v_proj"] # ,"o_proj","gate_proj", "up_proj","down_proj"
+    }
 # 创建评估环境规范
 eval_envs = [
     MixedPlayEvalEnvSpec(
@@ -33,12 +38,7 @@ run = build_mixed_play(
     openai_config=openai_global_config,
     fixed_opponents=fixed_opponents,
     algorithm="a2c",
-    lora_config={
-        "lora_rank": 16,
-        "lora_alpha": 16,
-        "lora_dropout": 0.0,
-        "target_modules": ["q_proj","k_proj","v_proj"] # ,"o_proj","gate_proj", "up_proj","down_proj"
-    },
+    lora_config=lora_config,
     vllm_config={
         "model_name": model_name,
         "temperature": 0.6,
