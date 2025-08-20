@@ -8,7 +8,7 @@ from unstable.utils.logging import setup_logger
 from unstable._types import PlayerTrajectory, Step
 # from unstable.core import BaseTracker
 from unstable.trackers import BaseTracker
-from unstable.utils import write_training_data_to_file
+from unstable.utils import write_training_data_to_file, write_eval_data_to_file
 from unstable.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
 
 
@@ -93,7 +93,7 @@ class EpisodeBuffer(BaseBuffer):
         self.training_steps = 0
         self.tracker = tracker
         self.local_storage_dir = ray.get(self.tracker.get_train_dir.remote())
-        self.logger = setup_logger("step_buffer", ray.get(tracker.get_log_dir.remote()))  # setup logging
+        self.logger = setup_logger("episode_buffer", ray.get(tracker.get_log_dir.remote()))  # setup logging
         self.episodes: List[List[Step]] = []
         self.mutex = Lock()
 
@@ -122,10 +122,45 @@ class EpisodeBuffer(BaseBuffer):
                 sampled_episodes.append(ep)
                 step_count += len(ep)
                 if step_count >= batch_size: break
-            for ep in sampled_episodes: self.episodes.remove(ep)
+            for ep in sampled_episodes: 
+                self.episodes.remove(ep)
+        
         self.logger.info(f"Sampling {len(sampled_episodes)} episodes from buffer.")
+        
+        # Save training data to file
+        try:
+            # Flatten the episodes for saving
+            flat_steps = [step for ep in sampled_episodes for step in ep]
+            write_training_data_to_file(
+                batch=flat_steps, 
+                filename=os.path.join(self.local_storage_dir, f"train_data_step_{self.training_steps}.csv")
+            )
+        except Exception as exc: 
+            self.logger.error(f"Exception when trying to write training data to file: {exc}")
+            
         self.training_steps += 1
         return sampled_episodes
+        
+    def save_eval_data(self, eval_episodes: List[List[Step]], eval_round: int):
+        """Save evaluation data to file
+        
+        Args:
+            eval_episodes: List of episodes to save
+            eval_round: Evaluation round number for file naming
+        """
+        try:
+            # Flatten the episodes for saving
+            flat_steps = [step for ep in eval_episodes for step in ep]
+            eval_dir = ray.get(self.tracker.get_eval_dir.remote())
+            os.makedirs(eval_dir, exist_ok=True)
+            
+            write_training_data_to_file(
+                batch=flat_steps,
+                filename=os.path.join(eval_dir, f"eval_data_round_{eval_round}.csv")
+            )
+            self.logger.info(f"Saved evaluation data for round {eval_round} with {len(flat_steps)} steps")
+        except Exception as exc:
+            self.logger.error(f"Error saving evaluation data: {exc}")
 
     def stop(self):                 self.collect = False
     def size(self) -> int:          return len(tree.flatten(self.episodes))

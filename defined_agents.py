@@ -84,6 +84,44 @@ class OpenRouterAgent(Agent):
         if not isinstance(observation, str):
             raise ValueError(f"Observation must be a string. Received type: {type(observation)}")
         return self._retry_request(observation)
+        
+    def act_full(self, observation: str) -> Tuple[str, str, str, dict, float]:
+        """
+        Process the observation and return the full action information.
+        This method is compatible with the patched_run_game_impl function.
+        
+        Args:
+            observation (str): The input string to process.
+            
+        Returns:
+            Tuple[str, str, str, dict, float]: A tuple containing:
+                - raw: The raw response from the model
+                - extracted: The extracted action (same as raw for OpenRouter agents)
+                - prompt: The prompt sent to the model
+                - format_feedback: Empty dict as format feedback
+                - logp: Log probability (0.0 as placeholder)
+        """
+        if not isinstance(observation, str):
+            raise ValueError(f"Observation must be a string. Received type: {type(observation)}")
+            
+        # Get the raw response
+        raw = self._retry_request(observation)
+        
+        # For OpenRouter agents, extracted action is the same as raw response
+        extracted = raw
+        
+        # The prompt is the observation prepended with system prompt
+        prompt = f"{self.system_prompt}\n\n{observation}"
+        
+        # No format feedback for OpenRouter agents
+        format_feedback = {}
+        
+        # No log probability for OpenRouter agents
+        logp = 0.0
+        
+        # print("act_full❀", self.model_name, "✈", observation[:50], "🎈", raw[:50])
+        
+        return raw, extracted, prompt, format_feedback, logp
 
 
 class OpenAIAgent(Agent):
@@ -107,7 +145,7 @@ class OpenAIAgent(Agent):
         self.verbose = verbose
         self.kwargs = kwargs
         self.think = ""
-
+        return
         try: from openai import OpenAI, AzureOpenAI
         except ImportError: raise ImportError("OpenAI package is required for OpenAIAgent. Install it with: pip install openai")
         # if "gpt-5" in model_name.lower() or "gpt5" in model_name.lower():
@@ -199,14 +237,14 @@ class OpenAIAgent(Agent):
         
         # Make the API call using the provided model and messages.
         
-        completion = self.client.chat.completions.create(model=self.model_name, messages=messages, n=1, stop=None, **self.kwargs)
+        # completion = self.client.chat.completions.create(model=self.model_name, messages=messages, n=1, stop=None, **self.kwargs)
         response = ""
-        response = completion.choices[0].message.content.strip()
-        if "<think>" in response and "</think>" in response:
-            self.think = response.split("<think>")[1].split("</think>")[0].strip()
-            response = response.split("</think>")[-1].strip()
-        else:
-            self.think = ""
+        # response = completion.choices[0].message.content.strip()
+        # if "<think>" in response and "</think>" in response:
+        #     self.think = response.split("<think>")[1].split("</think>")[0].strip()
+        #     response = response.split("</think>")[-1].strip()
+        # else:
+        #     self.think = ""
         return response
     
     def _retry_request(self, observation: str, retries: int=3, delay: int=2) -> str:
@@ -233,7 +271,7 @@ class OpenAIAgent(Agent):
                 print(f"Attempt {attempt} failed with error: {e}")
                 if attempt < retries:
                     time.sleep(delay)
-        raise last_exception
+        return "[API FAILED]" + str(last_exception)
     
     def __call__(self, observation: str) -> str:
         """
@@ -248,7 +286,7 @@ class OpenAIAgent(Agent):
         if not isinstance(observation, str):
             raise ValueError(f"Observation must be a string. Received type: {type(observation)}")
         result = self._retry_request(observation)
-        print(self.model_name, "✈", observation[:50], "🎈", result[:50])
+        # print(self.model_name, "✈", observation[:50], "🎈", result[:50])
         return result
         
     def act_full(self, observation: str) -> Tuple[str, str, str, dict, float]:
@@ -285,7 +323,7 @@ class OpenAIAgent(Agent):
         # No log probability for OpenAI agents
         logp = 0.0
         
-        print("act_full❀", self.model_name, "✈", observation[:50], "🎈", raw[:50])
+        # print("act_full❀", self.model_name, "✈", observation[:50], "🎈", raw[:50])
         
         return raw, extracted, prompt, format_feedback, logp
 

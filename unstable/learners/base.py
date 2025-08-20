@@ -1,6 +1,8 @@
 
 import ray, torch, time, pathlib
 from typing import List, Dict, Any, Optional
+import GPUtil
+from collections import deque
 
 from unstable.buffers import BaseBuffer
 from unstable.trackers import BaseTracker
@@ -34,23 +36,131 @@ class BaseLearner:
         
         self.policy_optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.policy_model.parameters()), lr=learning_rate)
         self._step = 1; self._samples_seen = 0 # training counters
+        
+        # GPU监控相关
+        self._gpu_peak_memory = 0.0
+        self._gpu_memory_samples = deque(maxlen=50)
+        self._memory_pressure_threshold = 0.90  # 90%内存使用率阈值（训练时更严格）
+        self.gpu_ids = ray.get_gpu_ids()
+
+    def _monitor_gpu_memory(self, phase: str = "unknown"):
+        """监控GPU内存使用情况"""
+        try:
+            # 使用torch监控当前GPU内存
+            if torch.cuda.is_available() and self.gpu_ids:
+                for gpu_id in self.gpu_ids:
+                    with torch.cuda.device(gpu_id):
+                        allocated = torch.cuda.memory_allocated() / 1024**2  # MB
+                        cached = torch.cuda.memory_reserved() / 1024**2      # MB
+                        max_allocated = torch.cuda.max_memory_allocated() / 1024**2  # MB
+                        
+                        self._gpu_peak_memory = max(self._gpu_peak_memory, allocated)
+                        self._gpu_memory_samples.append({
+                            'timestamp': time.time(),
+                            'phase': phase,
+                            'step': self._step,
+                            'gpu_id': gpu_id,
+                            'allocated_mb': allocated,
+                            'cached_mb': cached,
+                            'max_allocated_mb': max_allocated
+                        })
+            
+            # 使用GPUtil获取更详细的GPU信息
+            gpus = GPUtil.getGPUs()
+            for gpu in gpus:
+                if gpu.id in self.gpu_ids:
+                    memory_util = gpu.memoryUtil
+                    if memory_util > self._memory_pressure_threshold:
+                        self.logger.warning(
+                            f"High GPU memory usage during {phase} on GPU {gpu.id}: {memory_util*100:.1f}% "
+                            f"({gpu.memoryUsed}MB/{gpu.memoryTotal}MB) at step {self._step}"
+                        )
+                        # 触发内存清理
+                        self._cleanup_memory()
+                        
+        except Exception as e:
+            self.logger.debug(f"GPU monitoring error during {phase}: {e}")
+    
+    def _cleanup_memory(self):
+        """清理GPU内存"""
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                # 重置峰值内存统计
+                for gpu_id in self.gpu_ids:
+                    torch.cuda.reset_peak_memory_stats(gpu_id)
+                self.logger.info(f"GPU cache cleared and peak memory stats reset at step {self._step}")
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup GPU memory: {e}")
+    
+    def get_gpu_stats(self) -> Dict[str, Any]:
+        """获取GPU统计信息"""
+        stats = {
+            'peak_memory_mb': self._gpu_peak_memory,
+            'gpu_ids': self.gpu_ids,
+            'current_step': self._step,
+            'recent_samples': list(self._gpu_memory_samples)[-10:] if self._gpu_memory_samples else []
+        }
+        
+        # 添加当前内存使用情况
+        if torch.cuda.is_available() and self.gpu_ids:
+            current_memory = {}
+            for gpu_id in self.gpu_ids:
+                with torch.cuda.device(gpu_id):
+                    current_memory[f'gpu_{gpu_id}'] = {
+                        'allocated_mb': torch.cuda.memory_allocated() / 1024**2,
+                        'cached_mb': torch.cuda.memory_reserved() / 1024**2,
+                        'max_allocated_mb': torch.cuda.max_memory_allocated() / 1024**2
+                    }
+            stats['current_memory'] = current_memory
+        
+        return stats
 
     def initialize_algorithm(self, cfg):    raise NotImplementedError
     def _update(self, batch):               raise NotImplementedError
     def train(self, iterations: int):
         self.logger.info("Starting training loop")
+        
+        # 初始GPU状态监控
+        self._monitor_gpu_memory("training_start")
 
         while self._step < iterations:
             try:
-                while (ray.get(self.buffer.size.remote()) < self.batch_size * 1.5): time.sleep(0.2) # wait until enough data is available
+                # 等待数据时监控GPU
+                self._monitor_gpu_memory("waiting_for_data")
+                while (ray.get(self.buffer.size.remote()) < self.batch_size * 1.5): 
+                    time.sleep(0.2) # wait until enough data is available
+                
                 self.logger.info("Enough data, starting learning step")
+                
+                # 获取批次数据前监控
+                self._monitor_gpu_memory("before_batch_load")
                 batch: List = ray.get(self.buffer.get_batch.remote(self.batch_size)); self._samples_seen += self.batch_size
+                
+                # 更新前监控
+                self._monitor_gpu_memory("before_update")
                 accumulated_metrics = self._update(batch=batch) # handled by specific algo implementations
+                
+                # 更新后监控
+                self._monitor_gpu_memory("after_update")
 
+                # 添加GPU统计到日志
+                gpu_stats = self.get_gpu_stats()
                 log = {f"{k}": v for k, v in accumulated_metrics.items()}
-                log.update({"step": self._step,  "samples_seen": self._samples_seen,  "lr": self.policy_optimizer.param_groups[0]["lr"], "policy_grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5})
+                log.update({
+                    "step": self._step,  
+                    "samples_seen": self._samples_seen,  
+                    "lr": self.policy_optimizer.param_groups[0]["lr"], 
+                    "policy_grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5,
+                    "gpu_peak_memory_mb": gpu_stats['peak_memory_mb'],
+                    "gpu_current_allocated_mb": sum(gpu['allocated_mb'] for gpu in gpu_stats.get('current_memory', {}).values()),
+                    "gpu_current_cached_mb": sum(gpu['cached_mb'] for gpu in gpu_stats.get('current_memory', {}).values())
+                })
                 self.tracker.log_learner.remote(log)
 
+                # 保存检查点前监控
+                self._monitor_gpu_memory("before_checkpoint_save")
+                
                 # save & register the updated checkpoint
                 ckpt_path = self._save_checkpoint()
                 try:
@@ -58,10 +168,24 @@ class BaseLearner:
                     self.logger.info(f"Registered new ckpt: {ckpt_path}, ckpt-{self._step}")
                 except Exception as exc: self.logger.info(f"Exception when adding checkpoint: {exc}")
                 self.logger.info(f"registered new ckpt -> {ckpt_path} for iteration{self._step}")
+                
+                # 保存检查点后监控和清理
+                self._monitor_gpu_memory("after_checkpoint_save")
+                
+                # 每10步进行一次内存清理
+                if self._step % 10 == 0:
+                    self._cleanup_memory()
+                
                 self._step += 1
             except Exception as exc: self.logger.info(f"Exception in learner loop: {exc}")
 
-        self.logger.info("[Learner] training finished.")
+        # 训练结束时的GPU统计
+        self._monitor_gpu_memory("training_end")
+        final_stats = self.get_gpu_stats()
+        self.logger.info(f"[Learner] training finished. Final GPU peak memory: {final_stats['peak_memory_mb']:.1f} MB")
+        
+        # 最终清理
+        self._cleanup_memory()
         self.buffer.stop.remote()
 
     def _save_checkpoint(self):

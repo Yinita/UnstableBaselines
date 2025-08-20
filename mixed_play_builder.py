@@ -199,7 +199,8 @@ def _default_vllm_cfg(model_name: str, lora_cfg: dict, max_generation_len: int) 
         "max_parallel_seq": 32,
         "max_loras": 4,
         "lora_config": lora_cfg,
-        "max_model_len": 8192
+        "max_model_len": 8192,
+        "gpu_memory_utilization": 0.8
     }
 
 def _patch_game_scheduler_for_mixed_play(openai_models=None):
@@ -331,7 +332,7 @@ def build_mixed_play(*,
                     algorithm: str = "a2c",
                     max_train_len: Optional[int] = None,
                     max_generation_len: int = 4096,
-                    batch_size: int = 128,
+                    batch_size: int = 16,
                     mini_batch_size: int = 1,
                     learning_rate: float = 1e-5,
                     gradient_clipping: float = 0.2,
@@ -383,8 +384,8 @@ def build_mixed_play(*,
     try:
         if not ray.is_initialized():
             logger.info("Ray未初始化，现在初始化...")
-            debug_log("调用ray.init，指定num_gpus=4")
-            ray.init(namespace="unstable", num_gpus=4)
+            debug_log("调用ray.init，自动检测GPU资源（不手动指定num_gpus）")
+            ray.init(namespace="unstable")
             debug_log(f"Ray初始化成功，资源: {ray.available_resources()}")
         else:
             logger.info("Ray已初始化，跳过初始化")
@@ -564,16 +565,14 @@ def build_mixed_play(*,
         
         debug_log(f"学习器使用num_gpus=1和额外资源: {custom_resources}")
         
-        # 创建学习器时添加额外的环境变量配置，确保CUDA设备可见性
-        learner_env_vars = {"CUDA_VISIBLE_DEVICES": "0,1,2,3"}  # 确保所有GPU对PyTorch可见
+        # 让 Ray 自动为 Actor 分配并设置 CUDA_VISIBLE_DEVICES，不要手动覆盖，以避免 invalid device ordinal
         
         if algorithm == "reinforce":
             learner = unstable.REINFORCELearner.options(
                 name="Learner",
                 num_cpus=1,
                 num_gpus=1,
-                resources=custom_resources,
-                runtime_env={"env_vars": learner_env_vars}
+                resources=custom_resources
             ).remote(
                 model_name=model_name,
                 lora_cfg=_lora_cfg,
@@ -590,8 +589,7 @@ def build_mixed_play(*,
                 name="Learner",
                 num_cpus=1,
                 num_gpus=1,
-                resources=custom_resources,
-                runtime_env={"env_vars": learner_env_vars}
+                resources=custom_resources
             ).remote(
                 model_name=model_name,
                 lora_cfg=_lora_cfg,

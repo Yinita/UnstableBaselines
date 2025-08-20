@@ -4,9 +4,10 @@ import unstable
 
 # OpenAI全局配置
 openai_global_config = {
-    "verbose": True,
+    "verbose": False,
     "api_key": os.getenv("OPENAI_API_KEY", ""),
-    "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+    "quiet_console": True     # 开启静默模式
 }
 
 # 定义固定对手
@@ -24,7 +25,7 @@ eval_envs = [
 
 # 构建并启动训练
 run = build_mixed_play(
-    model_name="Qwen/Qwen3-1.7B-Base",
+    model_name="Qwen/Qwen3-1.7B",
     train_envs=[
         unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=2, prompt_template="qwen3-zs")
     ],

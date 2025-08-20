@@ -54,7 +54,8 @@ vllm_config = {
     "max_parallel_seq": 32,  # Reduced from 128
     "max_loras": 4,          # Reduced from 8
     "lora_config": lora_config,
-    "max_model_len": 16000
+    "max_model_len": 16000,
+    "gpu_memory_utilization": 0.4,
 }
 
 patch_collector_for_openai(openai_config)

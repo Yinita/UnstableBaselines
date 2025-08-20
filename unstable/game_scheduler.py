@@ -26,8 +26,8 @@ class GameScheduler:
                 raise ValueError("Failed to get current checkpoint path")
                 
             # build the game spec and agent specs
+            # Use deterministic pid order for eval to ensure the collecting model gets turns
             pids = list(range(env_spec.num_players))
-            random.shuffle(pids)
             agent_specs = []
             
             # 初始化运行任务记录
@@ -108,8 +108,8 @@ class GameScheduler:
                 position = pid + 1  # 位置从1开始
                 
                 if i == 0:  
-                    # 第一个位置始终用于评估的模型
-                    self.logger.info(f"Setting position {position} (pid={pid}) as evaluation model")
+                    # 第一个位置始终用于评估的模型（固定为 pid=0 的位置）
+                    self.logger.info(f"Setting evaluation model at fixed position 1 (pid={pid})")
                     agent_specs.append(AgentSpec(
                         pid=pid, 
                         kind="checkpoint", 
@@ -152,7 +152,7 @@ class GameScheduler:
                 env_id=env_spec.env_id, 
                 seed=self._game_idx, 
                 agent_specs=agent_specs, 
-                eval_model_pid=pids[0], 
+                eval_model_pid=pids[0],  # fixed to 0 due to deterministic pid ordering
                 eval_opponent_name=','.join(used_opponent_names) if used_opponent_names else env_spec.fixed_opponent
             )
             

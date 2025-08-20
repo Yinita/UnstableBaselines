@@ -1,4 +1,4 @@
-import ray, copy, trueskill
+import ray, copy, trueskill, os
 from dataclasses import dataclass, asdict
 from collections import defaultdict
 from typing import Dict, List
@@ -30,6 +30,14 @@ class ModelRegistry:
     def add_checkpoint(self, uid: str, path: str, iteration: int, inherit: bool=True):
         self.logger.info(f"tryin to add ckpt: {uid}, path {path}, iteration {iteration}, inherit: {inherit}")
         if uid in self._db: return
+        
+        # 确保路径是绝对路径
+        if path and not os.path.isabs(path):
+            # 如果是相对路径，转换为绝对路径
+            abs_path = os.path.abspath(path)
+            self.logger.info(f"Converting relative path {path} to absolute path {abs_path}")
+            path = abs_path
+        
         rating = self.TS.Rating(mu=self._db[self._current_ckpt_uid].rating.mu, sigma=self._db[self._current_ckpt_uid].rating.sigma*2) if (inherit and self._current_ckpt_uid in self._db) else self.TS.create_rating()
         self._db[uid] = ModelMeta(uid=uid, kind="checkpoint", path_or_name=path, rating=rating, iteration=iteration)
         self._current_ckpt_uid = uid # make it current

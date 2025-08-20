@@ -7,11 +7,12 @@ import ray
 import logging
 import sys
 import os
+import contextlib
 from typing import Dict, Any
 
 # Add the UnstableBaselines directory to Python path
 sys.path.append('/home/aiscuser/mindgames/UnstableBaselines')
-from defined_agents import OpenAIAgent
+from defined_agents import OpenAIAgent, OpenRouterAgent
 
 # Import necessary UnstableBaselines modules
 import unstable.collector as collector_module
@@ -23,8 +24,9 @@ import textarena as ta
 
 def create_openai_agent_for_opponent(opponent_name: str, openai_config: Dict[str, Any]):
     """Create an OpenAI agent based on the opponent name and configuration."""
-    logging.info(f"Creating agent for opponent: {opponent_name}")
-    
+    # logging.info(f"Creating agent for opponent: {opponent_name}")
+    if openai_config.get("verbose", False):
+        logging.info(f"Creating agent for opponent: {opponent_name}")
     if opponent_name.startswith("openai-"):
         # 提取模型名称
         model_name = opponent_name[len("openai-"):]
@@ -36,15 +38,32 @@ def create_openai_agent_for_opponent(opponent_name: str, openai_config: Dict[str
                 model_name=model_name,
                 verbose=openai_config.get("verbose", False)
             )
-            logging.info(f"Successfully created OpenAI agent with model: {model_name}")
+            # logging.info(f"Successfully created OpenAI agent with model: {model_name}")
+            # 确认agent有act_full方法
+            if not hasattr(agent, 'act_full'):
+                logging.error(f"OpenAI agent does not have act_full method, adding compatibility wrapper")
+                original_call = agent.__call__
+                def act_full_wrapper(observation):
+                    raw = original_call(observation)
+                    return raw, raw, observation, {}, 0.0
+                agent.act_full = act_full_wrapper
             return agent
         except Exception as e:
             logging.error(f"Failed to create OpenAI agent: {e}", exc_info=True)
             raise
     else:
         # 回退到OpenRouter
-        logging.info(f"Using OpenRouter agent for: {opponent_name}")
-        return ta.agents.OpenRouterAgent(opponent_name)
+        # logging.info(f"Using OpenRouter agent for: {opponent_name}")
+        agent = OpenRouterAgent(opponent_name)
+        # 确认agent有act_full方法
+        if not hasattr(agent, 'act_full'):
+            logging.error(f"OpenRouter agent does not have act_full method, adding compatibility wrapper")
+            original_call = agent.__call__
+            def act_full_wrapper(observation):
+                raw = original_call(observation)
+                return raw, raw, observation, {}, 0.0
+            agent.act_full = act_full_wrapper
+        return agent
 
 def patched_run_game_impl(game_spec: GameSpec, actor: VLLMActor, openai_config: Dict[str, Any] = None):
     """
@@ -57,14 +76,14 @@ def patched_run_game_impl(game_spec: GameSpec, actor: VLLMActor, openai_config: 
         raise ValueError(error_msg)
         
     # 记录详细的game_spec信息以便调试
-    logging.info(f"Running game with spec: game_idx={game_spec.game_idx}, "
-                f"eval_model_pid={game_spec.eval_model_pid}, "
-                f"eval_opponent_name={game_spec.eval_opponent_name}, "
-                f"env_id={game_spec.env_id}, seed={game_spec.seed}")
+    # logging.info(f"Running game with spec: game_idx={game_spec.game_idx}, "
+    #             f"eval_model_pid={game_spec.eval_model_pid}, "
+    #             f"eval_opponent_name={game_spec.eval_opponent_name}, "
+    #             f"env_id={game_spec.env_id}, seed={game_spec.seed}")
     
     if openai_config is None:
         openai_config = {}
-        logging.warning("No OpenAI config provided, using empty dict")
+        # logging.warning("No OpenAI config provided, using empty dict")
     
     game_information = GameInformation(
         game_idx=game_spec.game_idx, 
@@ -109,11 +128,23 @@ def patched_run_game_impl(game_spec: GameSpec, actor: VLLMActor, openai_config: 
         
         # Get model (or opponent) action
         # 统一使用act_full方法，确保返回5元组
-        raw, extracted, prompt, format_feedback, logp = agents[pid]["model"].act_full(obs)
+        try:
+            # logging.info(f"[TRAJ_DEBUG] 调用agent.act_full pid={pid}, agent_type={type(agents[pid]['model']).__name__}, obs_len={len(obs)}")
+            raw, extracted, prompt, format_feedback, logp = agents[pid]["model"].act_full(obs)
+            # logging.info(f"[TRAJ_DEBUG] act_full成功返回 pid={pid}, raw_len={len(raw)}, extracted_len={len(extracted)}")
+        except Exception as e:
+            # logging.error(f"[TRAJ_DEBUG] act_full调用失败 pid={pid}, error={e}", exc_info=True)
+            raise
         
         # Execute the action & increment turn counter
-        done, step_info = env.step(extracted)
-        turn += 1
+        try:
+            # logging.info(f"[TRAJ_DEBUG] 执行动作 env.step pid={pid}, action_len={len(extracted)}")
+            done, step_info = env.step(extracted)
+            # logging.info(f"[TRAJ_DEBUG] 动作执行完成 pid={pid}, done={done}")
+            turn += 1
+        except Exception as e:
+            # logging.error(f"[TRAJ_DEBUG] 动作执行失败 pid={pid}, error={e}", exc_info=True)
+            raise
         
         # General tracking
         game_information.pid.append(pid)
@@ -129,10 +160,12 @@ def patched_run_game_impl(game_spec: GameSpec, actor: VLLMActor, openai_config: 
             agents[pid]["traj"].actions.append(raw)
             agents[pid]["traj"].extracted_actions.append(extracted)
             agents[pid]["traj"].logps.append(logp)
+            if format_feedback is None:
+                format_feedback = {}
             format_feedback["invalid_move"] = False
             agents[pid]["traj"].format_feedbacks.append(format_feedback)
             agents[pid]["traj"].step_infos.append(step_info)
-            if turn % 10 == 0:
+            if turn % 100 == 0:
                 ol = len(agents[pid]["traj"].obs); al = len(agents[pid]["traj"].actions); ll = len(agents[pid]["traj"].logps)
                 logging.getLogger("collector").info(f"turn={turn} pid={pid} lengths obs={ol} acts={al} logps={ll}")
         
@@ -146,8 +179,9 @@ def patched_run_game_impl(game_spec: GameSpec, actor: VLLMActor, openai_config: 
             agents[pid]["traj"].final_reward = final_rewards[pid]
             agents[pid]["traj"].game_info = game_info[pid]
             agents[pid]["traj"].num_turns = turn
-            if game_info[pid]["invalid_move"] and agents[pid]["traj"] is not None:
-                agents[pid]["traj"].format_feedbacks[-1]["invalid_move"] = True
+            if game_info[pid].get("invalid_move", False) and agents[pid]["traj"] is not None:
+                if agents[pid]["traj"].format_feedbacks:
+                    agents[pid]["traj"].format_feedbacks[-1]["invalid_move"] = True
     
     game_information.final_rewards = final_rewards
     game_information.num_turns = turn
@@ -163,7 +197,7 @@ def patch_collector_for_openai(openai_config: Dict[str, Any]):
     Args:
         openai_config: Configuration for OpenAI agent including model_name, api_key, base_url, etc.
     """
-    print("Patching UnstableBaselines collector for OpenAI agent support...")
+    # print("Patching UnstableBaselines collector for OpenAI agent support...")
     
     # Create a new remote function that wraps our implementation with the config
     @ray.remote(num_cpus=0)
@@ -179,9 +213,22 @@ def patch_collector_for_openai(openai_config: Dict[str, Any]):
             logging.error(error_msg)
             raise ValueError(error_msg)
             
+        # Optional quiet mode to suppress console noise from the environment and agents
+        quiet = openai_config.get("quiet_console", False)
+        if quiet:
+            # Reduce logging verbosity in this worker
+            logging.getLogger().setLevel(logging.WARNING)
+
         logging.info(f"Starting game with openai_support, game_spec type: {type(game_spec)}, actor type: {type(actor)}")
         try:
-            return patched_run_game_impl(game_spec, actor, openai_config)
+            if quiet:
+                # Silence stdout/stderr (prints from game/env) during gameplay
+                with open(os.devnull, 'w') as devnull, \
+                     contextlib.redirect_stdout(devnull), \
+                     contextlib.redirect_stderr(devnull):
+                    return patched_run_game_impl(game_spec, actor, openai_config)
+            else:
+                return patched_run_game_impl(game_spec, actor, openai_config)
         except Exception as e:
             logging.error(f"Error in run_game_with_openai_support: {e}", exc_info=True)
             raise
@@ -189,7 +236,7 @@ def patch_collector_for_openai(openai_config: Dict[str, Any]):
     # Replace the original run_game function
     collector_module.run_game = run_game_with_openai_support
     
-    print("Collector patched successfully!")
+    # print("Collector patched successfully!")
     return True
 
 

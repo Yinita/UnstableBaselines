@@ -11,7 +11,7 @@ _OPP_SAMPLERS = {"none": unstable.samplers.model_samplers.BaseModelSampler, "mir
 _STEP_BUFFER_ALGOS = ["reinforce"]
 _EPISODE_BUFFER_ALGOS = ["a2c"]
 _ALGOS = {"reinforce": unstable.REINFORCELearner, "a2c": unstable.A2CLearner}
-def _default_vllm_cfg(model_name: str, lora_cfg: dict, max_generation_len: int) -> dict: return {"model_name": model_name, "temperature": 0.6, "max_tokens": max_generation_len, "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_cfg, "max_model_len": 8192}
+def _default_vllm_cfg(model_name: str, lora_cfg: dict, max_generation_len: int) -> dict: return {"model_name": model_name, "temperature": 0.6, "max_tokens": max_generation_len, "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_cfg, "max_model_len": 8192, "gpu_memory_utilization": 0.8}
 
 class _UBRun:
     def __init__(self, *, collector, learner): self.collector, self.learner = collector, learner

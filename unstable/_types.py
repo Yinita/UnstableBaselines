@@ -23,7 +23,7 @@ class PlayerTrajectory:
     step_infos:         List[Dict] = field(default_factory=list)
     game_info:          Dict = field(default_factory=dict)
     num_turns:          int = field(default_factory=int)
-
+    logps:              List[float] = field(default_factory=list)
 
 @dataclass
 class GameInformation:

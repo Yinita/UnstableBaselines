@@ -37,23 +37,6 @@ def get_critic_model(pretrain_or_model: str, device: torch.device, torch_dtype, 
 def _load_base(name: str, dtype, device, **kwargs): 
     # 安全地处理CUDA设备
     try:
-        # 检查CUDA是否可用
-        if torch.cuda.is_available():
-            # 获取可用的CUDA设备数量
-            cuda_device_count = torch.cuda.device_count()
-            print(f"可用的CUDA设备数量: {cuda_device_count}")
-            
-            # 如果设备是CUDA设备，确保设备ID有效
-            if isinstance(device, torch.device) and device.type == 'cuda':
-                device_id = device.index if device.index is not None else 0
-                if device_id >= cuda_device_count:
-                    print(f"警告: 请求的CUDA设备ID {device_id} 超出了可用范围 (0-{cuda_device_count-1})")
-                    # 回退到第一个可用的CUDA设备
-                    device = torch.device('cuda:0')
-                    print(f"回退到设备: {device}")
-        
-        # 使用device_map='auto'让transformers自动处理设备分配
-        # 这比使用with torch.device(device)更可靠
         return AutoModelForCausalLM.from_pretrained(
             name, 
             torch_dtype=dtype, 
