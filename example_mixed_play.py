@@ -1,7 +1,7 @@
 from mixed_play_builder import build_mixed_play, MixedPlayEvalEnvSpec
 import os
 import unstable
-os.environ["COLLECTOR_GPUS"] = "2"
+os.environ["COLLECTOR_GPUS"] = "1"
 # OpenAI全局配置
 openai_global_config = {
     "verbose": False,
@@ -9,7 +9,8 @@ openai_global_config = {
     "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     "quiet_console": True     # 开启静默模式
 }
-model_name = "Qwen/Qwen3-8B"
+# model_name = "Qwen/Qwen3-8B"
+model_name = "yinita/qwen3-8b-v1-lora-0812-3epochs"
 # 定义固定对手
 fixed_opponents = ["openai-gpt-4o", "openai-gpt-4o-mini", "openai-gpt-5", "openai-gpt-5-chat"]
 lora_config={
@@ -18,13 +19,35 @@ lora_config={
         "lora_dropout": 0.0,
         "target_modules": ["q_proj","k_proj","v_proj"] # ,"o_proj","gate_proj", "up_proj","down_proj"
     }
-# 创建评估环境规范
+# 创建评估环境规范（四种环境）
 eval_envs = [
+    # Codenames（4人局）：3个固定对手，模型位置由调度器随机化
     MixedPlayEvalEnvSpec(
-        env_id="Codenames-v0", 
-        num_players=4, 
+        env_id="Codenames-v0",
+        num_players=4,
         prompt_template="qwen3-no-reasoning",
         opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-5-chat", 3: "openai-gpt-5"}
+    ),
+    # SecretMafia（6人局）：5个固定对手
+    MixedPlayEvalEnvSpec(
+        env_id="SecretMafia-v0",
+        num_players=6,
+        prompt_template="qwen3-no-reasoning",
+        opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-4o-mini", 3: "openai-gpt-5", 4: "openai-gpt-5-chat", 5: "openai-gpt-4o"}
+    ),
+    # ThreePlayerIPD（3人局）：2个固定对手
+    MixedPlayEvalEnvSpec(
+        env_id="ThreePlayerIPD-v0",
+        num_players=3,
+        prompt_template="qwen3-no-reasoning",
+        opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-5"}
+    ),
+    # ColonelBlotto（2人局）：1个固定对手
+    MixedPlayEvalEnvSpec(
+        env_id="ColonelBlotto-v0",
+        num_players=2,
+        prompt_template="qwen3-no-reasoning",
+        opponent_mapping={1: "openai-gpt-5"}
     ),
 ]
 
@@ -32,7 +55,11 @@ eval_envs = [
 run = build_mixed_play(
     model_name=model_name,
     train_envs=[
-        unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=2, prompt_template="qwen3-no-reasoning")
+        # 四种训练环境
+        unstable.TrainEnvSpec(env_id="Codenames-v0-train",    num_players=4, num_actors=4, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="SecretMafia-v0-train",  num_players=6, num_actors=6, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="ThreePlayerIPD-v0-train", num_players=3, num_actors=3, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning"),
     ],
     eval_envs=eval_envs,
     openai_config=openai_global_config,
@@ -52,4 +79,4 @@ run = build_mixed_play(
 )
 
 # 开始训练
-run.start(learning_steps=200, num_collection_workers=32, num_eval_workers=4)
+run.start(learning_steps=1000, num_collection_workers=32, num_eval_workers=4)
