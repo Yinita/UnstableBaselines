@@ -1,7 +1,7 @@
 from mixed_play_builder import build_mixed_play, MixedPlayEvalEnvSpec
 import os
 import unstable
-
+os.environ["COLLECTOR_GPUS"] = "2"
 # OpenAI全局配置
 openai_global_config = {
     "verbose": False,
