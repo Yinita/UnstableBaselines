@@ -9,7 +9,7 @@ openai_global_config = {
     "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     "quiet_console": True     # 开启静默模式
 }
-
+model_name = "Qwen/Qwen3-8B"
 # 定义固定对手
 fixed_opponents = ["openai-gpt-4o", "openai-gpt-4o-mini", "openai-gpt-5", "openai-gpt-5-chat"]
 
@@ -25,14 +25,29 @@ eval_envs = [
 
 # 构建并启动训练
 run = build_mixed_play(
-    model_name="Qwen/Qwen3-8B",
+    model_name=model_name,
     train_envs=[
         unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=2, prompt_template="qwen3-no-reasoning")
     ],
     eval_envs=eval_envs,
     openai_config=openai_global_config,
     fixed_opponents=fixed_opponents,
-    algorithm="a2c"
+    algorithm="a2c",
+    lora_config={
+        "lora_rank": 16,
+        "lora_alpha": 16,
+        "lora_dropout": 0.0,
+        "target_modules": ["q_proj","k_proj","v_proj"] # ,"o_proj","gate_proj", "up_proj","down_proj"
+    },
+    vllm_config={
+        "model_name": model_name,
+        "temperature": 0.6,
+        "max_tokens": 4096,
+        "max_parallel_seq": 32,  # Reduced from 128
+        "max_loras": 4,          # Reduced from 8
+        "lora_config": lora_config,
+        "max_model_len": 16000
+    }
 )
 
 # 开始训练
