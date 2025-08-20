@@ -118,7 +118,8 @@ class Collector:
         num_gpus = int(ray.available_resources().get("GPU", 0))
         if num_gpus == 0:
             raise RuntimeError("No GPUs available for VLLMActor initialization")
-        self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(num_gpus)-1)]
+        # self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(num_gpus)-1)]
+        self.actors = [VLLMActor.options(num_gpus=num_gpus).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-all")]
         self._actor_iter = itertools.cycle(self.actors)
 
         # thead keeping

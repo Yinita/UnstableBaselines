@@ -31,7 +31,7 @@ _DEFAULT_LORA_CFG = {
     "lora_rank": 16,
     "lora_alpha": 16,
     "lora_dropout": 0.0,
-    "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+    "target_modules": ["q_proj", "k_proj", "v_proj"]# , "o_proj", "gate_proj", "up_proj", "down_proj"
 }
 
 class MixedPlayEvalEnvSpec(unstable.EvalEnvSpec):
@@ -200,7 +200,7 @@ def _default_vllm_cfg(model_name: str, lora_cfg: dict, max_generation_len: int) 
         "max_loras": 4,
         "lora_config": lora_cfg,
         "max_model_len": 8192,
-        "gpu_memory_utilization": 0.8
+        "gpu_memory_utilization": 0.5
     }
 
 def _patch_game_scheduler_for_mixed_play(openai_models=None):
@@ -570,8 +570,8 @@ def build_mixed_play(*,
         if algorithm == "reinforce":
             learner = unstable.REINFORCELearner.options(
                 name="Learner",
-                num_cpus=1,
-                num_gpus=1,
+                num_cpus=10,
+                num_gpus=4,
                 resources=custom_resources
             ).remote(
                 model_name=model_name,
@@ -587,8 +587,8 @@ def build_mixed_play(*,
         elif algorithm == "a2c":
             learner = unstable.A2CLearner.options(
                 name="Learner",
-                num_cpus=1,
-                num_gpus=1,
+                num_cpus=10,
+                num_gpus=4,
                 resources=custom_resources
             ).remote(
                 model_name=model_name,

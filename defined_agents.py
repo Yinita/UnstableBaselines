@@ -145,7 +145,6 @@ class OpenAIAgent(Agent):
         self.verbose = verbose
         self.kwargs = kwargs
         self.think = ""
-        return
         try: from openai import OpenAI, AzureOpenAI
         except ImportError: raise ImportError("OpenAI package is required for OpenAIAgent. Install it with: pip install openai")
         # if "gpt-5" in model_name.lower() or "gpt5" in model_name.lower():
@@ -237,14 +236,14 @@ class OpenAIAgent(Agent):
         
         # Make the API call using the provided model and messages.
         
-        # completion = self.client.chat.completions.create(model=self.model_name, messages=messages, n=1, stop=None, **self.kwargs)
+        completion = self.client.chat.completions.create(model=self.model_name, messages=messages, n=1, stop=None, **self.kwargs)
         response = ""
-        # response = completion.choices[0].message.content.strip()
-        # if "<think>" in response and "</think>" in response:
-        #     self.think = response.split("<think>")[1].split("</think>")[0].strip()
-        #     response = response.split("</think>")[-1].strip()
-        # else:
-        #     self.think = ""
+        response = completion.choices[0].message.content.strip()
+        if "<think>" in response and "</think>" in response:
+            self.think = response.split("<think>")[1].split("</think>")[0].strip()
+            response = response.split("</think>")[-1].strip()
+        else:
+            self.think = ""
         return response
     
     def _retry_request(self, observation: str, retries: int=3, delay: int=2) -> str:

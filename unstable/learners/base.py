@@ -1,5 +1,5 @@
 
-import ray, torch, time, pathlib
+import ray, torch, time, pathlib, os
 from typing import List, Dict, Any, Optional
 import GPUtil
 from collections import deque
@@ -24,9 +24,18 @@ class BaseLearner:
         torch.set_float32_matmul_precision('high')
         torch.set_default_dtype(torch.bfloat16)
 
-        gpu_ids = ray.get_gpu_ids()
-        self.device = (torch.device(f"cuda:{gpu_ids[0]}") if gpu_ids else torch.device("cpu"))
-        print(f"Using device: {self.device}")
+        # 获取 Ray 分配的 GPU 并设置环境变量（与 VLLMActor 保持一致）
+        ray_gpu_ids = ray.get_gpu_ids()
+        if ray_gpu_ids:
+            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, ray_gpu_ids))
+            # 使用局部 GPU ID 0（因为 CUDA_VISIBLE_DEVICES 已经映射了物理 GPU）
+            self.device = torch.device("cuda:0")
+            # 对于监控，使用局部设备 ID 列表
+            self.gpu_ids = list(range(len(ray_gpu_ids)))  # [0, 1, ...] 局部设备 ID
+        else:
+            self.device = torch.device("cpu")
+            self.gpu_ids = []
+        print(f"Using device: {self.device}, Ray GPU IDs: {ray_gpu_ids}, Local GPU IDs: {self.gpu_ids}")
         self.policy_model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, initial_lora_path)
         self.policy_model.to(torch.bfloat16)
 
@@ -41,7 +50,6 @@ class BaseLearner:
         self._gpu_peak_memory = 0.0
         self._gpu_memory_samples = deque(maxlen=50)
         self._memory_pressure_threshold = 0.90  # 90%内存使用率阈值（训练时更严格）
-        self.gpu_ids = ray.get_gpu_ids()
 
     def _monitor_gpu_memory(self, phase: str = "unknown"):
         """监控GPU内存使用情况"""

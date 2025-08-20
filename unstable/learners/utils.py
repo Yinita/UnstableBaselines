@@ -29,7 +29,15 @@ def get_critic_model(pretrain_or_model: str, device: torch.device, torch_dtype, 
     config._attn_implementation = "flash_attention_2" if use_flash_attention_2 else "eager"
     base_class = AutoModel._model_mapping[type(config)]
     critic_cls = build_critic_cls(base_class, base_class.__base__, value_head_prefix)
-    model = critic_cls.from_pretrained(pretrain_or_model, config=config, trust_remote_code=True, torch_dtype=torch_dtype, device_map=device)
+    # 重要：不要把 torch.device 直接传入 device_map，否则在受限 CUDA_VISIBLE_DEVICES 场景会触发 invalid device ordinal
+    # 先用 auto 进行安全加载，后续在调用方统一 model.to(safe_device)
+    model = critic_cls.from_pretrained(
+        pretrain_or_model,
+        config=config,
+        trust_remote_code=True,
+        torch_dtype=torch_dtype,
+        device_map='auto'
+    )
     value_head = getattr(model, value_head_prefix)
     value_head.weight.data.normal_(mean=0.0, std=1 / (config.hidden_size + 1))
     return model
