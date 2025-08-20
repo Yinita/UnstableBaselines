@@ -36,7 +36,7 @@ def get_critic_model(pretrain_or_model: str, device: torch.device, torch_dtype, 
         config=config,
         trust_remote_code=True,
         torch_dtype=torch_dtype,
-        device_map='auto'
+        device_map=None  # load on CPU, caller will move to a single safe_device explicitly
     )
     value_head = getattr(model, value_head_prefix)
     value_head.weight.data.normal_(mean=0.0, std=1 / (config.hidden_size + 1))
@@ -49,7 +49,7 @@ def _load_base(name: str, dtype, device, **kwargs):
             name, 
             torch_dtype=dtype, 
             trust_remote_code=True,
-            device_map='auto',  # 让transformers自动处理设备分配
+            device_map=None,  # 不进行自动分片，由调用方统一迁移到单一设备
             **kwargs
         )
     except Exception as e:

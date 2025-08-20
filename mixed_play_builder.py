@@ -200,7 +200,7 @@ def _default_vllm_cfg(model_name: str, lora_cfg: dict, max_generation_len: int) 
         "max_loras": 4,
         "lora_config": lora_cfg,
         "max_model_len": 8192,
-        "gpu_memory_utilization": 0.5
+        "gpu_memory_utilization": 0.8
     }
 
 def _patch_game_scheduler_for_mixed_play(openai_models=None):
@@ -524,8 +524,8 @@ def build_mixed_play(*,
         # 正确使用num_cpus和num_gpus参数
         collector = unstable.Collector.options(
             name="Collector",
-            num_cpus=1,
-            num_gpus=1,
+            num_cpus=10,
+            num_gpus=2,
             resources=custom_resources  # 只包含特殊的GPU类型资源
         ).remote(
             vllm_config=vllm_cfg,
@@ -571,7 +571,7 @@ def build_mixed_play(*,
             learner = unstable.REINFORCELearner.options(
                 name="Learner",
                 num_cpus=10,
-                num_gpus=4,
+                num_gpus=1,
                 resources=custom_resources
             ).remote(
                 model_name=model_name,
@@ -588,7 +588,7 @@ def build_mixed_play(*,
             learner = unstable.A2CLearner.options(
                 name="Learner",
                 num_cpus=10,
-                num_gpus=4,
+                num_gpus=1,
                 resources=custom_resources
             ).remote(
                 model_name=model_name,
