@@ -66,7 +66,6 @@ class VLLMActor:
             temperature=cfg.get("temperature", 0.7),
             top_p=cfg.get("top_p", 0.95),
             max_tokens=cfg.get("max_tokens", 4096),
-            return_token_ids=True,
             # logprobs=cfg.get("logprobs_k", 1),    # 新增：回传每步 top-k logprobs
             # prompt_logprobs=0                     # 仅需要生成部分的 logprobs
         )
