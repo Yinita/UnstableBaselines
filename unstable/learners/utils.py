@@ -29,14 +29,12 @@ def get_critic_model(pretrain_or_model: str, device: torch.device, torch_dtype, 
     config._attn_implementation = "flash_attention_2" if use_flash_attention_2 else "eager"
     base_class = AutoModel._model_mapping[type(config)]
     critic_cls = build_critic_cls(base_class, base_class.__base__, value_head_prefix)
-    # 重要：不要把 torch.device 直接传入 device_map，否则在受限 CUDA_VISIBLE_DEVICES 场景会触发 invalid device ordinal
-    # 先用 auto 进行安全加载，后续在调用方统一 model.to(safe_device)
     model = critic_cls.from_pretrained(
         pretrain_or_model,
         config=config,
         trust_remote_code=True,
         torch_dtype=torch_dtype,
-        device_map=None  # load on CPU, caller will move to a single safe_device explicitly
+        device_map="auto" 
     )
     value_head = getattr(model, value_head_prefix)
     value_head.weight.data.normal_(mean=0.0, std=1 / (config.hidden_size + 1))
@@ -49,7 +47,7 @@ def _load_base(name: str, dtype, device, **kwargs):
             name, 
             torch_dtype=dtype, 
             trust_remote_code=True,
-            device_map=None,  # 不进行自动分片，由调用方统一迁移到单一设备
+            device_map="auto", 
             **kwargs
         )
     except Exception as e:
@@ -79,33 +77,39 @@ def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, A
     # 打印设备信息以便调试
     print(f"Using device: {device}")
     
-    # 确保设备有效
-    safe_device = ensure_valid_device(device)
-    print(f"Safe device for model building: {safe_device}")
-    
     task_type = "TOKEN_CLS" if critic_model else "CAUSAL_LM"
     
-    # 使用安全设备加载基础模型
-    base = get_critic_model(base_name, safe_device, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix) if critic_model else _load_base(base_name, torch.bfloat16, safe_device)
+    # 如果device为None，使用device_map="auto"进行多GPU分布
+    if device is None:
+        print("Using device_map='auto' for multi-GPU setup")
+        base = get_critic_model(base_name, None, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix) if critic_model else _load_base(base_name, torch.bfloat16, None)
+    else:
+        # 确保设备有效
+        safe_device = ensure_valid_device(device)
+        print(f"Safe device for model building: {safe_device}")
+        base = get_critic_model(base_name, safe_device, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix) if critic_model else _load_base(base_name, torch.bfloat16, safe_device)
     
     if freeze_base: 
         _freeze(base, None if not critic_model else value_head_prefix)
     
-    # 构建LoRA模型，但不立即移动到设备
+    # 构建LoRA模型
     try:
         model = _build_lora(base, lora_cfg or {}, task_type)
-        print(f"LoRA模型构建成功，当前设备: {next(model.parameters()).device}")
+        print(f"LoRA模型构建成功")
         
-        # 安全地将模型移动到目标设备
-        try:
-            # 尝试使用device_map参数而不是to(device)
-            model = model.to(safe_device)
-            print(f"模型成功移动到设备: {next(model.parameters()).device}")
-        except Exception as e:
-            print(f"移动模型到设备{safe_device}失败: {e}")
-            print("尝试使用CPU作为后备...")
-            model = model.to('cpu')
-            print(f"模型已移动到CPU: {next(model.parameters()).device}")
+        # 只有在指定了单一设备时才移动模型
+        if device is not None:
+            safe_device = ensure_valid_device(device)
+            try:
+                model = model.to(safe_device)
+                print(f"模型成功移动到设备: {next(model.parameters()).device}")
+            except Exception as e:
+                print(f"移动模型到设备{safe_device}失败: {e}")
+                print("尝试使用CPU作为后备...")
+                model = model.to('cpu')
+                print(f"模型已移动到CPU: {next(model.parameters()).device}")
+        else:
+            print("模型使用device_map='auto'，跳过手动设备移动")
     except Exception as e:
         print(f"构建LoRA模型失败: {e}")
         raise

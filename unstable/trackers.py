@@ -189,17 +189,17 @@ class Tracker(BaseTracker):
         try:
             # 总体胜率
             overall_key = f"core/{phase}/win_rate_overall"
-            if overall_key in self._data:
-                wins = sum(self._data[overall_key])
-                total = len(self._data[overall_key])
+            if overall_key in self._m:
+                wins = sum(1 for x in self._m[overall_key] if x)
+                total = len(self._m[overall_key])
                 stats["overall"] = wins / total if total > 0 else 0.0
             
             # 对特定对手的胜率
             for model_name in self._record_models:
                 model_key = f"core/{phase}/win_rate_vs_{model_name}"
-                if model_key in self._data:
-                    wins = sum(self._data[model_key])
-                    total = len(self._data[model_key])
+                if model_key in self._m:
+                    wins = sum(1 for x in self._m[model_key] if x)
+                    total = len(self._m[model_key])
                     stats[f"vs_{model_name}"] = wins / total if total > 0 else 0.0
                     
         except Exception as exc:

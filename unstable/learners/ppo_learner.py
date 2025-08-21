@@ -5,7 +5,7 @@ import torch.nn as nn
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
 from unstable.reward_transformations.transformation_sampling import NormalizeRewardsByEnv
-
+import torch.nn.functional as F
 class SharedBackbonePPOModel(nn.Module):
     """共享backbone的PPO模型，包含策略头和价值头"""
     
@@ -52,7 +52,7 @@ class SharedBackbonePPOModel(nn.Module):
             return_policy_only: 只返回策略logits
         """
         # 共享backbone前向传播
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
             outputs = self.base_model(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True)
         
         if return_policy_only:
@@ -76,7 +76,11 @@ class SharedBackbonePPOModel(nn.Module):
     def get_policy_logits(self, input_ids, attention_mask=None):
         """获取策略logits"""
         outputs = self.forward(input_ids, attention_mask, return_policy_only=True)
-        return outputs.logits
+        if hasattr(outputs, 'logits'):
+            return outputs.logits
+        if isinstance(outputs, (tuple, list)):
+            return outputs[0]  # 取 logits
+        return outputs  # 假定是 logits tensor
     
     def get_values(self, input_ids, attention_mask=None):
         """获取价值估计"""
@@ -114,9 +118,15 @@ def compute_gae(rewards, values, gamma=0.99, gae_lambda=0.95, last_value=0.0, do
         returns: 回报估计 [T]
     """
     T = len(rewards)
-    advantages = torch.zeros_like(rewards)
-    returns = torch.zeros_like(rewards)
-    lastgaelam = 0
+    # 强制使用float32确保类型一致性
+    advantages = torch.zeros_like(rewards, dtype=torch.float32)
+    returns = torch.zeros_like(rewards, dtype=torch.float32)
+    
+    # 确保values和rewards都是float32
+    rewards = rewards.to(torch.float32)
+    values = values.to(torch.float32)
+    last_value = values.new_tensor(last_value)
+    lastgaelam = 0.0
     
     for t in reversed(range(T)):
         if t == T - 1:
@@ -139,8 +149,8 @@ class PPOLearner(BaseLearner):
                            clip_ratio: float=0.2, ppo_epochs: int=4, entropy_coef: float=0.01,
                            value_loss_coef: float=0.5, kl_target: float=0.01, kl_coef: float=0.2,
                            # 新增内存优化参数
-                           max_seq_len: Optional[int]=4096, memory_efficient_mode: bool=True,
-                           gradient_accumulation_steps: int=1):
+                           max_seq_len: Optional[int]=4096,
+                           gradient_accumulation_steps: int=1, use_fallback_advantages: bool=False):
         """
         初始化PPO算法参数
         
@@ -167,17 +177,17 @@ class PPOLearner(BaseLearner):
         
         # 内存优化参数
         self.max_seq_len = max_seq_len
-        self.memory_efficient_mode = memory_efficient_mode
         self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.use_fallback_advantages = use_fallback_advantages
 
-        # 构建共享backbone模型
-        base_model, self.tokenizer = build_peft_model(self.model_name, self.device, self.lora_cfg, initial_lora_path)
+        # 构建共享backbone模型 - 使用device_map="auto"时不指定单一device
+        base_model, self.tokenizer = build_peft_model(self.model_name, None, self.lora_cfg, initial_lora_path)
         
         # 创建共享backbone + 双头模型
         self.shared_model = SharedBackbonePPOModel(
             base_model=base_model,
             tokenizer=self.tokenizer,
-            device=self.device
+            device=self.device  # 只用于value_head的设备
         )
         
         # 配置模型设置
@@ -198,34 +208,84 @@ class PPOLearner(BaseLearner):
         # 保持向后兼容性
         self.policy_model = self.shared_model  # 为了兼容现有代码
         self.critic = self.shared_model  # 为了兼容现有代码
-
+    
     def _prepare_batch(self, steps):
-        obs, acts, advs, rets, old_logps = zip(*[(s.obs, s.act, s.reward, s.step_info.get("return", torch.nan), s.step_info.get("old_logp", 0.0)) for s in steps])
+        obs, acts, advs, rets, old_logps, label_masks = zip(*[
+            (
+                s.obs,
+                s.act,
+                s.reward,
+                s.step_info.get("return", torch.nan),
+                s.step_info.get("old_logp", []),
+                s.step_info.get("label_mask", []),   # ⭐ 新增：存下来的 label_mask
+            )
+            for s in steps
+        ])
+
         advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
         rets = torch.tensor(rets, dtype=torch.float32, device=self.device)
-        old_logps = torch.tensor(old_logps, dtype=torch.float32, device=self.device)
+
+        # 以二者的 max 为该样本长度
+        lengths = [
+            max(len(lp) if isinstance(lp, list) else 1,
+                len(msk) if isinstance(msk, list) else 1)
+            for lp, msk in zip(old_logps, label_masks)
+        ]
+        max_len = max(lengths) if lengths else 1
+
+        padded_logps, padded_masks = [], []
+        for logps, mask in zip(old_logps, label_masks):
+            if not isinstance(logps, list):
+                logps = [float(logps)]
+            if not isinstance(mask, list):
+                mask = [1] * len(logps)  # 兜底：全部有效
+
+            # 截断或补齐到 max_len
+            logps = (logps + [0.0] * max(0, max_len - len(logps)))[:max_len]
+            mask  = (mask  + [0]   * max(0, max_len - len(mask))) [:max_len]
+
+            padded_logps.append(logps)
+            padded_masks.append(mask)
+
+        old_logps   = torch.tensor(padded_logps, dtype=torch.float32, device=self.device)
+        label_masks = torch.tensor(padded_masks, dtype=torch.bool, device=self.device)
+
+
+        # --- 拼接 obs+act 作为输入 ---
         combined = [o + a for o, a in zip(obs, acts)]
-        
-        # 内存优化：动态调整序列长度
-        if self.memory_efficient_mode:
-            lengths = [len(self.tokenizer(text, add_special_tokens=False)["input_ids"]) for text in combined]
-            # 使用95%分位数作为动态最大长度，避免极长序列
-            dynamic_max_len = min(int(sorted(lengths)[int(len(lengths) * 0.95)]), 
-                                self.max_train_len or self.max_seq_len)
-            avg_len = sum(lengths) / len(lengths)
-            pct_truncated = sum(l > dynamic_max_len for l in lengths) / len(lengths)
+        pad_len = getattr(self, "_snapshot_pad_len", None)
+        if pad_len:
+            enc = self.tokenizer(combined, return_tensors="pt",
+                                padding="max_length", truncation=True, max_length=pad_len).to(self.device)
+            state_enc = self.tokenizer(obs, return_tensors="pt",
+                                    padding="max_length", truncation=True, max_length=pad_len).to(self.device)
+            # 统计信息仍然按真实长度估算
+            raw_lens = [len(self.tokenizer(t, add_special_tokens=False)["input_ids"]) for t in combined]
+            avg_len = sum(raw_lens) / max(1, len(raw_lens))
+            pct_truncated = sum(l > pad_len for l in raw_lens) / max(1, len(raw_lens))
         else:
             lengths = [len(self.tokenizer(text, add_special_tokens=False)["input_ids"]) for text in combined]
-            dynamic_max_len = self.max_train_len
-            avg_len = sum(lengths) / len(lengths)
-            pct_truncated = (sum(l > self.max_train_len for l in lengths) / len(lengths) if self.max_train_len else 0)
-        
-        enc = self.tokenizer(combined, return_tensors="pt", padding=True, truncation=True, max_length=dynamic_max_len).to(self.device)
-        state_enc = self.tokenizer(obs, return_tensors="pt", padding=True, truncation=True, max_length=dynamic_max_len).to(self.device)
-        return enc, state_enc, advs, rets, old_logps, obs, avg_len, pct_truncated
+            if self.max_train_len is not None:
+                dynamic_max_len = self.max_train_len
+            else:
+                # 95% 分位 + 上限，避免偶发超长
+                sorted_l = sorted(lengths)
+                q95 = sorted_l[int(0.95 * (len(sorted_l)-1))] if sorted_l else 128
+                dynamic_max_len = min(q95, self.max_seq_len or 4096)
+
+            avg_len = sum(lengths) / len(lengths) if lengths else 0.0
+            pct_truncated = (sum(l > dynamic_max_len for l in lengths) / len(lengths)) if lengths else 0.0
+
+            enc = self.tokenizer(combined, return_tensors="pt", padding=True, truncation=True,
+                                max_length=dynamic_max_len).to(self.device)
+            state_enc = self.tokenizer(obs, return_tensors="pt", padding=True, truncation=True,
+                                    max_length=dynamic_max_len).to(self.device)
+
+
+        return enc, state_enc, advs, rets, old_logps, label_masks, obs, avg_len, pct_truncated
 
     def _mini_batch_update_step(self, steps, scaling: float = 1.0):
-        enc, state_enc, advs, rets, old_logps, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
+        enc, state_enc, advs, rets, old_logps, label_masks, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
         device = enc.input_ids.device
 
         # 前向传播 - 策略部分
@@ -236,64 +296,60 @@ class PPOLearner(BaseLearner):
         tgt_ids  = enc.input_ids[:, 1:]                                          # [B, T-1]
         tok_logp = logp_full[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)  # [B, T-1]
 
-        # ---- 构造 label_mask：非pad 且 非prompt ----
-        attn = enc.attention_mask.bool()                                         # [B, T]
-        prompt_lens = torch.tensor(
-            [len(self.tokenizer(o, add_special_tokens=False)["input_ids"]) for o in obs],
-            device=device
-        )
-        token_idx = torch.arange(attn.size(1), device=device).unsqueeze(0)       # [1, T]
-        prompt_mask = token_idx < prompt_lens.unsqueeze(1)                       # True=prompt
-        label_mask = (attn & (~prompt_mask))[:, 1:]                              # [B, T-1]
+        # === 对齐长度：tok_logp / old_logps / label_masks 取共同最小 L ===
+        L = min(tok_logp.size(1), old_logps.size(1), label_masks.size(1))
+        tok_logp    = tok_logp[:, :L]
+        old_logps   = old_logps[:, :L]
+        label_mask  = label_masks[:, :L]        # 直接使用存档的 mask
+        valid_tokens= label_mask.sum(dim=1).clamp_min(1)
 
-        # ---- 避免 0 * (-inf)：先把无效位替换为 0，再求和；用每样本有效 token 数作分母 ----
-        tok_logp = tok_logp.masked_fill(~label_mask, 0.0)
-        valid_tokens = label_mask.sum(dim=1).clamp_min(1)
-        seq_logp = tok_logp.sum(dim=1) / valid_tokens                            # [B]
+        # === 序列 logp 与 熵 ===
+        tok_logp_masked = tok_logp.masked_fill(~label_mask, 0.0)
+        seq_logp  = tok_logp_masked.sum(dim=1) / valid_tokens
 
-        # （可选）优势标准化
-        if getattr(self, "normalize_adv", False):
+        probs = torch.nn.functional.softmax(policy_outputs, dim=-1)
+        token_entropy = -(probs * logp_full).sum(-1)[:, :-1][:, :L]     # [B, L]
+        seq_entropy   = token_entropy.masked_fill(~label_mask, 0.0).sum(dim=1) / valid_tokens
+
+        # === 数值保底 ===
+        seq_logp    = torch.nan_to_num(seq_logp,    nan=0.0, posinf=30.0, neginf=-30.0)
+        old_logps   = torch.nan_to_num(old_logps,   nan=0.0, posinf=30.0, neginf=-30.0)
+        seq_entropy = torch.nan_to_num(seq_entropy, nan=0.0, posinf=30.0, neginf=0.0)
+
+        # （可选）mini-batch 级优势标准化
+        if getattr(self, "normalize_adv", False) and not getattr(self, "_already_normalized", False):
             advs = (advs - advs.mean()) / (advs.std(unbiased=False) + 1e-8)
 
-        # ---- 熵：逐位置熵，再按相同 mask 聚合 ----
-        probs = torch.nn.functional.softmax(policy_outputs, dim=-1)                  # [B, T, V]
-        token_entropy = -(probs * logp_full).sum(-1)                             # [B, T]
-        token_entropy = token_entropy[:, :-1]                                    # [B, T-1]
-        token_entropy = token_entropy.masked_fill(~label_mask, 0.0)
-        seq_entropy = token_entropy.sum(dim=1) / valid_tokens                    # [B]
-
-        # 数值保底
-        seq_logp   = torch.nan_to_num(seq_logp,   nan=0.0, posinf=30.0, neginf=-30.0)
-        old_logps  = torch.nan_to_num(old_logps,  nan=0.0, posinf=30.0, neginf=-30.0)
-        seq_entropy= torch.nan_to_num(seq_entropy,nan=0.0, posinf=30.0, neginf=0.0)
-
-        # ---- PPO ratio，防溢出 ----
-        diff  = (seq_logp - old_logps).clamp(-20.0, 20.0)
-        ratio = torch.exp(diff)
+        # === ratio / clipped objective ===
+        token_ratio_logits = (tok_logp - old_logps).masked_fill(~label_mask, 0.0)  # [B, L]
+        seq_ratio_logits   = (token_ratio_logits.sum(dim=1) / valid_tokens).clamp(-20.0, 20.0)
+        ratio = torch.exp(seq_ratio_logits)
 
         surr1 = ratio * advs
         surr2 = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * advs
         policy_loss = -torch.min(surr1, surr2).mean()
 
-        # 熵正则（加号：鼓励熵）
+        # 熵正则
         entropy_loss = -seq_entropy.mean()
 
-        # KL 惩罚（注意口径一致）
-        kl_div = (old_logps - seq_logp).mean()
+        # === KL 惩罚 ===
+        token_kl = (old_logps - tok_logp).masked_fill(~label_mask, 0.0)            # [B, L]
+        kl_div   = (token_kl.sum(dim=1) / valid_tokens).mean()
         kl_penalty = self.kl_coef * torch.clamp(kl_div - self.kl_target, min=0.0)
 
+        # ---- Policy loss 反传 ----
         total_policy_loss = (policy_loss + self.entropy_coef * entropy_loss + kl_penalty) / scaling
         total_policy_loss.backward()
         torch.cuda.empty_cache()
 
-        # 值函数 - 使用独立的前向传播避免梯度干扰
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+        # ---- 值函数 ----
+        with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
             value_pred = self.shared_model.get_values(state_enc.input_ids, state_enc.attention_mask)
-        value_loss = self.value_loss_coef * 0.5 * ((value_pred - rets) ** 2).mean() / scaling
+        value_loss = self.value_loss_coef * 0.5 * ((value_pred.float() - rets) ** 2).mean() / scaling
         value_loss.backward()
         torch.cuda.empty_cache()
 
-        # 统计（避免 batch=1 的 std=NaN）
+        # 统计
         clipped_fraction = ((ratio < 1.0 - self.clip_ratio) | (ratio > 1.0 + self.clip_ratio)).float().mean()
 
         return {
@@ -307,7 +363,7 @@ class PPOLearner(BaseLearner):
             "ratio_std": ratio.std(unbiased=False).item(),
             "logp_mean": seq_logp.mean().item(),
             "logp_std": seq_logp.std(unbiased=False).item(),
-            "value_mae": (value_pred - rets).abs().mean().item(),
+            "value_mae": (value_pred.float() - rets).abs().mean().item(),
             "value_dir_acc": ((value_pred > 0) == (rets > 0)).float().mean().item(),
             "num_steps": len(steps),
             "avg_train_len": avg_len,
@@ -318,46 +374,68 @@ class PPOLearner(BaseLearner):
     def _update(self, batch):
         all_samples = tree.flatten(batch)
         num_samples = len(all_samples)
+        all_values, all_old_logps, all_label_masks = [], [], []
 
-        # 内存优化：分块处理值函数和旧策略概率计算
-        if self.memory_efficient_mode:
-            return self._memory_efficient_update(batch, all_samples, num_samples)
-        
-        # 原始方法：构建值函数目标和存储旧的log概率
-        all_values = []
-        all_old_logps = []
-        
+       # 固定一次 snapshot 的 pad 长度，确保 old_logp/label_mask 全流程宽度一致
+        self._snapshot_pad_len = self.max_train_len or self.max_seq_len or 4096
+
         for i in range(0, len(all_samples), self.infer_mini_batch_size):
             batch_steps = all_samples[i : i + self.infer_mini_batch_size]
-            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                enc, state_enc, _, _, _, obs, _, _ = self._prepare_batch(batch_steps)
-                with torch.no_grad():
-                    # 值函数估计
-                    target_values = self.shared_model.get_values(state_enc.input_ids, state_enc.attention_mask)
-                    all_values.append(target_values)
-                    
-                    # 存储旧策略的log概率
-                    policy_logits = self.shared_model.get_policy_logits(enc.input_ids, enc.attention_mask)
-                    logp = torch.nn.functional.log_softmax(policy_logits, dim=-1)
-                    tgt_ids = enc.input_ids[:, 1:]
-                    tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
-                    mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)
-                    for j, o in enumerate(obs): 
-                        mask[j, : len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
-                    mask = mask[:, 1:]
-                    seq_logp = (tok_logp * mask).sum(1) / self.max_generation_len
-                    all_old_logps.append(seq_logp)
-        
-        # Check for empty lists before concatenation
+
+            # 直接用固定长度编码，保证每个 mini-chunk 的宽度一致
+            combined_texts = [s.obs + s.act for s in batch_steps]
+            obs_texts      = [s.obs for s in batch_steps]
+
+            enc = self.tokenizer(
+                combined_texts, return_tensors="pt",
+                padding="max_length", truncation=True, max_length=self._snapshot_pad_len
+            ).to(self.device)
+
+            state_enc = self.tokenizer(
+                obs_texts, return_tensors="pt",
+                padding="max_length", truncation=True, max_length=self._snapshot_pad_len
+            ).to(self.device)
+
+            with torch.no_grad():
+                # 值函数
+                target_values = self.shared_model.get_values(state_enc.input_ids, state_enc.attention_mask)
+                all_values.append(target_values)
+
+                # 旧策略 token-level logp（与上面 enc 严格对齐）
+                policy_logits = self.shared_model.get_policy_logits(enc.input_ids, enc.attention_mask)
+                logp = torch.nn.functional.log_softmax(policy_logits, dim=-1)           # [B, T, V]
+                tgt_ids = enc.input_ids[:, 1:]                                          # [B, T-1]
+                tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)# [B, T-1]
+
+                # 生成与 snapshot 一致口径的 label_mask（非 pad 且 非 prompt）
+                attn = enc.attention_mask.bool()                                        # [B, T]
+                prompt_lens = torch.tensor(
+                    [len(self.tokenizer(o, add_special_tokens=False)["input_ids"]) for o in obs_texts],
+                    device=self.device
+                )
+                token_idx   = torch.arange(attn.size(1), device=self.device).unsqueeze(0)  # [1, T]
+                prompt_mask = token_idx < prompt_lens.unsqueeze(1)                          # True=prompt
+                label_mask_tokens = (attn & (~prompt_mask))[:, 1:]                          # [B, T-1]
+
+                all_old_logps.append(tok_logp.detach().cpu())          # 形状固定为 [B, L]，L = pad_len-1
+                all_label_masks.append(label_mask_tokens.detach().cpu())  # 同上
+
+
         if not all_values:
             self.logger.warning("No values to concatenate, skipping update")
             return {"error": "No values to process", "step": self._step, "samples_seen": self._samples_seen}
-            
-        all_values = torch.cat(all_values).float().cpu()
-        all_old_logps = torch.cat(all_old_logps).float().cpu()
-        
-        ep_values = torch.split(all_values, [len(ep) for ep in batch])
-        ep_old_logps = torch.split(all_old_logps, [len(ep) for ep in batch])
+
+        all_values       = torch.cat(all_values).float().cpu()            # [N]
+        all_old_logps    = torch.cat(all_old_logps).float().cpu()         # [N, L]
+        all_label_masks  = torch.cat(all_label_masks).bool().cpu()        # [N, L]
+
+        ep_lens = [len(ep) for ep in batch]
+
+        ep_values       = torch.split(all_values, ep_lens)
+        ep_old_logps    = torch.split(all_old_logps, ep_lens)
+        ep_label_masks  = torch.split(all_label_masks, ep_lens)
+
+                
         ep_rewards = [torch.tensor([step.reward for step in ep]) for ep in batch]
         
         ep_advantages = []
@@ -371,263 +449,144 @@ class PPOLearner(BaseLearner):
         train_batch = []
         old_logp_idx = 0
         for i, ep in enumerate(batch):
+            # Check if we have advantages for this episode
+            if i >= len(ep_advantages):
+                self.logger.warning(f"Episode {i} exceeds available advantages (len={len(ep_advantages)}), skipping")
+                continue
+                
             for j, step in enumerate(ep):
+                # Check if we have advantages for this step
+                if j >= len(ep_advantages[i]):
+                    self.logger.warning(f"Step {j} in episode {i} exceeds available advantages (len={len(ep_advantages[i])}), skipping")
+                    continue
+                    
                 step = replace(step, reward=ep_advantages[i][j].item())
+                # 存储token-level的old_logp
+                if j < len(ep_old_logps[i]):
+                    old_logp_tokens = ep_old_logps[i][j].tolist() if hasattr(ep_old_logps[i][j], 'tolist') else [ep_old_logps[i][j].item()]
+                else:
+                    old_logp_tokens = [0.0]  # 默认值
+                    
                 step = replace(step, step_info={
-                    **step.step_info, 
-                    "return": ep_returns[i][j].item(), 
+                    **step.step_info,
+                    "return":    ep_returns[i][j].item(),
                     "advantage": ep_advantages[i][j].item(),
-                    "old_logp": ep_old_logps[i][j].item()
+                    "old_logp":  ep_old_logps[i][j].tolist(),       # [L]
+                    "label_mask": ep_label_masks[i][j].tolist(),    # [L]（bool -> list）
                 })
+
                 train_batch.append(step)
-        
         # Check if we have enough samples
+        _restore_bs = None
+        _restore_mbs = None
         if len(train_batch) < self.batch_size:
             self.logger.warning(f"Not enough samples in train_batch: {len(train_batch)} < {self.batch_size}")
-            return {"error": "Not enough samples", "step": self._step, "samples_seen": self._samples_seen}
-            
-        if self.normalize_adv: 
+            # 如果太少，直接返回；否则临时缩小本轮 batch_size
+            if len(train_batch) < max(2, self.batch_size // 4):
+                return {"error": "Not enough samples", "step": self._step, "samples_seen": self._samples_seen}
+            _restore_bs = self.batch_size
+            self.batch_size = len(train_batch)
+
+        # 确保 mini-batch 不超过 batch-size；必要时临时下调
+        if self.mini_batch_size > self.batch_size:
+            _restore_mbs = self.mini_batch_size
+            # 这里直接设成 batch_size（或至少 1）
+            self.mini_batch_size = max(1, self.batch_size)
+
+        if self.normalize_adv:
             train_batch = NormalizeRewardsByEnv(True)(train_batch)
+            self._already_normalized = True
 
         # PPO多轮更新
         metrics_acc = {}
+        # 随机采样到当前 batch_size
         train_batch = random.sample(train_batch, self.batch_size)
-        num_steps = self.batch_size // self.mini_batch_size
-        
-        self.logger.info(f"Got {num_samples} samples. Running PPO for {self.ppo_epochs} epochs, {num_steps} steps per epoch")
+
+        # 使用“向上取整”的步数计算，避免 num_steps 为 0
+        effective_mini_batch_size = max(1, min(self.mini_batch_size, self.batch_size))
+        num_steps = max(1, (self.batch_size + effective_mini_batch_size - 1) // effective_mini_batch_size)
+
+        self.logger.info(
+            f"Got {num_samples} samples. Running PPO for {self.ppo_epochs} epochs, "
+            f"{num_steps} steps per epoch (mini_batch_size={effective_mini_batch_size}, batch_size={self.batch_size})"
+        )
 
         for epoch in range(self.ppo_epochs):
             self.policy_optimizer.zero_grad(set_to_none=True)
             self.critic_optimizer.zero_grad(set_to_none=True)
-            
-            # 随机打乱数据
+
             random.shuffle(train_batch)
-            
             epoch_metrics = {}
+
             for i in range(num_steps):
-                sub = train_batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
+                start = i * effective_mini_batch_size
+                end   = min((i + 1) * effective_mini_batch_size, len(train_batch))
+                sub = train_batch[start:end]
+                if not sub:
+                    continue
+
                 with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    update_metrics = self._mini_batch_update_step(sub, scaling=num_steps * self.ppo_epochs)
-                for k, v in update_metrics.items(): 
+                    update_metrics = self._mini_batch_update_step(sub, scaling=num_steps)
+                for k, v in update_metrics.items():
                     epoch_metrics[k] = epoch_metrics.get(k, 0.0) + v
-                    metrics_acc[k] = metrics_acc.get(k, 0.0) + v
-            
+                    metrics_acc[k]   = metrics_acc.get(k, 0.0) + v
+
             # 梯度裁剪和优化器步骤 - 分别处理策略和价值参数
             torch.nn.utils.clip_grad_norm_(self.shared_model.base_model.parameters(), self.grad_clip)
             torch.nn.utils.clip_grad_norm_(self.shared_model.value_head.parameters(), self.grad_clip)
-            
+
             try:
                 self.policy_optimizer.step()
                 self.critic_optimizer.step()
             except Exception as exc:
                 self.logger.exception(f"optimizer.step crashed on step {self._step}, epoch {epoch} - {exc}")
+                # 退出前恢复 batch/mini-batch
+                if _restore_bs is not None:
+                    self.batch_size = _restore_bs
+                if _restore_mbs is not None:
+                    self.mini_batch_size = _restore_mbs
                 raise
-            
+
             # 早停检查：如果KL散度太大，提前停止
-            avg_kl = epoch_metrics.get("kl_div", 0.0) / num_steps
+            avg_kl = epoch_metrics.get("kl_div", 0.0) / max(1, num_steps)
             if avg_kl > 1.5 * self.kl_target:
                 self.logger.info(f"Early stopping at epoch {epoch} due to high KL divergence: {avg_kl:.4f}")
                 break
-                
-            self.logger.info(f"Epoch {epoch} metrics: {{k: v/num_steps for k, v in epoch_metrics.items()}}")
+
+            # 打印更可读的字典
+            self.logger.info(f"Epoch {epoch} metrics: { {k: (v / max(1, num_steps)) for k, v in epoch_metrics.items()} }")
 
         self._step += 1
 
         # 计算平均指标
-        total_updates = (epoch + 1) * num_steps
+        total_updates = max(1, (epoch + 1) * num_steps)
         log = {f"{k}": v / total_updates for k, v in metrics_acc.items()}
-        
-        grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.shared_model.base_model.parameters() if p.grad is not None) ** 0.5)
-        critic_grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.shared_model.value_head.parameters() if p.grad is not None) ** 0.5)
-        
-        log.update({
-            "step": self._step, 
-            "samples_seen": self._samples_seen, 
-            "lr": self.policy_optimizer.param_groups[0]["lr"], 
-            "grad_norm": grad_norm, 
-            "critic_lr": self.critic_optimizer.param_groups[0]["lr"], 
-            "critic_grad_norm": critic_grad_norm,
-            "ppo_epochs_completed": epoch + 1,
-        })
-        
-        return log
 
-    def _memory_efficient_update(self, batch, all_samples, num_samples):
-        """内存优化的更新方法：分块处理，避免大张量累积"""
-        # 分块计算值函数和旧策略概率，避免内存累积
-        chunk_size = min(self.infer_mini_batch_size * 2, 64)  # 更小的块大小
-        
-        # 存储每个episode的处理结果
-        ep_advantages = []
-        ep_returns = []
-        ep_old_logps = []
-        
-        # 按episode分组处理
-        ep_start_idx = 0
-        for ep in batch:
-            ep_end_idx = ep_start_idx + len(ep)
-            ep_samples = all_samples[ep_start_idx:ep_end_idx]
-            
-            # 分块处理当前episode
-            ep_values = []
-            ep_logps = []
-            
-            for i in range(0, len(ep_samples), chunk_size):
-                chunk_samples = ep_samples[i:i + chunk_size]
-                
-                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                    enc, state_enc, _, _, _, obs, _, _ = self._prepare_batch(chunk_samples)
-                    
-                    with torch.no_grad():
-                        # 值函数估计
-                        chunk_values = self.shared_model.get_values(state_enc.input_ids, state_enc.attention_mask).float().cpu()
-                        ep_values.append(chunk_values)
-                        
-                        # 旧策略概率
-                        policy_logits = self.shared_model.get_policy_logits(enc.input_ids, enc.attention_mask)
-                        logp = torch.nn.functional.log_softmax(policy_logits, dim=-1)
-                        tgt_ids = enc.input_ids[:, 1:]
-                        tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
-                        
-                        # 构建mask
-                        mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)
-                        for j, o in enumerate(obs):
-                            prompt_len = len(self.tokenizer(o, add_special_tokens=False)["input_ids"])
-                            mask[j, :prompt_len] = False
-                        mask = mask[:, 1:]
-                        
-                        # 计算序列级别的log概率
-                        valid_tokens = mask.sum(dim=1).clamp_min(1)
-                        seq_logp = (tok_logp * mask).sum(dim=1) / valid_tokens
-                        ep_logps.append(seq_logp.float().cpu())
-                
-                # 立即清理GPU缓存
-                torch.cuda.empty_cache()
-            
-            # 合并当前episode的结果
-            if not ep_values or not ep_logps:
-                self.logger.warning(f"Empty tensor lists for episode {i}, skipping")
-                continue
-                
-            try:
-                ep_values_tensor = torch.cat(ep_values)
-                ep_logps_tensor = torch.cat(ep_logps)
-                ep_rewards = torch.tensor([step.reward for step in ep])
-            except Exception as e:
-                self.logger.warning(f"Error concatenating tensors for episode {i}: {e}")
-                continue
-            
-            # 计算GAE
-            adv, ret = compute_gae(ep_rewards, ep_values_tensor, last_value=0.0, done=True)
-            ep_advantages.append(adv)
-            ep_returns.append(ret)
-            ep_old_logps.append(ep_logps_tensor)
-            
-            ep_start_idx = ep_end_idx
-        
-        # 构建训练批次
-        train_batch = []
-        for i, ep in enumerate(batch):
-            for j, step in enumerate(ep):
-                step = replace(step, reward=ep_advantages[i][j].item())
-                step = replace(step, step_info={
-                    **step.step_info,
-                    "return": ep_returns[i][j].item(),
-                    "advantage": ep_advantages[i][j].item(),
-                    "old_logp": ep_old_logps[i][j].item()
-                })
-                train_batch.append(step)
-        
-        assert len(train_batch) >= self.batch_size
-        
-        if self.normalize_adv:
-            from unstable.reward_transformations.transformation_sampling import NormalizeRewardsByEnv
-            train_batch = NormalizeRewardsByEnv(True)(train_batch)
-        
-        # 内存优化的PPO更新
-        return self._memory_efficient_ppo_update(train_batch, num_samples)
-    
-    def _memory_efficient_ppo_update(self, train_batch, num_samples):
-        """内存优化的PPO多轮更新"""
-        metrics_acc = {}
-        train_batch = random.sample(train_batch, self.batch_size)
-        
-        # 调整mini_batch_size以适应内存限制
-        effective_mini_batch_size = max(self.mini_batch_size // 2, 4) if self.memory_efficient_mode else self.mini_batch_size
-        num_steps = self.batch_size // effective_mini_batch_size
-        
-        self.logger.info(f"Memory-efficient mode: {num_samples} samples, {self.ppo_epochs} epochs, {num_steps} steps/epoch, mini_batch_size={effective_mini_batch_size}")
-        
-        for epoch in range(self.ppo_epochs):
-            # 梯度累积模式
-            self.policy_optimizer.zero_grad(set_to_none=True)
-            self.critic_optimizer.zero_grad(set_to_none=True)
-            
-            random.shuffle(train_batch)
-            epoch_metrics = {}
-            
-            for i in range(num_steps):
-                sub = train_batch[i * effective_mini_batch_size : (i + 1) * effective_mini_batch_size]
-                
-                # 使用梯度累积减少内存压力
-                accumulation_steps = max(1, self.gradient_accumulation_steps)
-                sub_chunks = [sub[j:j + len(sub)//accumulation_steps] 
-                             for j in range(0, len(sub), len(sub)//accumulation_steps)]
-                
-                for chunk_idx, chunk in enumerate(sub_chunks):
-                    if not chunk:
-                        continue
-                        
-                    with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
-                        scaling_factor = num_steps * self.ppo_epochs * len(sub_chunks)
-                        update_metrics = self._mini_batch_update_step(chunk, scaling=scaling_factor)
-                    
-                    # 累积指标
-                    for k, v in update_metrics.items():
-                        epoch_metrics[k] = epoch_metrics.get(k, 0.0) + v / len(sub_chunks)
-                        metrics_acc[k] = metrics_acc.get(k, 0.0) + v / len(sub_chunks)
-                    
-                    # 每个chunk后清理缓存
-                    torch.cuda.empty_cache()
-            
-            # 梯度裁剪和优化 - 分别处理策略和价值参数
-            torch.nn.utils.clip_grad_norm_(self.shared_model.base_model.parameters(), self.grad_clip)
-            torch.nn.utils.clip_grad_norm_(self.shared_model.value_head.parameters(), self.grad_clip)
-            
-            try:
-                self.policy_optimizer.step()
-                self.critic_optimizer.step()
-            except Exception as exc:
-                self.logger.exception(f"optimizer.step failed on step {self._step}, epoch {epoch}: {exc}")
-                raise
-            
-            # KL散度早停检查
-            avg_kl = epoch_metrics.get("kl_div", 0.0) / num_steps
-            if avg_kl > 1.5 * self.kl_target:
-                self.logger.info(f"Early stopping at epoch {epoch} due to high KL: {avg_kl:.4f}")
-                break
-            
-            self.logger.info(f"Epoch {epoch} avg metrics: {{{k}: {v/num_steps:.4f} for k, v in epoch_metrics.items()}}")
-        
-        self._step += 1
-        
-        # 计算最终指标
-        total_updates = (epoch + 1) * num_steps
-        log = {f"{k}": v / total_updates for k, v in metrics_acc.items()}
-        
-        # 添加梯度范数
-        grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in self.shared_model.base_model.parameters() if p.grad is not None) ** 0.5
-        critic_grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in self.shared_model.value_head.parameters() if p.grad is not None) ** 0.5
-        
+        # 计算梯度范数
+        policy_grads = [p.grad for p in self.shared_model.base_model.parameters() if p.grad is not None]
+        critic_grads = [p.grad for p in self.shared_model.value_head.parameters() if p.grad is not None]
+        grad_norm = torch.norm(torch.stack([torch.norm(g, 2) for g in policy_grads])).item() if policy_grads else 0.0
+        critic_grad_norm = torch.norm(torch.stack([torch.norm(g, 2) for g in critic_grads])).item() if critic_grads else 0.0
+
         log.update({
             "step": self._step,
             "samples_seen": self._samples_seen,
             "lr": self.policy_optimizer.param_groups[0]["lr"],
-            "grad_norm": grad_norm,
             "critic_lr": self.critic_optimizer.param_groups[0]["lr"],
+            "grad_norm": grad_norm,
             "critic_grad_norm": critic_grad_norm,
             "ppo_epochs_completed": epoch + 1,
-            "effective_mini_batch_size": effective_mini_batch_size,
         })
-        
+
+        # ✅ 正常路径也要恢复本轮临时缩小的 batch / mini-batch
+        if _restore_bs is not None:
+            self.batch_size = _restore_bs
+        if _restore_mbs is not None:
+            self.mini_batch_size = _restore_mbs
+
+        # 重置归一化标志，避免下轮被误判“已归一化”
+        self._already_normalized = False
+        self._snapshot_pad_len = None
         return log
+
+        

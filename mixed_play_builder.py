@@ -525,7 +525,7 @@ def build_mixed_play(*,
         collector = unstable.Collector.options(
             name="Collector",
             num_cpus=10,
-            num_gpus=(torch.cuda.device_count() - 1 - int(os.getenv("COLLECTOR_GPUS", 2))),
+            num_gpus=(torch.cuda.device_count() - 2 - int(os.getenv("COLLECTOR_GPUS", 2))),
             resources=custom_resources  # 只包含特殊的GPU类型资源
         ).remote(
             vllm_config=vllm_cfg,
@@ -604,7 +604,7 @@ def build_mixed_play(*,
             learner = unstable.PPOLearner.options(
                 name="Learner",
                 num_cpus=10,
-                num_gpus=1
+                num_gpus=2
             ).remote(
                 model_name=model_name,
                 lora_cfg=_lora_cfg,
@@ -655,8 +655,8 @@ def build_mixed_play(*,
             ppo_epochs=4,
             entropy_coef=0.01,
             value_loss_coef=0.5,
-            kl_target=0.01,
-            kl_coef=0.2
+            kl_target=0.05,
+            kl_coef=0.1
         ))
     logger.info("算法初始化成功!")
     
