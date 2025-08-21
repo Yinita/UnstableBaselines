@@ -1,9 +1,94 @@
-import ray, torch, tree, random
+import ray, torch, tree, random, os
 from typing import Optional
 from dataclasses import replace
+import torch.nn as nn
 from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
 from unstable.reward_transformations.transformation_sampling import NormalizeRewardsByEnv
+
+class SharedBackbonePPOModel(nn.Module):
+    """共享backbone的PPO模型，包含策略头和价值头"""
+    
+    def __init__(self, base_model, tokenizer, device, value_head_hidden_size=512):
+        super().__init__()
+        self.base_model = base_model
+        self.tokenizer = tokenizer
+        self.device = device
+        
+        # 获取模型的隐藏层大小
+        if hasattr(base_model.config, 'hidden_size'):
+            hidden_size = base_model.config.hidden_size
+        elif hasattr(base_model.config, 'd_model'):
+            hidden_size = base_model.config.d_model
+        else:
+            hidden_size = 4096  # 默认值
+        
+        # 价值头：简单的线性层
+        self.value_head = nn.Sequential(
+            nn.Linear(hidden_size, value_head_hidden_size),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(value_head_hidden_size, 1)
+        ).to(device)
+        
+        # 初始化价值头权重
+        for layer in self.value_head:
+            if isinstance(layer, nn.Linear):
+                nn.init.orthogonal_(layer.weight, gain=1.0)
+                nn.init.constant_(layer.bias, 0.0)
+    
+    def forward(self, input_ids, attention_mask=None, return_value_only=False, return_policy_only=False):
+        """前向传播
+        
+        Args:
+            return_value_only: 只返回价值估计
+            return_policy_only: 只返回策略logits
+        """
+        # 共享backbone前向传播
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            outputs = self.base_model(input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=True)
+        
+        if return_policy_only:
+            return outputs
+        
+        # 获取最后一层隐藏状态用于价值估计
+        last_hidden_states = outputs.hidden_states[-1]  # [batch_size, seq_len, hidden_size]
+        
+        if return_value_only:
+            # 只计算价值，使用第一个token的表示
+            first_token_hidden = last_hidden_states[:, 0, :]  # [batch_size, hidden_size]
+            values = self.value_head(first_token_hidden).squeeze(-1)  # [batch_size]
+            return values
+        
+        # 同时返回策略和价值
+        first_token_hidden = last_hidden_states[:, 0, :]
+        values = self.value_head(first_token_hidden).squeeze(-1)
+        
+        return outputs, values
+    
+    def get_policy_logits(self, input_ids, attention_mask=None):
+        """获取策略logits"""
+        outputs = self.forward(input_ids, attention_mask, return_policy_only=True)
+        return outputs.logits
+    
+    def get_values(self, input_ids, attention_mask=None):
+        """获取价值估计"""
+        return self.forward(input_ids, attention_mask, return_value_only=True)
+    
+    def save_pretrained(self, save_directory, **kwargs):
+        """保存模型"""
+        # 保存base model
+        self.base_model.save_pretrained(save_directory, **kwargs)
+        
+        # 保存价值头
+        value_head_path = f"{save_directory}/value_head.pt"
+        torch.save(self.value_head.state_dict(), value_head_path)
+    
+    def load_value_head(self, save_directory):
+        """加载价值头"""
+        value_head_path = f"{save_directory}/value_head.pt"
+        if os.path.exists(value_head_path):
+            self.value_head.load_state_dict(torch.load(value_head_path, map_location=self.device))
 
 def compute_gae(rewards, values, gamma=0.99, gae_lambda=0.95, last_value=0.0, done=True):
     """
@@ -46,7 +131,10 @@ class PPOLearner(BaseLearner):
                            normalize_adv: bool=False, max_generation_len: Optional[int]=None, 
                            max_train_len: Optional[int]=None, initial_lora_path: Optional[str]=None,
                            clip_ratio: float=0.2, ppo_epochs: int=4, entropy_coef: float=0.01,
-                           value_loss_coef: float=0.5, kl_target: float=0.01, kl_coef: float=0.2):
+                           value_loss_coef: float=0.5, kl_target: float=0.01, kl_coef: float=0.2,
+                           # 新增内存优化参数
+                           max_seq_len: Optional[int]=4096, memory_efficient_mode: bool=True,
+                           gradient_accumulation_steps: int=1):
         """
         初始化PPO算法参数
         
@@ -70,13 +158,40 @@ class PPOLearner(BaseLearner):
         self.value_loss_coef = value_loss_coef
         self.kl_target = kl_target
         self.kl_coef = kl_coef
+        
+        # 内存优化参数
+        self.max_seq_len = max_seq_len
+        self.memory_efficient_mode = memory_efficient_mode
+        self.gradient_accumulation_steps = gradient_accumulation_steps
 
-        # build the critic
-        self.critic, _ = build_peft_model(self.model_name, self.device, self.lora_cfg, initial_lora_path, critic_model=True)
-        if not self.use_trainer_cache:      self.critic.config.use_cache = False
-        if self.gradient_checkpointing:     self.critic.gradient_checkpointing_enable()
-        if self.activation_checkpointing:   enable_full_activation_ckpt(self.critic)
-        self.critic_optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, self.critic.parameters()), lr=critic_learning_rate)
+        # 构建共享backbone模型
+        base_model, self.tokenizer = build_peft_model(self.model_name, self.device, self.lora_cfg, initial_lora_path)
+        
+        # 创建共享backbone + 双头模型
+        self.shared_model = SharedBackbonePPOModel(
+            base_model=base_model,
+            tokenizer=self.tokenizer,
+            device=self.device
+        )
+        
+        # 配置模型设置
+        if not self.use_trainer_cache:
+            self.shared_model.base_model.config.use_cache = False
+        if self.gradient_checkpointing:
+            self.shared_model.base_model.gradient_checkpointing_enable()
+        if self.activation_checkpointing:
+            enable_full_activation_ckpt(self.shared_model.base_model)
+        
+        # 设置优化器 - 分别为策略和价值头设置不同学习率
+        policy_params = list(self.shared_model.base_model.parameters())
+        value_params = list(self.shared_model.value_head.parameters())
+        
+        self.policy_optimizer = torch.optim.AdamW(policy_params, lr=learning_rate)
+        self.critic_optimizer = torch.optim.AdamW(value_params, lr=critic_learning_rate)
+        
+        # 保持向后兼容性
+        self.policy_model = self.shared_model  # 为了兼容现有代码
+        self.critic = self.shared_model  # 为了兼容现有代码
 
     def _prepare_batch(self, steps):
         obs, acts, advs, rets, old_logps = zip(*[(s.obs, s.act, s.reward, s.step_info.get("return", torch.nan), s.step_info.get("old_logp", 0.0)) for s in steps])
@@ -84,20 +199,32 @@ class PPOLearner(BaseLearner):
         rets = torch.tensor(rets, dtype=torch.float32, device=self.device)
         old_logps = torch.tensor(old_logps, dtype=torch.float32, device=self.device)
         combined = [o + a for o, a in zip(obs, acts)]
-        lengths = [len(self.tokenizer(text, add_special_tokens=False)["input_ids"]) for text in combined]
-        avg_len = sum(lengths) / len(lengths)
-        pct_truncated = (sum(l > self.max_train_len for l in lengths) / len(lengths) if self.max_train_len else 0)
-        enc = self.tokenizer(combined, return_tensors="pt", padding=True, truncation=True, max_length=self.max_train_len).to(self.device)
-        state_enc = self.tokenizer(obs, return_tensors="pt", padding=True, truncation=True, max_length=self.max_train_len).to(self.device)
+        
+        # 内存优化：动态调整序列长度
+        if self.memory_efficient_mode:
+            lengths = [len(self.tokenizer(text, add_special_tokens=False)["input_ids"]) for text in combined]
+            # 使用95%分位数作为动态最大长度，避免极长序列
+            dynamic_max_len = min(int(sorted(lengths)[int(len(lengths) * 0.95)]), 
+                                self.max_train_len or self.max_seq_len)
+            avg_len = sum(lengths) / len(lengths)
+            pct_truncated = sum(l > dynamic_max_len for l in lengths) / len(lengths)
+        else:
+            lengths = [len(self.tokenizer(text, add_special_tokens=False)["input_ids"]) for text in combined]
+            dynamic_max_len = self.max_train_len
+            avg_len = sum(lengths) / len(lengths)
+            pct_truncated = (sum(l > self.max_train_len for l in lengths) / len(lengths) if self.max_train_len else 0)
+        
+        enc = self.tokenizer(combined, return_tensors="pt", padding=True, truncation=True, max_length=dynamic_max_len).to(self.device)
+        state_enc = self.tokenizer(obs, return_tensors="pt", padding=True, truncation=True, max_length=dynamic_max_len).to(self.device)
         return enc, state_enc, advs, rets, old_logps, obs, avg_len, pct_truncated
 
     def _mini_batch_update_step(self, steps, scaling: float = 1.0):
         enc, state_enc, advs, rets, old_logps, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
         device = enc.input_ids.device
 
-        # 前向
-        out = self.policy_model(**enc)
-        logp_full = torch.nn.functional.log_softmax(out.logits, dim=-1)          # [B, T, V]
+        # 前向传播 - 策略部分
+        policy_outputs = self.shared_model.get_policy_logits(enc.input_ids, enc.attention_mask)
+        logp_full = torch.nn.functional.log_softmax(policy_outputs, dim=-1)          # [B, T, V]
 
         # 目标 token 对齐：去掉最后一位（因右移）
         tgt_ids  = enc.input_ids[:, 1:]                                          # [B, T-1]
@@ -153,8 +280,9 @@ class PPOLearner(BaseLearner):
         total_policy_loss.backward()
         torch.cuda.empty_cache()
 
-        # 值函数
-        value_pred = self.critic(**state_enc)[:, 0]
+        # 值函数 - 使用独立的前向传播避免梯度干扰
+        with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+            value_pred = self.shared_model.get_values(state_enc.input_ids, state_enc.attention_mask)
         value_loss = self.value_loss_coef * 0.5 * ((value_pred - rets) ** 2).mean() / scaling
         value_loss.backward()
         torch.cuda.empty_cache()
@@ -185,7 +313,11 @@ class PPOLearner(BaseLearner):
         all_samples = tree.flatten(batch)
         num_samples = len(all_samples)
 
-        # 构建值函数目标和存储旧的log概率
+        # 内存优化：分块处理值函数和旧策略概率计算
+        if self.memory_efficient_mode:
+            return self._memory_efficient_update(batch, all_samples, num_samples)
+        
+        # 原始方法：构建值函数目标和存储旧的log概率
         all_values = []
         all_old_logps = []
         
@@ -195,12 +327,12 @@ class PPOLearner(BaseLearner):
                 enc, state_enc, _, _, _, obs, _, _ = self._prepare_batch(batch_steps)
                 with torch.no_grad():
                     # 值函数估计
-                    target_values = self.critic(**state_enc)[:, 0]
+                    target_values = self.shared_model.get_values(state_enc.input_ids, state_enc.attention_mask)
                     all_values.append(target_values)
                     
                     # 存储旧策略的log概率
-                    out = self.policy_model(**enc)
-                    logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
+                    policy_logits = self.shared_model.get_policy_logits(enc.input_ids, enc.attention_mask)
+                    logp = torch.nn.functional.log_softmax(policy_logits, dim=-1)
                     tgt_ids = enc.input_ids[:, 1:]
                     tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
                     mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)
@@ -266,9 +398,9 @@ class PPOLearner(BaseLearner):
                     epoch_metrics[k] = epoch_metrics.get(k, 0.0) + v
                     metrics_acc[k] = metrics_acc.get(k, 0.0) + v
             
-            # 梯度裁剪和优化器步骤
-            torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.grad_clip)
-            torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.grad_clip)
+            # 梯度裁剪和优化器步骤 - 分别处理策略和价值参数
+            torch.nn.utils.clip_grad_norm_(self.shared_model.base_model.parameters(), self.grad_clip)
+            torch.nn.utils.clip_grad_norm_(self.shared_model.value_head.parameters(), self.grad_clip)
             
             try:
                 self.policy_optimizer.step()
@@ -291,8 +423,8 @@ class PPOLearner(BaseLearner):
         total_updates = (epoch + 1) * num_steps
         log = {f"{k}": v / total_updates for k, v in metrics_acc.items()}
         
-        grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.policy_model.parameters() if p.grad is not None) ** 0.5)
-        critic_grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.critic.parameters() if p.grad is not None) ** 0.5)
+        grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.shared_model.base_model.parameters() if p.grad is not None) ** 0.5)
+        critic_grad_norm = (sum(p.grad.data.norm(2).item() ** 2 for p in self.shared_model.value_head.parameters() if p.grad is not None) ** 0.5)
         
         log.update({
             "step": self._step, 
@@ -302,6 +434,178 @@ class PPOLearner(BaseLearner):
             "critic_lr": self.critic_optimizer.param_groups[0]["lr"], 
             "critic_grad_norm": critic_grad_norm,
             "ppo_epochs_completed": epoch + 1,
+        })
+        
+        return log
+
+    def _memory_efficient_update(self, batch, all_samples, num_samples):
+        """内存优化的更新方法：分块处理，避免大张量累积"""
+        # 分块计算值函数和旧策略概率，避免内存累积
+        chunk_size = min(self.infer_mini_batch_size * 2, 64)  # 更小的块大小
+        
+        # 存储每个episode的处理结果
+        ep_advantages = []
+        ep_returns = []
+        ep_old_logps = []
+        
+        # 按episode分组处理
+        ep_start_idx = 0
+        for ep in batch:
+            ep_end_idx = ep_start_idx + len(ep)
+            ep_samples = all_samples[ep_start_idx:ep_end_idx]
+            
+            # 分块处理当前episode
+            ep_values = []
+            ep_logps = []
+            
+            for i in range(0, len(ep_samples), chunk_size):
+                chunk_samples = ep_samples[i:i + chunk_size]
+                
+                with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                    enc, state_enc, _, _, _, obs, _, _ = self._prepare_batch(chunk_samples)
+                    
+                    with torch.no_grad():
+                        # 值函数估计
+                        chunk_values = self.shared_model.get_values(state_enc.input_ids, state_enc.attention_mask).float().cpu()
+                        ep_values.append(chunk_values)
+                        
+                        # 旧策略概率
+                        policy_logits = self.shared_model.get_policy_logits(enc.input_ids, enc.attention_mask)
+                        logp = torch.nn.functional.log_softmax(policy_logits, dim=-1)
+                        tgt_ids = enc.input_ids[:, 1:]
+                        tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
+                        
+                        # 构建mask
+                        mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)
+                        for j, o in enumerate(obs):
+                            prompt_len = len(self.tokenizer(o, add_special_tokens=False)["input_ids"])
+                            mask[j, :prompt_len] = False
+                        mask = mask[:, 1:]
+                        
+                        # 计算序列级别的log概率
+                        valid_tokens = mask.sum(dim=1).clamp_min(1)
+                        seq_logp = (tok_logp * mask).sum(dim=1) / valid_tokens
+                        ep_logps.append(seq_logp.float().cpu())
+                
+                # 立即清理GPU缓存
+                torch.cuda.empty_cache()
+            
+            # 合并当前episode的结果
+            ep_values_tensor = torch.cat(ep_values)
+            ep_logps_tensor = torch.cat(ep_logps)
+            ep_rewards = torch.tensor([step.reward for step in ep])
+            
+            # 计算GAE
+            adv, ret = compute_gae(ep_rewards, ep_values_tensor, last_value=0.0, done=True)
+            ep_advantages.append(adv)
+            ep_returns.append(ret)
+            ep_old_logps.append(ep_logps_tensor)
+            
+            ep_start_idx = ep_end_idx
+        
+        # 构建训练批次
+        train_batch = []
+        for i, ep in enumerate(batch):
+            for j, step in enumerate(ep):
+                step = replace(step, reward=ep_advantages[i][j].item())
+                step = replace(step, step_info={
+                    **step.step_info,
+                    "return": ep_returns[i][j].item(),
+                    "advantage": ep_advantages[i][j].item(),
+                    "old_logp": ep_old_logps[i][j].item()
+                })
+                train_batch.append(step)
+        
+        assert len(train_batch) >= self.batch_size
+        
+        if self.normalize_adv:
+            from unstable.reward_transformations.transformation_sampling import NormalizeRewardsByEnv
+            train_batch = NormalizeRewardsByEnv(True)(train_batch)
+        
+        # 内存优化的PPO更新
+        return self._memory_efficient_ppo_update(train_batch, num_samples)
+    
+    def _memory_efficient_ppo_update(self, train_batch, num_samples):
+        """内存优化的PPO多轮更新"""
+        metrics_acc = {}
+        train_batch = random.sample(train_batch, self.batch_size)
+        
+        # 调整mini_batch_size以适应内存限制
+        effective_mini_batch_size = max(self.mini_batch_size // 2, 4) if self.memory_efficient_mode else self.mini_batch_size
+        num_steps = self.batch_size // effective_mini_batch_size
+        
+        self.logger.info(f"Memory-efficient mode: {num_samples} samples, {self.ppo_epochs} epochs, {num_steps} steps/epoch, mini_batch_size={effective_mini_batch_size}")
+        
+        for epoch in range(self.ppo_epochs):
+            # 梯度累积模式
+            self.policy_optimizer.zero_grad(set_to_none=True)
+            self.critic_optimizer.zero_grad(set_to_none=True)
+            
+            random.shuffle(train_batch)
+            epoch_metrics = {}
+            
+            for i in range(num_steps):
+                sub = train_batch[i * effective_mini_batch_size : (i + 1) * effective_mini_batch_size]
+                
+                # 使用梯度累积减少内存压力
+                accumulation_steps = max(1, self.gradient_accumulation_steps)
+                sub_chunks = [sub[j:j + len(sub)//accumulation_steps] 
+                             for j in range(0, len(sub), len(sub)//accumulation_steps)]
+                
+                for chunk_idx, chunk in enumerate(sub_chunks):
+                    if not chunk:
+                        continue
+                        
+                    with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
+                        scaling_factor = num_steps * self.ppo_epochs * len(sub_chunks)
+                        update_metrics = self._mini_batch_update_step(chunk, scaling=scaling_factor)
+                    
+                    # 累积指标
+                    for k, v in update_metrics.items():
+                        epoch_metrics[k] = epoch_metrics.get(k, 0.0) + v / len(sub_chunks)
+                        metrics_acc[k] = metrics_acc.get(k, 0.0) + v / len(sub_chunks)
+                    
+                    # 每个chunk后清理缓存
+                    torch.cuda.empty_cache()
+            
+            # 梯度裁剪和优化 - 分别处理策略和价值参数
+            torch.nn.utils.clip_grad_norm_(self.shared_model.base_model.parameters(), self.grad_clip)
+            torch.nn.utils.clip_grad_norm_(self.shared_model.value_head.parameters(), self.grad_clip)
+            
+            try:
+                self.policy_optimizer.step()
+                self.critic_optimizer.step()
+            except Exception as exc:
+                self.logger.exception(f"optimizer.step failed on step {self._step}, epoch {epoch}: {exc}")
+                raise
+            
+            # KL散度早停检查
+            avg_kl = epoch_metrics.get("kl_div", 0.0) / num_steps
+            if avg_kl > 1.5 * self.kl_target:
+                self.logger.info(f"Early stopping at epoch {epoch} due to high KL: {avg_kl:.4f}")
+                break
+            
+            self.logger.info(f"Epoch {epoch} avg metrics: {{{k}: {v/num_steps:.4f} for k, v in epoch_metrics.items()}}")
+        
+        self._step += 1
+        
+        # 计算最终指标
+        total_updates = (epoch + 1) * num_steps
+        log = {f"{k}": v / total_updates for k, v in metrics_acc.items()}
+        
+        # 添加梯度范数
+        grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in self.shared_model.base_model.parameters() if p.grad is not None) ** 0.5
+        critic_grad_norm = sum(p.grad.data.norm(2).item() ** 2 for p in self.shared_model.value_head.parameters() if p.grad is not None) ** 0.5
+        
+        log.update({
+            "step": self._step,
+            "samples_seen": self._samples_seen,
+            "lr": self.policy_optimizer.param_groups[0]["lr"],
+            "grad_norm": grad_norm,
+            "critic_lr": self.critic_optimizer.param_groups[0]["lr"],
+            "critic_grad_norm": critic_grad_norm,
+            "ppo_epochs_completed": epoch + 1,
+            "effective_mini_batch_size": effective_mini_batch_size,
         })
         
         return log

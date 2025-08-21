@@ -210,7 +210,16 @@ class Collector:
             self._post_eval(meta, game_information, player_trajs)
     
     def _post_train(self, meta: TaskMeta, game_information: GameInformation, player_trajs: List[PlayerTrajectory]):
-        for traj in player_trajs: self.buffer.add_player_trajectory.remote(traj, env_id=meta.env_id); self.tracker.add_player_trajectory.remote(traj, env_id=meta.env_id)
+        for traj in player_trajs: 
+            self.buffer.add_player_trajectory.remote(traj, env_id=meta.env_id)
+            # 构建对手信息用于胜率统计
+            opponent_info = None
+            if game_information.names:
+                # 找到对手的名称（非当前玩家的其他玩家）
+                opponent_names = [name for pid, name in game_information.names.items() if pid != traj.pid]
+                if opponent_names:
+                    opponent_info = {"name": opponent_names[0]}  # 取第一个对手
+            self.tracker.add_player_trajectory.remote(traj, env_id=meta.env_id, opponent_info=opponent_info)
         self.game_scheduler.update.remote(game_info=game_information)
         # Persist collected samples for this game
         try:

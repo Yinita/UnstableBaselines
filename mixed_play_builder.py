@@ -659,4 +659,12 @@ def build_mixed_play(*,
         ))
     logger.info("算法初始化成功!")
     
+    # 启用胜率统计日志记录
+    try:
+        ray.get(tracker.log_win_rate_summary.remote("train"))
+        ray.get(tracker.log_win_rate_summary.remote("eval"))
+        logger.info("胜率统计系统已启用")
+    except Exception as e:
+        logger.warning(f"胜率统计初始化失败: {e}")
+    
     return _MixedPlayRun(collector=collector, learner=learner)

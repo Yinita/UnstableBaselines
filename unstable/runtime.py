@@ -58,6 +58,10 @@ def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_
     # initialize the learner
     assert algorithm in _ALGOS, f"algorithm='{algorithm}' not found. Please use one of: {list(_ALGOS.keys())}"
     learner = _ALGOS[algorithm].options(num_gpus=1, name="Learner").remote(model_name=model_name, lora_cfg=_lora_cfg, batch_size=batch_size, mini_batch_size=mini_batch_size, learning_rate=learning_rate, grad_clip=gradient_clipping, buffer=buffer, tracker=tracker, model_registry=model_registry, activation_checkpointing=activation_checkpointing, gradient_checkpointing=gradient_checkpointing, use_trainer_cache=use_trainer_cache)
+    
+    # 启用胜率统计日志记录
+    ray.get(tracker.log_win_rate_summary.remote("train"))
+    ray.get(tracker.log_win_rate_summary.remote("eval"))
     match algorithm:
         case "reinforce":   ray.get(learner.initialize_algorithm.remote(max_train_len=max_train_len, max_generation_len=max_generation_len))
         case "a2c":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len)) # TODO find better solution

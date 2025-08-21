@@ -1,9 +1,10 @@
 import os, re, ray, time, wandb, collections, datetime, logging, numpy as np
-from typing import Optional, Union, Dict
-from unstable.utils import setup_logger
-
+from collections import defaultdict
+from typing import Dict, Optional, Union, List
+from unstable.utils.logging import setup_logger
+from unstable.utils.misc import write_game_information_to_file
 from unstable._types import PlayerTrajectory, GameInformation
-from unstable.utils import write_game_information_to_file
+import wandb
 Scalar = Union[int, float, bool]
 
 class BaseTracker:
@@ -40,6 +41,21 @@ class Tracker(BaseTracker):
         self._n = {}
         self._last_flush = time.monotonic()
         self._interface_stats = {"gpu_tok_s": {}, "TS": {}, "exploration": {}, "match_counts": {}, "format_success": None, "inv_move_rate": None, "game_len": None}
+        
+        # 胜率统计相关
+        self._record_models = self._parse_record_models()
+        self._win_rate_stats = {
+            "train": {"all": [], "vs_specific": {model: [] for model in self._record_models}},
+            "eval": {"all": [], "vs_specific": {model: [] for model in self._record_models}}
+        }
+        self.logger.info(f"胜率统计初始化，记录模型: {self._record_models}")
+    
+    def _parse_record_models(self) -> List[str]:
+        """解析环境变量中的记录模型列表"""
+        record_models_env = os.environ.get("RECORD_MODELS", "")
+        if not record_models_env:
+            return []
+        return [model.strip() for model in record_models_env.split(",") if model.strip()]
 
     def _put(self, k: str, v: Scalar): self._m[k].append(v)
     def _is_scalar(self, x) -> bool:
@@ -64,7 +80,7 @@ class Tracker(BaseTracker):
                 except Exception as e: self.logger.warning(f"wandb.log failed: {e}")
             self._buffer.clear(); self._last_flush=time.monotonic()
 
-    def add_player_trajectory(self, traj: PlayerTrajectory, env_id: str):
+    def add_player_trajectory(self, traj: PlayerTrajectory, env_id: str, opponent_info: Optional[Dict] = None):
         try:
             reward = traj.final_reward; player_id = traj.pid
             self._put(f"collection-{env_id}/reward", reward)
@@ -92,6 +108,9 @@ class Tracker(BaseTracker):
             self._n["collection"] = self._n.get("collection", 0) + 1
             self._put("collection/step", self._n["collection"]) 
 
+            # 胜率统计 - 训练阶段
+            self._track_win_rate("train", reward > 0, opponent_info)
+
             # Aggregate both per-env and global prefixes
             self._buffer.update(self._agg('collection-'))
             self._buffer.update(self._agg('collection/'))
@@ -117,6 +136,10 @@ class Tracker(BaseTracker):
             self._n["evaluation"] = self._n.get("evaluation", 0) + 1
             self._put("evaluation/step", self._n["evaluation"]) 
 
+            # 胜率统计 - 评估阶段
+            opponent_info = {"name": game_information.eval_opponent_name} if game_information.eval_opponent_name else None
+            self._track_win_rate("eval", eval_reward > 0, opponent_info)
+
             # Aggregate both per-env and global prefixes
             self._buffer.update(self._agg('evaluation-'))
             self._buffer.update(self._agg('evaluation/'))
@@ -127,6 +150,73 @@ class Tracker(BaseTracker):
 
         except Exception as exc:
             self.logger.info(f"Exception when adding game_info to tracker: {exc}")
+
+    def _track_win_rate(self, phase: str, is_win: bool, opponent_info: Optional[Dict] = None):
+        """追踪胜率统计
+        
+        Args:
+            phase: "train" 或 "eval"
+            is_win: 是否获胜
+            opponent_info: 对手信息，包含 name 字段
+        """
+        try:
+            # 总体胜率统计
+            self._put(f"core/{phase}/win_rate_overall", int(is_win))
+            
+            # 对特定对手的胜率统计
+            if opponent_info and "name" in opponent_info:
+                opponent_name = opponent_info["name"]
+                if opponent_name in self.record_models:
+                    self._put(f"core/{phase}/win_rate_vs_{opponent_name}", int(is_win))
+            
+            # 更新统计计数
+            self._n[f"core/{phase}"] = self._n.get(f"core/{phase}", 0) + 1
+            self._put(f"core/{phase}/step", self._n[f"core/{phase}"])
+            
+        except Exception as exc:
+            self.logger.warning(f"Exception in win rate tracking: {exc}")
+
+    def get_win_rate_stats(self, phase: str) -> Dict[str, float]:
+        """获取胜率统计信息
+        
+        Args:
+            phase: "train" 或 "eval"
+            
+        Returns:
+            胜率统计字典
+        """
+        stats = {}
+        try:
+            # 总体胜率
+            overall_key = f"core/{phase}/win_rate_overall"
+            if overall_key in self._data:
+                wins = sum(self._data[overall_key])
+                total = len(self._data[overall_key])
+                stats["overall"] = wins / total if total > 0 else 0.0
+            
+            # 对特定对手的胜率
+            for model_name in self.record_models:
+                model_key = f"core/{phase}/win_rate_vs_{model_name}"
+                if model_key in self._data:
+                    wins = sum(self._data[model_key])
+                    total = len(self._data[model_key])
+                    stats[f"vs_{model_name}"] = wins / total if total > 0 else 0.0
+                    
+        except Exception as exc:
+            self.logger.warning(f"Exception getting win rate stats: {exc}")
+            
+        return stats
+
+    def log_win_rate_summary(self, phase: str):
+        """记录胜率摘要到日志"""
+        try:
+            stats = self.get_win_rate_stats(phase)
+            if stats:
+                self.logger.info(f"Win rate summary ({phase}):")
+                for key, rate in stats.items():
+                    self.logger.info(f"  {key}: {rate:.3f}")
+        except Exception as exc:
+            self.logger.warning(f"Exception logging win rate summary: {exc}")
 
     def log_model_registry(self, ts_dict: dict[str, dict[str, float]], match_counts: dict[tuple[str, str], int]):
         self._interface_stats.update({"TS": ts_dict, "exploration": None, "match_counts": match_counts})

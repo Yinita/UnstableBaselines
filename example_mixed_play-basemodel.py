@@ -2,6 +2,7 @@ from mixed_play_builder import build_mixed_play, MixedPlayEvalEnvSpec
 import os
 import unstable
 os.environ["COLLECTOR_GPUS"]="2"
+os.environ["RECORD_MODELS"]="openai-gpt-5,openai-gpt-4o"
 # OpenAI全局配置
 openai_global_config = {
     "verbose": False,
@@ -73,7 +74,7 @@ run = build_mixed_play(
         "max_parallel_seq": 32,  # Reduced from 128
         "max_loras": 2,          # Reduced from 8
         "lora_config": lora_config,
-        "max_model_len": 10000,
+        "max_model_len": 4096,
         "gpu_memory_utilization": 0.9
     },
     wandb_project="mindgames"
