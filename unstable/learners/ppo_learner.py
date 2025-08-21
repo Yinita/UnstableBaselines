@@ -68,7 +68,9 @@ class SharedBackbonePPOModel(nn.Module):
             return values
         
         # 同时返回策略和价值
-        first_token_hidden = last_hidden_states[:, 0, :]
+        # 确保输入到value_head的张量在正确的设备上
+        value_head_device = next(self.value_head.parameters()).device
+        first_token_hidden = last_hidden_states[:, 0, :].to(value_head_device)
         values = self.value_head(first_token_hidden).squeeze(-1)
         
         return outputs, values
@@ -123,9 +125,11 @@ def compute_gae(rewards, values, gamma=0.99, gae_lambda=0.95, last_value=0.0, do
     returns = torch.zeros_like(rewards, dtype=torch.float32)
     
     # 确保values和rewards都是float32
-    rewards = rewards.to(torch.float32)
-    values = values.to(torch.float32)
     last_value = values.new_tensor(last_value)
+    # 确保所有张量在同一设备上
+    target_device = last_value.device
+    rewards = rewards.to(target_device, dtype=torch.float32)
+    values = values.to(target_device, dtype=torch.float32)
     lastgaelam = 0.0
     
     for t in reversed(range(T)):
@@ -222,8 +226,8 @@ class PPOLearner(BaseLearner):
             for s in steps
         ])
 
-        advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
-        rets = torch.tensor(rets, dtype=torch.float32, device=self.device)
+        advs = torch.tensor(advs, dtype=torch.float32)  # Keep on CPU
+        rets = torch.tensor(rets, dtype=torch.float32)  # Keep on CPU
 
         # 以二者的 max 为该样本长度
         lengths = [
@@ -247,8 +251,8 @@ class PPOLearner(BaseLearner):
             padded_logps.append(logps)
             padded_masks.append(mask)
 
-        old_logps   = torch.tensor(padded_logps, dtype=torch.float32, device=self.device)
-        label_masks = torch.tensor(padded_masks, dtype=torch.bool, device=self.device)
+        old_logps   = torch.tensor(padded_logps, dtype=torch.float32)  # 留在CPU
+        label_masks = torch.tensor(padded_masks, dtype=torch.bool)     # 留在CPU
 
 
         # --- 拼接 obs+act 作为输入 ---
@@ -276,17 +280,37 @@ class PPOLearner(BaseLearner):
             avg_len = sum(lengths) / len(lengths) if lengths else 0.0
             pct_truncated = (sum(l > dynamic_max_len for l in lengths) / len(lengths)) if lengths else 0.0
 
+            # For multi-GPU with device_map='auto', inputs should be on CPU
             enc = self.tokenizer(combined, return_tensors="pt", padding=True, truncation=True,
-                                max_length=dynamic_max_len).to(self.device)
+                                max_length=dynamic_max_len)
             state_enc = self.tokenizer(obs, return_tensors="pt", padding=True, truncation=True,
-                                    max_length=dynamic_max_len).to(self.device)
+                                    max_length=dynamic_max_len)
 
 
         return enc, state_enc, advs, rets, old_logps, label_masks, obs, avg_len, pct_truncated
 
     def _mini_batch_update_step(self, steps, scaling: float = 1.0):
         enc, state_enc, advs, rets, old_logps, label_masks, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
-        device = enc.input_ids.device
+        
+        # 检查是否使用多GPU分布式模型
+        has_device_map = hasattr(self.shared_model.base_model, 'hf_device_map') and self.shared_model.base_model.hf_device_map
+        
+        if has_device_map:
+            # 多GPU模式：输入保持在CPU，让模型自动分发
+            # 只移动非输入张量到主设备
+            device = self.device
+            advs = advs.to(device)
+            rets = rets.to(device)
+            # old_logps 和 label_masks 稍后根据模型输出设备动态调整
+        else:
+            # 单GPU模式：所有张量移到主设备
+            device = self.device
+            advs = advs.to(device)
+            rets = rets.to(device)
+            old_logps = old_logps.to(device)
+            label_masks = label_masks.to(device)
+            enc = tree.map_structure(lambda x: x.to(device), enc)
+            state_enc = tree.map_structure(lambda x: x.to(device), state_enc)
 
         # 前向传播 - 策略部分
         policy_outputs = self.shared_model.get_policy_logits(enc.input_ids, enc.attention_mask)
@@ -295,12 +319,17 @@ class PPOLearner(BaseLearner):
         # 目标 token 对齐：去掉最后一位（因右移）
         tgt_ids  = enc.input_ids[:, 1:]                                          # [B, T-1]
         tok_logp = logp_full[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)  # [B, T-1]
+        
+        # 确保old_logps和label_masks与模型输出在同一设备
+        model_output_device = tok_logp.device
+        old_logps = old_logps.to(model_output_device)
+        label_mask = label_masks.to(model_output_device)
 
         # === 对齐长度：tok_logp / old_logps / label_masks 取共同最小 L ===
-        L = min(tok_logp.size(1), old_logps.size(1), label_masks.size(1))
+        L = min(tok_logp.size(1), old_logps.size(1), label_mask.size(1))
         tok_logp    = tok_logp[:, :L]
         old_logps   = old_logps[:, :L]
-        label_mask  = label_masks[:, :L]        # 直接使用存档的 mask
+        label_mask  = label_mask[:, :L]        # 直接使用存档的 mask
         valid_tokens= label_mask.sum(dim=1).clamp_min(1)
 
         # === 序列 logp 与 熵 ===
@@ -399,7 +428,7 @@ class PPOLearner(BaseLearner):
             with torch.no_grad():
                 # 值函数
                 target_values = self.shared_model.get_values(state_enc.input_ids, state_enc.attention_mask)
-                all_values.append(target_values)
+                all_values.append(target_values.cpu())
 
                 # 旧策略 token-level logp（与上面 enc 严格对齐）
                 policy_logits = self.shared_model.get_policy_logits(enc.input_ids, enc.attention_mask)
@@ -410,10 +439,9 @@ class PPOLearner(BaseLearner):
                 # 生成与 snapshot 一致口径的 label_mask（非 pad 且 非 prompt）
                 attn = enc.attention_mask.bool()                                        # [B, T]
                 prompt_lens = torch.tensor(
-                    [len(self.tokenizer(o, add_special_tokens=False)["input_ids"]) for o in obs_texts],
-                    device=self.device
+                    [len(self.tokenizer(o, add_special_tokens=False)["input_ids"]) for o in obs_texts]
                 )
-                token_idx   = torch.arange(attn.size(1), device=self.device).unsqueeze(0)  # [1, T]
+                token_idx   = torch.arange(attn.size(1)).unsqueeze(0)  # [1, T]
                 prompt_mask = token_idx < prompt_lens.unsqueeze(1)                          # True=prompt
                 label_mask_tokens = (attn & (~prompt_mask))[:, 1:]                          # [B, T-1]
 

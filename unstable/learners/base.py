@@ -1,5 +1,6 @@
 
 import ray, torch, time, pathlib, os
+import sys, traceback
 from typing import List, Dict, Any, Optional
 import GPUtil
 from collections import deque
@@ -185,7 +186,18 @@ class BaseLearner:
                     self._cleanup_memory()
                 
                 self._step += 1
-            except Exception as exc: self.logger.info(f"Exception in learner loop: {exc}")
+            except Exception as exc:
+                # 记录精确的报错位置（文件、行号、函数、代码行）
+                exc_type, exc_value, exc_tb = sys.exc_info()
+                last = traceback.extract_tb(exc_tb)[-1] if exc_tb else None
+                if last is not None:
+                    self.logger.error(
+                        f"Exception in learner loop at {last.filename}:{last.lineno} in {last.name}: {exc}\n> {last.line}"
+                    )
+                else:
+                    self.logger.error(f"Exception in learner loop: {exc}")
+                # 输出完整堆栈
+                self.logger.exception("Full traceback follows")
 
         # 训练结束时的GPU统计
         self._monitor_gpu_memory("training_end")
