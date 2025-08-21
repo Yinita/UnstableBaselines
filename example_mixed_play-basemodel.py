@@ -9,8 +9,8 @@ openai_global_config = {
     "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     "quiet_console": True     # 开启静默模式
 }
-# model_name = "Qwen/Qwen3-8B"
-model_name = "yinita/qwen3-8b-v1-lora-0812-3epochs"
+model_name = "Qwen/Qwen3-8B"
+# model_name = "yinita/qwen3-8b-v1-lora-0812-3epochs"
 # 定义固定对手
 fixed_opponents = ["openai-gpt-4o", "openai-gpt-4o-mini", "openai-gpt-5", "openai-gpt-5-chat"]
 lora_config={
