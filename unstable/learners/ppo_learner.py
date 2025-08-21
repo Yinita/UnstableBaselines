@@ -256,7 +256,7 @@ class PPOLearner(BaseLearner):
             advs = (advs - advs.mean()) / (advs.std(unbiased=False) + 1e-8)
 
         # ---- 熵：逐位置熵，再按相同 mask 聚合 ----
-        probs = torch.nn.functional.softmax(out.logits, dim=-1)                  # [B, T, V]
+        probs = torch.nn.functional.softmax(policy_outputs, dim=-1)                  # [B, T, V]
         token_entropy = -(probs * logp_full).sum(-1)                             # [B, T]
         token_entropy = token_entropy[:, :-1]                                    # [B, T-1]
         token_entropy = token_entropy.masked_fill(~label_mask, 0.0)
@@ -348,6 +348,11 @@ class PPOLearner(BaseLearner):
                     seq_logp = (tok_logp * mask).sum(1) / self.max_generation_len
                     all_old_logps.append(seq_logp)
         
+        # Check for empty lists before concatenation
+        if not all_values:
+            self.logger.warning("No values to concatenate, skipping update")
+            return {"error": "No values to process", "step": self._step, "samples_seen": self._samples_seen}
+            
         all_values = torch.cat(all_values).float().cpu()
         all_old_logps = torch.cat(all_old_logps).float().cpu()
         
@@ -376,8 +381,11 @@ class PPOLearner(BaseLearner):
                 })
                 train_batch.append(step)
         
-        assert len(train_batch) >= self.batch_size
-
+        # Check if we have enough samples
+        if len(train_batch) < self.batch_size:
+            self.logger.warning(f"Not enough samples in train_batch: {len(train_batch)} < {self.batch_size}")
+            return {"error": "Not enough samples", "step": self._step, "samples_seen": self._samples_seen}
+            
         if self.normalize_adv: 
             train_batch = NormalizeRewardsByEnv(True)(train_batch)
 
@@ -497,9 +505,17 @@ class PPOLearner(BaseLearner):
                 torch.cuda.empty_cache()
             
             # 合并当前episode的结果
-            ep_values_tensor = torch.cat(ep_values)
-            ep_logps_tensor = torch.cat(ep_logps)
-            ep_rewards = torch.tensor([step.reward for step in ep])
+            if not ep_values or not ep_logps:
+                self.logger.warning(f"Empty tensor lists for episode {i}, skipping")
+                continue
+                
+            try:
+                ep_values_tensor = torch.cat(ep_values)
+                ep_logps_tensor = torch.cat(ep_logps)
+                ep_rewards = torch.tensor([step.reward for step in ep])
+            except Exception as e:
+                self.logger.warning(f"Error concatenating tensors for episode {i}: {e}")
+                continue
             
             # 计算GAE
             adv, ret = compute_gae(ep_rewards, ep_values_tensor, last_value=0.0, done=True)

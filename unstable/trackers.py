@@ -166,7 +166,7 @@ class Tracker(BaseTracker):
             # 对特定对手的胜率统计
             if opponent_info and "name" in opponent_info:
                 opponent_name = opponent_info["name"]
-                if opponent_name in self.record_models:
+                if opponent_name in self._record_models:
                     self._put(f"core/{phase}/win_rate_vs_{opponent_name}", int(is_win))
             
             # 更新统计计数
@@ -195,7 +195,7 @@ class Tracker(BaseTracker):
                 stats["overall"] = wins / total if total > 0 else 0.0
             
             # 对特定对手的胜率
-            for model_name in self.record_models:
+            for model_name in self._record_models:
                 model_key = f"core/{phase}/win_rate_vs_{model_name}"
                 if model_key in self._data:
                     wins = sum(self._data[model_key])
