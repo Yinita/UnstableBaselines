@@ -30,7 +30,7 @@ TEMPLATE_PARTS = {
     },
 
     "qwen3-no-reasoning": {
-        "user": lambda obs: f"<|im_start|>user\nYou are a competitive game player. Make sure you read the game instructions carefully, and always follow the required format.\n\n{obs}<|im_end|>\n",
+        "user": lambda obs: f"<|im_start|>user\nPlease put your final answer within \\boxed{{}}.\nQuestion: {obs}<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n<think>\n</think>\n\n"
     },
 
@@ -47,15 +47,15 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
         last_match = matches[-1].strip()
         if last_match:  # non-empty boxed
             action = f"[{last_match}]" if "[" not in last_match else last_match
-            has_think = 1
+            within_boxed = 1
         else:  # empty boxed
             action = raw_action
-            has_think = 0
+            within_boxed = 0
     else:  # no boxed at all
         action = raw_action
-        has_think = 0
+        within_boxed = 0
 
-    format_feedback = {"correct_answer_format": bool(has_think)}
+    format_feedback = {"correct_answer_format": bool(within_boxed)}
     return action, format_feedback
 
 

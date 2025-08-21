@@ -79,7 +79,25 @@ class Tracker(BaseTracker):
                 for k, v in traj.format_feedbacks[idx].items(): self._put(f"collection-{env_id}/Format Success Rate - {k}", v)
             self._n[f"collection-{env_id}"] = self._n.get(f"collection-{env_id}", 0) + 1
             self._put(f"collection-{env_id}/step", self._n[f"collection-{env_id}"])
-            self._buffer.update(self._agg('collection-')); self._flush_if_due()
+
+            # Global (cross-env) unified metrics under 'collection/' prefix
+            self._put("collection/reward", reward)
+            self._put("collection/Win Rate", int(reward>0))
+            self._put("collection/Loss Rate", int(reward<0))
+            self._put("collection/Draw", int(reward==0))
+            self._put(f"collection/Reward (pid={traj.pid})", reward)
+            self._put("collection/Game Length", traj.num_turns)
+            for idx in range(len(traj.obs)):
+                self._put("collection/Respone Length (char)", len(traj.actions[idx]))
+                self._put("collection/Observation Length (char)", len(traj.obs[idx]))
+                for k, v in traj.format_feedbacks[idx].items(): self._put(f"collection/Format Success Rate - {k}", v)
+            self._n["collection"] = self._n.get("collection", 0) + 1
+            self._put("collection/step", self._n["collection"]) 
+
+            # Aggregate both per-env and global prefixes
+            self._buffer.update(self._agg('collection-'))
+            self._buffer.update(self._agg('collection/'))
+            self._flush_if_due()
         except Exception as exc:
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
 
@@ -94,7 +112,20 @@ class Tracker(BaseTracker):
             self._put(f"{_prefix}/Draw Rate", int(eval_reward==0))
             self._n[_prefix] = self._n.get(_prefix, 0) + 1
             self._put(f"{_prefix}/step", self._n[_prefix])
-            self._buffer.update(self._agg('evaluation-')); self._flush_if_due()
+            
+            # Global (cross-env) unified evaluation metrics under 'evaluation/' prefix
+            self._put("evaluation/Reward", eval_reward)
+            self._put(f"evaluation/Reward (pid={game_information.eval_model_pid})", eval_reward)
+            self._put("evaluation/Win Rate",  int(eval_reward>0))
+            self._put("evaluation/Loss Rate", int(eval_reward<0))
+            self._put("evaluation/Draw Rate", int(eval_reward==0))
+            self._n["evaluation"] = self._n.get("evaluation", 0) + 1
+            self._put("evaluation/step", self._n["evaluation"]) 
+
+            # Aggregate both per-env and global prefixes
+            self._buffer.update(self._agg('evaluation-'))
+            self._buffer.update(self._agg('evaluation/'))
+            self._flush_if_due()
 
             # try storing the eval info to file
             write_game_information_to_file(game_info=game_information, filename=os.path.join(self.get_eval_dir(), f"{env_id}-{game_information.game_idx}.csv"))
