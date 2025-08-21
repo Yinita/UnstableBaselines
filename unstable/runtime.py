@@ -65,7 +65,7 @@ def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_
     match algorithm:
         case "reinforce":   ray.get(learner.initialize_algorithm.remote(max_train_len=max_train_len, max_generation_len=max_generation_len))
         case "a2c":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len)) # TODO find better solution
-        case "ppo":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len, clip_ratio=0.2, ppo_epochs=4, entropy_coef=0.01, value_loss_coef=0.5, kl_target=0.01, kl_coef=0.2))
+        case "ppo":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, learning_rate=1e-6, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len, clip_ratio=0.2, ppo_epochs=4, entropy_coef=0.01, value_loss_coef=0.5, kl_target=0.01, kl_coef=0.2))
         case _:             ray.get(learner.initialize_algorithm.remote())
 
     return _UBRun(collector=collector, learner=learner)

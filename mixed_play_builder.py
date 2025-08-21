@@ -646,6 +646,7 @@ def build_mixed_play(*,
     elif algorithm == "ppo":
         ray.get(learner.initialize_algorithm.remote(
             infer_mini_batch_size=16,
+            learning_rate=1e-6,
             critic_learning_rate=5e-5,
             normalize_adv=True,
             max_train_len=max_train_len,

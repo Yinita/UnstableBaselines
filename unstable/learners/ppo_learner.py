@@ -31,10 +31,17 @@ class SharedBackbonePPOModel(nn.Module):
             nn.Linear(value_head_hidden_size, 1)
         ).to(device)
         
-        # 初始化价值头权重
+        # 初始化价值头权重 - 使用float32进行正交初始化以避免BFloat16兼容性问题
         for layer in self.value_head:
             if isinstance(layer, nn.Linear):
+                # 保存原始数据类型
+                orig_dtype = layer.weight.dtype
+                # 临时转换为float32进行正交初始化
+                layer.weight.data = layer.weight.data.to(torch.float32)
                 nn.init.orthogonal_(layer.weight, gain=1.0)
+                # 转换回原始数据类型
+                layer.weight.data = layer.weight.data.to(orig_dtype)
+                # 偏置初始化
                 nn.init.constant_(layer.bias, 0.0)
     
     def forward(self, input_ids, attention_mask=None, return_value_only=False, return_policy_only=False):
@@ -127,8 +134,7 @@ def compute_gae(rewards, values, gamma=0.99, gae_lambda=0.95, last_value=0.0, do
 
 @ray.remote
 class PPOLearner(BaseLearner):
-    def initialize_algorithm(self, infer_mini_batch_size: int, critic_learning_rate: float, 
-                           normalize_adv: bool=False, max_generation_len: Optional[int]=None, 
+    def initialize_algorithm(self, infer_mini_batch_size: int=32, learning_rate: float=1e-6, critic_learning_rate: float=1e-5, normalize_adv: bool=False, max_generation_len: Optional[int]=None, 
                            max_train_len: Optional[int]=None, initial_lora_path: Optional[str]=None,
                            clip_ratio: float=0.2, ppo_epochs: int=4, entropy_coef: float=0.01,
                            value_loss_coef: float=0.5, kl_target: float=0.01, kl_coef: float=0.2,
