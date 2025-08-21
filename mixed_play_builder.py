@@ -1,6 +1,6 @@
 import os, ray, time, logging, random, traceback, sys
 from typing import Dict, List, Optional, Sequence, Union
-
+import torch
 import unstable
 import unstable.reward_transformations as retra
 from unstable._types import TrainEnvSpec, EvalEnvSpec
@@ -525,7 +525,7 @@ def build_mixed_play(*,
         collector = unstable.Collector.options(
             name="Collector",
             num_cpus=10,
-            num_gpus=int(os.getenv("COLLECTOR_GPUS", 2)),
+            num_gpus=(torch.cuda.device_count() - 1 - int(os.getenv("COLLECTOR_GPUS", 2))),
             resources=custom_resources  # 只包含特殊的GPU类型资源
         ).remote(
             vllm_config=vllm_cfg,
