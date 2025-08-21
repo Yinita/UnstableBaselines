@@ -9,8 +9,8 @@ _DEFAULT_LORA_CFG = {"lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0, "ta
 _ENV_SAMPLERS = {"random": unstable.samplers.env_samplers.UniformRandomEnvSampler}
 _OPP_SAMPLERS = {"none": unstable.samplers.model_samplers.BaseModelSampler, "mirror": unstable.samplers.model_samplers.BaseModelSampler, "fixed": unstable.samplers.model_samplers.FixedOpponentModelSampler}
 _STEP_BUFFER_ALGOS = ["reinforce"]
-_EPISODE_BUFFER_ALGOS = ["a2c"]
-_ALGOS = {"reinforce": unstable.REINFORCELearner, "a2c": unstable.A2CLearner}
+_EPISODE_BUFFER_ALGOS = ["a2c", "ppo"]
+_ALGOS = {"reinforce": unstable.REINFORCELearner, "a2c": unstable.A2CLearner, "ppo": unstable.PPOLearner}
 def _default_vllm_cfg(model_name: str, lora_cfg: dict, max_generation_len: int) -> dict: return {"model_name": model_name, "temperature": 0.6, "max_tokens": max_generation_len, "max_parallel_seq": 128, "max_loras": 8, "lora_config": lora_cfg, "max_model_len": 8192, "gpu_memory_utilization": 0.8}
 
 class _UBRun:
@@ -61,6 +61,7 @@ def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_
     match algorithm:
         case "reinforce":   ray.get(learner.initialize_algorithm.remote(max_train_len=max_train_len, max_generation_len=max_generation_len))
         case "a2c":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len)) # TODO find better solution
+        case "ppo":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len, clip_ratio=0.2, ppo_epochs=4, entropy_coef=0.01, value_loss_coef=0.5, kl_target=0.01, kl_coef=0.2))
         case _:             ray.get(learner.initialize_algorithm.remote())
 
     return _UBRun(collector=collector, learner=learner)

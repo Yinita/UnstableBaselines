@@ -64,7 +64,7 @@ run = build_mixed_play(
     eval_envs=eval_envs,
     openai_config=openai_global_config,
     fixed_opponents=fixed_opponents,
-    algorithm="a2c",
+    algorithm="ppo",
     lora_config=lora_config,
     vllm_config={
         "model_name": model_name,

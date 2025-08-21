@@ -68,9 +68,8 @@ class Tracker(BaseTracker):
         try:
             reward = traj.final_reward; player_id = traj.pid
             self._put(f"collection-{env_id}/reward", reward)
-            self._put(f"collection-{env_id}/Win Rate", int(reward>0))
-            self._put(f"collection-{env_id}/Loss Rate", int(reward<0))
-            self._put(f"collection-{env_id}/Draw", int(reward==0))
+            self._put(f"collection-{env_id}/Win Rate (pid={traj.pid})", int(reward>0))
+            self._put(f"collection-{env_id}/Draw (pid={traj.pid})", int(reward==0))
             self._put(f"collection-{env_id}/Reward (pid={traj.pid})", reward)
             self._put(f"collection-{env_id}/Game Length", traj.num_turns)
             for idx in range(len(traj.obs)):
@@ -83,7 +82,6 @@ class Tracker(BaseTracker):
             # Global (cross-env) unified metrics under 'collection/' prefix
             self._put("collection/reward", reward)
             self._put("collection/Win Rate", int(reward>0))
-            self._put("collection/Loss Rate", int(reward<0))
             self._put("collection/Draw", int(reward==0))
             self._put(f"collection/Reward (pid={traj.pid})", reward)
             self._put("collection/Game Length", traj.num_turns)
@@ -105,20 +103,17 @@ class Tracker(BaseTracker):
         try:
             eval_reward = game_information.final_rewards.get(game_information.eval_model_pid, 0.0)
             _prefix = f"evaluation-{env_id}" if not game_information.eval_opponent_name else f"evaluation-{env_id} ({game_information.eval_opponent_name})"
-            self._put(f"{_prefix}/Reward", eval_reward)
+            # Only log metrics for the evaluated model pid
             self._put(f"{_prefix}/Reward (pid={game_information.eval_model_pid})", eval_reward)
-            self._put(f"{_prefix}/Win Rate",  int(eval_reward>0))
-            self._put(f"{_prefix}/Loss Rate", int(eval_reward<0))
-            self._put(f"{_prefix}/Draw Rate", int(eval_reward==0))
+            self._put(f"{_prefix}/Win Rate (pid={game_information.eval_model_pid})",  int(eval_reward>0))
+            self._put(f"{_prefix}/Draw Rate (pid={game_information.eval_model_pid})", int(eval_reward==0))
             self._n[_prefix] = self._n.get(_prefix, 0) + 1
             self._put(f"{_prefix}/step", self._n[_prefix])
-            
-            # Global (cross-env) unified evaluation metrics under 'evaluation/' prefix
-            self._put("evaluation/Reward", eval_reward)
+
+            # Optionally, keep global metrics only for the evaluated pid
             self._put(f"evaluation/Reward (pid={game_information.eval_model_pid})", eval_reward)
-            self._put("evaluation/Win Rate",  int(eval_reward>0))
-            self._put("evaluation/Loss Rate", int(eval_reward<0))
-            self._put("evaluation/Draw Rate", int(eval_reward==0))
+            self._put(f"evaluation/Win Rate (pid={game_information.eval_model_pid})",  int(eval_reward>0))
+            self._put(f"evaluation/Draw Rate (pid={game_information.eval_model_pid})", int(eval_reward==0))
             self._n["evaluation"] = self._n.get("evaluation", 0) + 1
             self._put("evaluation/step", self._n["evaluation"]) 
 

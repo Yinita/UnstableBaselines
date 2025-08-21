@@ -5,20 +5,40 @@ from unstable.learners.base import BaseLearner
 from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
 from unstable.reward_transformations.transformation_sampling import NormalizeRewardsByEnv
 
-def compute_gae(rewards, values, gamma=1.0, gae_lambda=1.0): # Compute gae (for policy learning) and return (for critic learning)
-    assert len(rewards) == len(values)
+def compute_gae(rewards, values, gamma=0.99, gae_lambda=0.95, last_value=0.0, done=True):
+    """
+    计算广义优势估计 (Generalized Advantage Estimation)
+    
+    参数:
+        rewards: 奖励序列 [T]
+        values: 值函数估计 [T]
+        gamma: 折扣因子
+        gae_lambda: GAE lambda参数
+        last_value: 序列结束后的估计值（用于bootstrap）
+        done: 是否为episode终止状态
+        
+    返回:
+        advantages: 优势函数估计 [T]
+        returns: 回报估计 [T]
+    """
+    T = len(rewards)
     advantages = torch.zeros_like(rewards)
+    returns = torch.zeros_like(rewards)
     lastgaelam = 0
-    for t in reversed(range(len(rewards))):
-        if t == len(rewards) - 1:
-            nextnonterminal = 0  # Assume a complete episode
-            nextvalues = 0  # Does not matter
+    
+    for t in reversed(range(T)):
+        if t == T - 1:
+            nextnonterminal = 0.0 if done else 1.0
+            nextvalues = last_value
         else:
             nextnonterminal = 1.0
             nextvalues = values[t + 1]
+            
         delta = rewards[t] + gamma * nextvalues * nextnonterminal - values[t]
         advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
-    return advantages
+        
+    returns = advantages + values
+    return advantages, returns
 
 @ray.remote
 class A2CLearner(BaseLearner):
@@ -47,30 +67,92 @@ class A2CLearner(BaseLearner):
         state_enc = self.tokenizer(obs, return_tensors="pt", padding=True, truncation=True, max_length=self.max_train_len).to(self.device)  # Tokenize with truncation
         return enc, state_enc, advs, rets, obs, avg_len, pct_truncated
 
+    # def _mini_batch_update_step(self, steps, scaling: float = 1.0):
+    #     enc, state_enc, advs, rets, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
+    #     # Learn policy
+    #     out = self.policy_model(**enc)
+    #     logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
+    #     tgt_ids = enc.input_ids[:, 1:]
+    #     tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
+    #     mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)  # build prompt mask
+    #     for i, o in enumerate(obs): mask[i, : len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
+    #     mask = mask[:, 1:]
+    #     seq_logp = (tok_logp * mask).sum(1) / self.max_generation_len
+    #     loss = -(advs * seq_logp).mean() / scaling
+    #     loss.backward()
+    #     torch.cuda.empty_cache()
+
+    #     # Learn value
+    #     value_pred = self.critic(**state_enc)[:, 0]
+    #     value_loss = 0.5 * ((value_pred - rets) ** 2).mean()
+    #     value_loss.backward()
+    #     torch.cuda.empty_cache()
+
+    #     return {
+    #         "policy_loss": loss.item(), "value_loss": value_loss.item(), "logp_mean": seq_logp.mean().item(), "value_mae": (value_pred-rets).abs().mean().item(), "value_dir_acc": ((value_pred > 0) == (rets > 0)).float().mean().item(),
+    #         "logp_std": seq_logp.std().item(), "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
+    #     }
     def _mini_batch_update_step(self, steps, scaling: float = 1.0):
         enc, state_enc, advs, rets, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
-        # Learn policy
+        device = enc.input_ids.device
+
+        # 1) 前向 + log_softmax
         out = self.policy_model(**enc)
-        logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
-        tgt_ids = enc.input_ids[:, 1:]
-        tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
-        mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)  # build prompt mask
-        for i, o in enumerate(obs): mask[i, : len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
-        mask = mask[:, 1:]
-        seq_logp = (tok_logp * mask).sum(1) / self.max_generation_len
+        logp = torch.nn.functional.log_softmax(out.logits, dim=-1)          # [B, T, V]
+        tgt_ids = enc.input_ids[:, 1:]                                      # [B, T-1]
+        tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)  # [B, T-1]
+
+        # 2) 精确构造 label_mask：非pad 且 非prompt 部分
+        attn = enc.attention_mask.bool()                                     # [B, T]
+        # prompt 长度：用 tokenizer 逐条算
+        prompt_lens = torch.tensor(
+            [len(self.tokenizer(o, add_special_tokens=False)["input_ids"]) for o in obs],
+            device=device
+        )
+        token_idx = torch.arange(attn.size(1), device=device).unsqueeze(0)   # [1, T]
+        prompt_mask = token_idx < prompt_lens.unsqueeze(1)                   # True=prompt 区
+        label_mask = (attn & (~prompt_mask))[:, 1:]                          # 目标对齐到 tgt_ids / tok_logp
+
+        # 3) 避免 0 * (-inf) → 先把无效位替换为 0，再求和
+        tok_logp = tok_logp.masked_fill(~label_mask, 0.0)                    # 替换而非乘法
+        valid_tokens = label_mask.sum(dim=1).clamp_min(1)                    # 每条样本有效 token 数
+        seq_logp = tok_logp.sum(dim=1) / valid_tokens                        # per-sample 平均 logp
+
+        # 4) 数值稳健：把 NaN/Inf 清理掉（若仍出现）
+        seq_logp = torch.nan_to_num(seq_logp, nan=0.0, posinf=30.0, neginf=-30.0)
+        advs = torch.nan_to_num(advs, nan=0.0, posinf=1e4, neginf=-1e4)
+
+        # （可选）优势标准化，进一步稳住策略损失
+        if getattr(self, "normalize_adv", False):
+            advs = (advs - advs.mean()) / (advs.std(unbiased=False) + 1e-8)
+
+        # 5) 策略 loss
         loss = -(advs * seq_logp).mean() / scaling
         loss.backward()
         torch.cuda.empty_cache()
 
-        # Learn value
+        # 6) 值函数
         value_pred = self.critic(**state_enc)[:, 0]
         value_loss = 0.5 * ((value_pred - rets) ** 2).mean()
         value_loss.backward()
         torch.cuda.empty_cache()
 
+        # 7) 记录指标（注意 std 用 unbiased=False 避免 batch=1 时 NaN）
+        logp_mean = seq_logp.mean().item()
+        logp_std = seq_logp.std(unbiased=False).item()
+        value_mae = (value_pred - rets).abs().mean().item()
+        value_dir_acc = ((value_pred > 0) == (rets > 0)).float().mean().item()
+
         return {
-            "policy_loss": loss.item(), "value_loss": value_loss.item(), "logp_mean": seq_logp.mean().item(), "value_mae": (value_pred-rets).abs().mean().item(), "value_dir_acc": ((value_pred > 0) == (rets > 0)).float().mean().item(),
-            "logp_std": seq_logp.std().item(), "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
+            "policy_loss": loss.item(),
+            "value_loss": value_loss.item(),
+            "logp_mean": logp_mean,
+            "value_mae": value_mae,
+            "value_dir_acc": value_dir_acc,
+            "logp_std": logp_std,
+            "num_steps": len(steps),
+            "avg_train_len": avg_len,
+            "pct_truncated": pct_truncated,
         }
 
 
@@ -94,9 +176,10 @@ class A2CLearner(BaseLearner):
         ep_advantages = []
         ep_returns = []
         for rewards, values in zip(ep_rewards, ep_values):
-            adv = compute_gae(rewards, values)
+            # 假设每个episode都是完整的，如果有截断episode需要传入done=False
+            adv, ret = compute_gae(rewards, values, last_value=0.0, done=True)
             ep_advantages.append(adv)
-            ep_returns.append(adv + values)
+            ep_returns.append(ret)
 
         train_batch = []
         for i, ep in enumerate(batch):

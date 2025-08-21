@@ -478,7 +478,7 @@ def build_mixed_play(*,
             step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
             sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)])
         )
-    elif algorithm == "a2c":
+    elif algorithm in ["a2c", "ppo"]:
         buffer = unstable.EpisodeBuffer.options(name="Buffer").remote(
             max_buffer_size=buffer_size,
             tracker=tracker,
@@ -555,15 +555,15 @@ def build_mixed_play(*,
         has_gpu = 'GPU' in resources and resources['GPU'] > 0
         debug_log(f"学习器初始化时系统中有可用的GPU: {has_gpu}")
         
-        # 准备额外的资源请求
-        custom_resources = {}
-        # 如果有特殊的GPU类型，添加到自定义资源
-        for key in resources:
-            if key != 'GPU' and key != 'CPU' and 'GPU' in key:
-                custom_resources[key] = 1
-                debug_log(f"添加学习器特殊的GPU资源请求: {key}")
+        # # 准备额外的资源请求
+        # custom_resources = {}
+        # # 如果有特殊的GPU类型，添加到自定义资源
+        # for key in resources:
+        #     if key != 'GPU' and key != 'CPU' and 'GPU' in key:
+        #         custom_resources[key] = 1
+        #         debug_log(f"添加学习器特殊的GPU资源请求: {key}")
         
-        debug_log(f"学习器使用num_gpus=1和额外资源: {custom_resources}")
+        # debug_log(f"学习器使用num_gpus=1和额外资源: {custom_resources}")
         
         # 让 Ray 自动为 Actor 分配并设置 CUDA_VISIBLE_DEVICES，不要手动覆盖，以避免 invalid device ordinal
         
@@ -572,7 +572,7 @@ def build_mixed_play(*,
                 name="Learner",
                 num_cpus=10,
                 num_gpus=1,
-                resources=custom_resources
+                # resources=custom_resources
             ).remote(
                 model_name=model_name,
                 lora_cfg=_lora_cfg,
@@ -588,8 +588,23 @@ def build_mixed_play(*,
             learner = unstable.A2CLearner.options(
                 name="Learner",
                 num_cpus=10,
-                num_gpus=1,
-                resources=custom_resources
+                num_gpus=1
+            ).remote(
+                model_name=model_name,
+                lora_cfg=_lora_cfg,
+                batch_size=batch_size,
+                mini_batch_size=mini_batch_size,
+                learning_rate=learning_rate,
+                grad_clip=gradient_clipping,
+                buffer=buffer,
+                tracker=tracker,
+                model_registry=model_registry
+            )
+        elif algorithm == "ppo":
+            learner = unstable.PPOLearner.options(
+                name="Learner",
+                num_cpus=10,
+                num_gpus=1
             ).remote(
                 model_name=model_name,
                 lora_cfg=_lora_cfg,
@@ -627,6 +642,20 @@ def build_mixed_play(*,
             normalize_adv=True,
             max_train_len=max_train_len,
             max_generation_len=max_generation_len
+        ))
+    elif algorithm == "ppo":
+        ray.get(learner.initialize_algorithm.remote(
+            infer_mini_batch_size=16,
+            critic_learning_rate=5e-5,
+            normalize_adv=True,
+            max_train_len=max_train_len,
+            max_generation_len=max_generation_len,
+            clip_ratio=0.2,
+            ppo_epochs=4,
+            entropy_coef=0.01,
+            value_loss_coef=0.5,
+            kl_target=0.01,
+            kl_coef=0.2
         ))
     logger.info("算法初始化成功!")
     
