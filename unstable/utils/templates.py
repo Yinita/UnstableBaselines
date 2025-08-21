@@ -31,7 +31,7 @@ TEMPLATE_PARTS = {
 
     "qwen3-no-reasoning": {
         "user": lambda obs: f"<|im_start|>user\nYou are a competitive game player. Make sure you read the game instructions carefully, and always follow the required format.\n\n{obs}<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n<think>\n</think>"
+        "assistant": "<|im_start|>assistant\n<think>\n</think>\n\n"
     },
 
     
