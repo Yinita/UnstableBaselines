@@ -42,7 +42,21 @@ class Tracker(BaseTracker):
         self._interface_stats = {"gpu_tok_s": {}, "TS": {}, "exploration": {}, "match_counts": {}, "format_success": None, "inv_move_rate": None, "game_len": None}
 
     def _put(self, k: str, v: Scalar): self._m[k].append(v)
-    def _agg(self, p: str) -> dict[str, Scalar]: return {k: float(np.mean(dq)) for k, dq in self._m.items() if k.startswith(p)}
+    def _is_scalar(self, x) -> bool:
+        return isinstance(x, (int, float, bool, np.number))
+
+    def _mean_of_deque(self, dq: collections.deque) -> Optional[float]:
+        vals = [float(v) for v in dq if self._is_scalar(v)]
+        return float(np.mean(vals)) if vals else None
+
+    def _agg(self, p: str) -> dict[str, Scalar]:
+        out: Dict[str, Scalar] = {}
+        for k, dq in self._m.items():
+            if k.startswith(p):
+                m = self._mean_of_deque(dq)
+                if m is not None:
+                    out[k] = m
+        return out
     def _flush_if_due(self):
         if time.monotonic()-self._last_flush >= self.FLUSH_EVERY:
             if self._buffer and self.use_wandb:
@@ -98,12 +112,26 @@ class Tracker(BaseTracker):
     
     def log_learner(self, info: dict):
         try:
-            self._m.update({f"learner/{k}": v for k, v in info.items()})
+            for k, v in info.items():
+                base_key = f"learner/{k}"
+                if self._is_scalar(v):
+                    self._put(base_key, v)
+                elif isinstance(v, dict):
+                    for kk, vv in v.items():
+                        if self._is_scalar(vv):
+                            self._put(f"{base_key}/{kk}", vv)
+                # Non-scalar and non-dict values are ignored
             self._buffer.update(self._agg("learner")); self._flush_if_due()
         except Exception as exc:
             self.logger.info(f"Exception in log_learner: {exc}")
 
     def get_interface_info(self): 
         for inf_key in ["Game Length", "Format Success Rate - correct_answer_format", "Format Success Rate - invalid_move"]: 
-            self._interface_stats[inf_key] = np.mean([float(np.mean(dq)) for k,dq in self._m.items() if inf_key in k])
+            vals = []
+            for k, dq in self._m.items():
+                if inf_key in k:
+                    m = self._mean_of_deque(dq)
+                    if m is not None:
+                        vals.append(m)
+            self._interface_stats[inf_key] = float(np.mean(vals)) if vals else None
         return self._interface_stats
