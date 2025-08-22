@@ -64,6 +64,9 @@ class SharedBackbonePPOModel(nn.Module):
         if return_value_only:
             # 只计算价值，使用第一个token的表示
             first_token_hidden = last_hidden_states[:, 0, :]  # [batch_size, hidden_size]
+            # 确保与价值头在同一设备
+            value_head_device = next(self.value_head.parameters()).device
+            first_token_hidden = first_token_hidden.to(value_head_device)
             values = self.value_head(first_token_hidden).squeeze(-1)  # [batch_size]
             return values
         
@@ -418,12 +421,12 @@ class PPOLearner(BaseLearner):
             enc = self.tokenizer(
                 combined_texts, return_tensors="pt",
                 padding="max_length", truncation=True, max_length=self._snapshot_pad_len
-            ).to(self.device)
+            )   # 保持CPU
 
             state_enc = self.tokenizer(
                 obs_texts, return_tensors="pt",
                 padding="max_length", truncation=True, max_length=self._snapshot_pad_len
-            ).to(self.device)
+            )   # 保持CPU
 
             with torch.no_grad():
                 # 值函数
@@ -437,13 +440,14 @@ class PPOLearner(BaseLearner):
                 tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)# [B, T-1]
 
                 # 生成与 snapshot 一致口径的 label_mask（非 pad 且 非 prompt）
-                attn = enc.attention_mask.bool()                                        # [B, T]
+                attn = enc.attention_mask.bool().cpu()     # [B, T] 强制在CPU
                 prompt_lens = torch.tensor(
-                    [len(self.tokenizer(o, add_special_tokens=False)["input_ids"]) for o in obs_texts]
+                    [len(self.tokenizer(o, add_special_tokens=False)["input_ids"]) for o in obs_texts],
+                    device="cpu"                           # 强制CPU
                 )
-                token_idx   = torch.arange(attn.size(1)).unsqueeze(0)  # [1, T]
-                prompt_mask = token_idx < prompt_lens.unsqueeze(1)                          # True=prompt
-                label_mask_tokens = (attn & (~prompt_mask))[:, 1:]                          # [B, T-1]
+                token_idx = torch.arange(attn.size(1), device="cpu").unsqueeze(0)  # 强制CPU
+                prompt_mask = token_idx < prompt_lens.unsqueeze(1)
+                label_mask_tokens = (attn & (~prompt_mask))[:, 1:]
 
                 all_old_logps.append(tok_logp.detach().cpu())          # 形状固定为 [B, L]，L = pad_len-1
                 all_label_masks.append(label_mask_tokens.detach().cpu())  # 同上
@@ -590,11 +594,25 @@ class PPOLearner(BaseLearner):
         total_updates = max(1, (epoch + 1) * num_steps)
         log = {f"{k}": v / total_updates for k, v in metrics_acc.items()}
 
-        # 计算梯度范数
+        # 计算梯度范数（跨设备安全）：在Python端聚合平方和，避免跨GPU stack
         policy_grads = [p.grad for p in self.shared_model.base_model.parameters() if p.grad is not None]
         critic_grads = [p.grad for p in self.shared_model.value_head.parameters() if p.grad is not None]
-        grad_norm = torch.norm(torch.stack([torch.norm(g, 2) for g in policy_grads])).item() if policy_grads else 0.0
-        critic_grad_norm = torch.norm(torch.stack([torch.norm(g, 2) for g in critic_grads])).item() if critic_grads else 0.0
+        if policy_grads:
+            policy_sq_sum = 0.0
+            for g in policy_grads:
+                # 使用float32做平方和，取item避免设备冲突
+                policy_sq_sum += g.detach().float().pow(2).sum().item()
+            grad_norm = policy_sq_sum ** 0.5
+        else:
+            grad_norm = 0.0
+
+        if critic_grads:
+            critic_sq_sum = 0.0
+            for g in critic_grads:
+                critic_sq_sum += g.detach().float().pow(2).sum().item()
+            critic_grad_norm = critic_sq_sum ** 0.5
+        else:
+            critic_grad_norm = 0.0
 
         log.update({
             "step": self._step,
