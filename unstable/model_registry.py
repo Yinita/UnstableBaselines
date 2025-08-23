@@ -50,24 +50,58 @@ class ModelRegistry:
         if f"fixed-{name}" not in self._db: self._db[f"fixed-{name}"] = ModelMeta(f"fixed-{name}", "fixed", name, self.TS.create_rating(mu=prior_mu))
 
     def update_ratings(self, uids: List[str], scores: List[float], env_id: str, dummy_uid: str="fixed-env") -> None:
-        if len(uids) == 1:
-            if dummy_uid not in self._db: self.add_fixed(name=dummy_uid.replace("fixed-", ""), prior_mu=25.0)
-            uids = [uids[0], dummy_uid]
-            scores = [scores[0], 0.0] # any baseline score works
-        rating_groups = [[self._db[uid].rating] for uid in uids]
-        ranks = self._scores_to_ranks(scores)
-        new_groups = self.TS.rate(rating_groups, ranks=ranks)
+        # 1) 基本校验：长度一致
+        if not uids or not scores or len(uids) != len(scores):
+            self.logger.warning(f"[TS] Invalid inputs: uids={uids}, scores={scores}")
+            return
+
+        # 2) 过滤 NaN/Inf 分数
+        clean_pairs = [(u, s) for u, s in zip(uids, scores) if isinstance(s, (int, float)) and (s == s) and (abs(s) != float('inf'))]
+        if not clean_pairs:
+            self.logger.warning(f"[TS] All scores invalid. Skip. env={env_id}")
+            return
+
+        # 3) 合并重复 UID（同一 UID 在一局中出现多次会导致 TrueSkill 异常）。取平均分聚合。
+        agg_scores = defaultdict(list)
+        for u, s in clean_pairs:
+            agg_scores[u].append(float(s))
+        unique_uids = list(agg_scores.keys())
+        unique_scores = [sum(agg_scores[u])/len(agg_scores[u]) for u in unique_uids]
+
+        # 4) 至少需要两名唯一选手，否则补一个 dummy 对手
+        if len(unique_uids) == 1:
+            if dummy_uid not in self._db:
+                self.add_fixed(name=dummy_uid.replace("fixed-", ""), prior_mu=25.0)
+            unique_uids = [unique_uids[0], dummy_uid]
+            unique_scores = [unique_scores[0], 0.0]
+
+        # 5) 确保所有选手存在于数据库
+        missing = [u for u in unique_uids if u not in self._db]
+        if missing:
+            self.logger.warning(f"[TS] Missing uids in registry: {missing}. Skip this update. env={env_id}")
+            return
+
+        rating_groups = [[self._db[uid].rating] for uid in unique_uids]
+        ranks = self._scores_to_ranks(unique_scores)
+        try:
+            new_groups = self.TS.rate(rating_groups, ranks=ranks)
+        except Exception as e:
+            # 安全回退：记录上下文并跳过该次更新，避免中断调度
+            self.logger.error(f"[TS] rate() failed: {e}. env={env_id}, uids={unique_uids}, scores={unique_scores}, ranks={ranks}")
+            return
 
         # flatten, then write back
-        for uid, (new_rating,) in zip(uids, new_groups):
+        for uid, (new_rating,) in zip(unique_uids, new_groups):
             self._db[uid].rating = new_rating
             self._db[uid].games += 1
-            if ranks[uids.index(uid)] == 0:               self._db[uid].wins  += 1
-            elif ranks.count(ranks[uids.index(uid)]) > 1: self._db[uid].draws += 1
+            if ranks[unique_uids.index(uid)] == 0:
+                self._db[uid].wins  += 1
+            elif ranks.count(ranks[unique_uids.index(uid)]) > 1:
+                self._db[uid].draws += 1
 
         # update pair-wise match matrix for analysis/debugging
-        for i, uid_i in enumerate(uids):
-            for uid_j in uids[i+1:]:
+        for i, uid_i in enumerate(unique_uids):
+            for uid_j in unique_uids[i+1:]:
                 self._match_counts[tuple(sorted((uid_i, uid_j)))] += 1
         self._update_step += 1
 

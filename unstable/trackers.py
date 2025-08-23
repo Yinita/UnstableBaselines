@@ -172,6 +172,10 @@ class Tracker(BaseTracker):
             # 更新统计计数
             self._n[f"core/{phase}"] = self._n.get(f"core/{phase}", 0) + 1
             self._put(f"core/{phase}/step", self._n[f"core/{phase}"])
+
+            # 将 core/{phase} 前缀的聚合结果写入缓冲，确保推送到 WandB
+            self._buffer.update(self._agg(f"core/{phase}"))
+            self._flush_if_due()
             
         except Exception as exc:
             self.logger.warning(f"Exception in win rate tracking: {exc}")
