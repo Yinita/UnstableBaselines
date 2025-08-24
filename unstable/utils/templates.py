@@ -34,6 +34,11 @@ TEMPLATE_PARTS = {
         "assistant": "<|im_start|>assistant\n<think>\n</think>\n\n"
     },
 
+    "qwen3-no-reasoning-2": {
+        "user": lambda obs: f"<|im_start|>user\nYou are a competitive game player. Make sure you read the game instructions carefully, and always follow the required format.\n\n{obs}<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n<think>\n</think>\n\n"
+    },
+
     
 }
 def apply_template(template_name: str, observation: str) -> str:
@@ -58,6 +63,10 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     format_feedback = {"correct_answer_format": bool(within_boxed)}
     return action, format_feedback
 
+def extract_action_and_format_feedback_2(raw_action: str) -> Tuple[str, Dict[str, bool]]:
+    return raw_action, {"correct_answer_format": True}
+
 
 OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda observation: apply_template(key, observation))() for key in TEMPLATE_PARTS}
-ACTION_EXTRACTION = {"default": extract_action_and_format_feedback}
+# ACTION_EXTRACTION = {"default": extract_action_and_format_feedback}
+ACTION_EXTRACTION = {"default": extract_action_and_format_feedback_2}

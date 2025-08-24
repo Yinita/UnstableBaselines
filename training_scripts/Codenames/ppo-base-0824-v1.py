@@ -32,31 +32,31 @@ eval_envs = [
     MixedPlayEvalEnvSpec(
         env_id="Codenames-v0",
         num_players=4,
-        prompt_template="qwen3-no-reasoning",
+        prompt_template="qwen3-no-reasoning-2",
         opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-5-chat", 3: "openai-gpt-5"},
     ),
     # MixedPlayEvalEnvSpec(
     #     env_id="SecretMafia-v0",
     #     num_players=6,
-    #     prompt_template="qwen3-no-reasoning",
+    #     prompt_template="qwen3-no-reasoning-2",
     #     opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-4o-mini", 3: "openai-gpt-5", 4: "openai-gpt-5-chat", 5: "openai-gpt-4o"},
     # ),
     # MixedPlayEvalEnvSpec(
     #     env_id="ThreePlayerIPD-v0",
     #     num_players=3,
-    #     prompt_template="qwen3-no-reasoning",
+    #     prompt_template="qwen3-no-reasoning-2",
     #     opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-5"},
     # ),
     # MixedPlayEvalEnvSpec(
     #     env_id="ColonelBlotto-v0",
     #     num_players=2,
-    #     prompt_template="qwen3-no-reasoning",
+    #     prompt_template="qwen3-no-reasoning-2",
     #     opponent_mapping={1: "openai-gpt-5"},
     # ),
     # MixedPlayEvalEnvSpec(
     #     env_id="TwentyQuestions-v0",
     #     num_players=1,
-    #     prompt_template="qwen3-no-reasoning",
+    #     prompt_template="qwen3-no-reasoning-2",
     #     opponent_mapping={},
     # ),
 ]
@@ -66,11 +66,11 @@ if __name__ == "__main__":
     run = build_mixed_play(
         model_name=model_name,
         train_envs=[
-            unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=4, prompt_template="qwen3-no-reasoning"),
-            # unstable.TrainEnvSpec(env_id="SecretMafia-v0-train", num_players=6, num_actors=6, prompt_template="qwen3-no-reasoning"),
-            # unstable.TrainEnvSpec(env_id="ThreePlayerIPD-v0-train", num_players=3, num_actors=3, prompt_template="qwen3-no-reasoning"),
-            # unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning"),
-            # unstable.TrainEnvSpec(env_id="TwentyQuestions-v0-train", num_players=1, num_actors=1, prompt_template="qwen3-no-reasoning"),
+            unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=4, prompt_template="qwen3-no-reasoning-2"),
+            # unstable.TrainEnvSpec(env_id="SecretMafia-v0-train", num_players=6, num_actors=6, prompt_template="qwen3-no-reasoning-2"),
+            # unstable.TrainEnvSpec(env_id="ThreePlayerIPD-v0-train", num_players=3, num_actors=3, prompt_template="qwen3-no-reasoning-2"),
+            # unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning-2"),
+            # unstable.TrainEnvSpec(env_id="TwentyQuestions-v0-train", num_players=1, num_actors=1, prompt_template="qwen3-no-reasoning-2"),
         ],
         eval_envs=eval_envs,
         openai_config=openai_global_config,
