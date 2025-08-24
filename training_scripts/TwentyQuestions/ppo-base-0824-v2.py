@@ -23,8 +23,8 @@ model_name = "Qwen/Qwen3-8B"
 fixed_opponents = ["openai-gpt-4o", "openai-gpt-5-chat", "openai-gpt-5"]
 
 lora_config = {
-    "lora_rank": 32,
-    "lora_alpha": 32,
+    "lora_rank": 16,
+    "lora_alpha": 16,
     "lora_dropout": 0.0,
     "target_modules": ["q_proj", "k_proj", "v_proj"],  # , "o_proj","gate_proj", "up_proj","down_proj"
 }
@@ -82,12 +82,12 @@ if __name__ == "__main__":
         # ==== Tuning knobs ====
         learning_rate=3e-5,
         critic_learning_rate=1e-4,
-        batch_size=32,
+        batch_size=16,
         mini_batch_size=4,
         gradient_clipping=0.5,
         max_train_len=4096,
         max_generation_len=4096,
-        ppo_infer_mini_batch_size=16,
+        ppo_infer_mini_batch_size=2,
         ppo_epochs=4,
         clip_ratio=0.2,
         entropy_coef=0.002,

@@ -39,6 +39,11 @@ class VLLMActor:
         
         # 使用高层 LLM 接口，便于一次性批量 generate
         try:
+            # Be resilient to slow HF responses: extend read timeout and enable hf_transfer acceleration by default
+            os.environ.setdefault("HF_HUB_READ_TIMEOUT", "120")
+            os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+            # Optional mirror support if user sets HF_ENDPOINT externally
+
             tp = max(1, len(self.gpu_ids) if isinstance(self.gpu_ids, (list, tuple)) else 1)
             self.inference_engine = LLM(
                 model=cfg["model_name"],
@@ -50,6 +55,7 @@ class VLLMActor:
                 gpu_memory_utilization=cfg["gpu_memory_utilization"],
                 tensor_parallel_size=tp,
                 trust_remote_code=True,
+                download_dir=cfg.get("download_dir", None),
             )
             self.logger.info("vLLM LLM initialized successfully")
         except Exception as e:
