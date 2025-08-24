@@ -4,7 +4,7 @@ import torch
 import unstable
 import unstable.reward_transformations as retra
 from unstable._types import TrainEnvSpec, EvalEnvSpec
-from patch_collector_for_openai import patch_collector_for_openai
+from unstable.patch_collector_for_openai import patch_collector_for_openai
 
 # 设置日志
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
