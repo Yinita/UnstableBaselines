@@ -341,7 +341,8 @@ def build_mixed_play(*,
                     vllm_config: Optional[dict] = None,
                     history_window_size: int = 5,
                     fixed_opponent_weight: float = 0.3,
-                    wandb_project: str = "UnstableBaselines"):
+                    wandb_project: str = "UnstableBaselines",
+                    wandb_run_name: Optional[str] = None):
     """
     构建混合对弈训练系统
     
@@ -364,6 +365,7 @@ def build_mixed_play(*,
         history_window_size: 历史窗口大小
         fixed_opponent_weight: 固定对手权重
         wandb_project: Wandb项目名称
+        wandb_run_name: 自定义WandB运行名（可选）；未提供时自动生成
     
     Returns:
         _MixedPlayRun: 混合对弈运行实例
@@ -417,8 +419,10 @@ def build_mixed_play(*,
     
     # 跟踪器
     logger.info("初始化跟踪器...")
+    _auto_run_name = f"MixedPlay-{model_name.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}"
+    _run_name = wandb_run_name or _auto_run_name
     tracker = unstable.Tracker.options(name="Tracker").remote(
-        run_name=f"MixedPlay-{model_name.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}",
+        run_name=_run_name,
         wandb_project=wandb_project
     )
     logger.info("跟踪器初始化成功!")
