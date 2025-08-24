@@ -20,9 +20,9 @@ class _UBRun:
             self.collector.collect.remote(num_train_workers=num_collection_workers, num_eval_workers=num_eval_workers)
             ray.get(self.learner.train.remote(learning_steps))
         finally:
-            ray.kill(collector, no_restart=True); ray.shutdown()
+            ray.kill(self.collector, no_restart=True); ray.shutdown()
 
-def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_envs: Optional[Sequence[unstable.EvalEnvSpec]]=None, env_sampling_strategy: str = "random", opponent_sampling_strategy: str = "none", fixed_opponents: Sequence[str] = [], algorithm: str = "reinforce", max_train_len: Optional[int]=None, max_generation_len: int=4096, batch_size: int=384, mini_batch_size: int=1, learning_rate: float=1e-5, gradient_clipping: float=0.2, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool = False, buffer_size: Optional[int]=None, lora_config: Optional[dict]=None, vllm_config: Optional[dict]=None, wandb_project: str="UnstableBaselines"):
+def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_envs: Optional[Sequence[unstable.EvalEnvSpec]]=None, env_sampling_strategy: str = "random", opponent_sampling_strategy: str = "none", fixed_opponents: Sequence[str] = [], algorithm: str = "reinforce", max_train_len: Optional[int]=None, max_generation_len: int=4096, batch_size: int=384, mini_batch_size: int=1, learning_rate: float=5e-5, gradient_clipping: float=0.2, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool = False, buffer_size: Optional[int]=None, lora_config: Optional[dict]=None, vllm_config: Optional[dict]=None, wandb_project: Optional[str]=None, wandb_run_name: Optional[str]=None):
     # Ray init
     ray.init(namespace="unstable")  
     
@@ -31,7 +31,9 @@ def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_
     env_sampler = _ENV_SAMPLERS[env_sampling_strategy](train_env_specs=train_envs, eval_env_specs=eval_envs)
 
     # tracker
-    tracker = unstable.Tracker.options(name="Tracker").remote(run_name=f"UnstableBaselines-{model_name.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", wandb_project="UnstableBaselines") 
+    _default_run = f"UnstableBaselines-{model_name.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}"
+    run_name = wandb_run_name or _default_run
+    tracker = unstable.Tracker.options(name="Tracker").remote(run_name=run_name, wandb_project=wandb_project) 
 
     # initialize model registry
     model_registry = unstable.ModelRegistry.options(name="ModelRegistry").remote(tracker=tracker)
@@ -65,7 +67,7 @@ def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_
     match algorithm:
         case "reinforce":   ray.get(learner.initialize_algorithm.remote(max_train_len=max_train_len, max_generation_len=max_generation_len))
         case "a2c":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len)) # TODO find better solution
-        case "ppo":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, learning_rate=1e-6, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len, clip_ratio=0.2, ppo_epochs=4, entropy_coef=0.01, value_loss_coef=0.5, kl_target=0.01, kl_coef=0.2))
+        case "ppo":         ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=16, learning_rate=5e-5, critic_learning_rate=1e-4, normalize_adv=True, max_train_len=max_train_len, max_generation_len=max_generation_len, clip_ratio=0.2, ppo_epochs=4, entropy_coef=0.002, value_loss_coef=0.5, kl_target=0.05, kl_coef=0.1))
         case _:             ray.get(learner.initialize_algorithm.remote())
 
     return _UBRun(collector=collector, learner=learner)

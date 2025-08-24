@@ -646,17 +646,12 @@ def build_mixed_play(*,
     elif algorithm == "ppo":
         ray.get(learner.initialize_algorithm.remote(
             infer_mini_batch_size=16,
-            learning_rate=1e-6,
-            critic_learning_rate=5e-5,
+            learning_rate=5e-5,
+            critic_learning_rate=1e-4,
             normalize_adv=True,
             max_train_len=max_train_len,
             max_generation_len=max_generation_len,
-            clip_ratio=0.2,
             ppo_epochs=4,
-            entropy_coef=0.01,
-            value_loss_coef=0.5,
-            kl_target=0.05,
-            kl_coef=0.1
         ))
     logger.info("算法初始化成功!")
     

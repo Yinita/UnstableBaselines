@@ -10,10 +10,11 @@ openai_global_config = {
     "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     "quiet_console": True     # 开启静默模式
 }
-# model_name = "Qwen/Qwen3-8B"
-model_name = "yinita/qwen3-8b-v1-lora-0812-3epochs"
+model_name = "Qwen/Qwen3-8B"
+# model_name = "yinita/qwen3-8b-v1-lora-0812-3epochs"
 # 定义固定对手
-fixed_opponents = ["openai-gpt-4o", "openai-gpt-4o-mini", "openai-gpt-5", "openai-gpt-5-chat"]
+# fixed_opponents = ["openai-gpt-4o", "openai-gpt-4o-mini", "openai-gpt-5", "openai-gpt-5-chat"]
+fixed_opponents = []
 lora_config={
         "lora_rank": 16,
         "lora_alpha": 16,
@@ -44,11 +45,17 @@ eval_envs = [
     #     opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-5"}
     # ),
     # # ColonelBlotto（2人局）：1个固定对手
+    # MixedPlayEvalEnvSpec(
+    #     env_id="ColonelBlotto-v0",
+    #     num_players=2,
+    #     prompt_template="qwen3-no-reasoning",
+    #     opponent_mapping={1: "openai-gpt-5"}
+    # ),
     MixedPlayEvalEnvSpec(
-        env_id="ColonelBlotto-v0",
-        num_players=2,
+        env_id="TwentyQuestions-v0",
+        num_players=1,
         prompt_template="qwen3-no-reasoning",
-        opponent_mapping={1: "openai-gpt-5"}
+        opponent_mapping={}
     ),
 ]
 
@@ -60,7 +67,8 @@ run = build_mixed_play(
         # unstable.TrainEnvSpec(env_id="Codenames-v0-train",    num_players=4, num_actors=4, prompt_template="qwen3-no-reasoning"),
         # unstable.TrainEnvSpec(env_id="SecretMafia-v0-train",  num_players=6, num_actors=6, prompt_template="qwen3-no-reasoning"),
         # unstable.TrainEnvSpec(env_id="ThreePlayerIPD-v0-train", num_players=3, num_actors=3, prompt_template="qwen3-no-reasoning"),
-        unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning"),
+        # unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning"),
+        unstable.TrainEnvSpec(env_id="TwentyQuestions-v0-train", num_players=1, num_actors=1, prompt_template="qwen3-no-reasoning"),
     ],
     eval_envs=eval_envs,
     openai_config=openai_global_config,

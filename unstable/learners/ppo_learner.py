@@ -62,19 +62,33 @@ class SharedBackbonePPOModel(nn.Module):
         last_hidden_states = outputs.hidden_states[-1]  # [batch_size, seq_len, hidden_size]
         
         if return_value_only:
-            # 只计算价值，使用第一个token的表示
-            first_token_hidden = last_hidden_states[:, 0, :]  # [batch_size, hidden_size]
+            # 只计算价值，使用masked-mean pooling 而非首token
+            if attention_mask is None:
+                # 若无mask，等权平均
+                mask = torch.ones(last_hidden_states.size()[:2], device=last_hidden_states.device, dtype=last_hidden_states.dtype)
+            else:
+                mask = attention_mask.to(last_hidden_states.device).to(last_hidden_states.dtype)
+            masked_sum = (last_hidden_states * mask.unsqueeze(-1)).sum(dim=1)
+            denom = mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+            pooled_hidden = masked_sum / denom  # [batch_size, hidden_size]
             # 确保与价值头在同一设备
             value_head_device = next(self.value_head.parameters()).device
-            first_token_hidden = first_token_hidden.to(value_head_device)
-            values = self.value_head(first_token_hidden).squeeze(-1)  # [batch_size]
+            pooled_hidden = pooled_hidden.to(value_head_device)
+            values = self.value_head(pooled_hidden).squeeze(-1)  # [batch_size]
             return values
         
         # 同时返回策略和价值
         # 确保输入到value_head的张量在正确的设备上
         value_head_device = next(self.value_head.parameters()).device
-        first_token_hidden = last_hidden_states[:, 0, :].to(value_head_device)
-        values = self.value_head(first_token_hidden).squeeze(-1)
+        if attention_mask is None:
+            mask = torch.ones(last_hidden_states.size()[:2], device=last_hidden_states.device, dtype=last_hidden_states.dtype)
+        else:
+            mask = attention_mask.to(last_hidden_states.device).to(last_hidden_states.dtype)
+        masked_sum = (last_hidden_states * mask.unsqueeze(-1)).sum(dim=1)
+        denom = mask.sum(dim=1, keepdim=True).clamp_min(1.0)
+        pooled_hidden = masked_sum / denom
+        pooled_hidden = pooled_hidden.to(value_head_device)
+        values = self.value_head(pooled_hidden).squeeze(-1)
         
         return outputs, values
     
@@ -151,10 +165,10 @@ def compute_gae(rewards, values, gamma=0.99, gae_lambda=0.95, last_value=0.0, do
 
 @ray.remote
 class PPOLearner(BaseLearner):
-    def initialize_algorithm(self, infer_mini_batch_size: int=32, learning_rate: float=1e-6, critic_learning_rate: float=1e-5, normalize_adv: bool=False, max_generation_len: Optional[int]=None, 
+    def initialize_algorithm(self, infer_mini_batch_size: int=32, learning_rate: float=5e-5, critic_learning_rate: float=1e-4, normalize_adv: bool=True, max_generation_len: Optional[int]=None, 
                            max_train_len: Optional[int]=None, initial_lora_path: Optional[str]=None,
-                           clip_ratio: float=0.2, ppo_epochs: int=4, entropy_coef: float=0.01,
-                           value_loss_coef: float=0.5, kl_target: float=0.01, kl_coef: float=0.2,
+                           clip_ratio: float=0.2, ppo_epochs: int=4, entropy_coef: float=0.002,
+                           value_loss_coef: float=0.5, kl_target: float=0.05, kl_coef: float=0.1,
                            # 新增内存优化参数
                            max_seq_len: Optional[int]=4096,
                            gradient_accumulation_steps: int=1, use_fallback_advantages: bool=False):
@@ -579,9 +593,9 @@ class PPOLearner(BaseLearner):
                     self.mini_batch_size = _restore_mbs
                 raise
 
-            # 早停检查：如果KL散度太大，提前停止
+            # 早停检查：如果KL散度太大，提前停止（放宽阈值）
             avg_kl = epoch_metrics.get("kl_div", 0.0) / max(1, num_steps)
-            if avg_kl > 1.5 * self.kl_target:
+            if avg_kl > 3.0 * self.kl_target:
                 self.logger.info(f"Early stopping at epoch {epoch} due to high KL divergence: {avg_kl:.4f}")
                 break
 

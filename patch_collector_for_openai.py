@@ -21,6 +21,51 @@ from unstable.actor import VLLMActor
 from unstable.collector import CallableActorWrapper, OBSERVATION_FORMATTING, ACTION_EXTRACTION
 import textarena as ta
 
+# --- Monkey patch: Redirect TextArena's OpenRouterAgent to local OpenAIAgent ---
+# Some TextArena envs instantiate a GM via ta.agents.OpenRouterAgent(model_name="openai/gpt-4o"),
+# which requires OPENROUTER_API_KEY. For single-player/local runs we want to avoid external calls
+# and use our local OpenAIAgent("gpt-4o") instead. We provide a lightweight shim that matches
+# the agent API used by environments (notably an act or act_full interface).
+
+class _LocalGM_OpenAIShim:
+    """Shim that mimics OpenRouterAgent but internally uses our OpenAIAgent.
+
+    It forwards calls to OpenAIAgent("gpt-4o") with the same act/act_full signature
+    expected by TextArena envs. This avoids needing OPENROUTER_API_KEY.
+    """
+
+    def __init__(self, model_name: str = "openai/gpt-4o", *args, **kwargs):
+        # Normalize: TextArena passes "openai/gpt-4o"; our agent expects "gpt-4o"
+        local_name = model_name.split("/")[-1] if model_name else "gpt-4o"
+        # Quiet console by default to reduce noise
+        self._agent = OpenAIAgent(model_name=local_name, verbose=False, api_key=os.getenv("OPENAI_API_KEY", ""), base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+
+    # Some envs may call act(obs) returning a string; others call act_full(obs) returning 5-tuple
+    def act(self, observation: str):
+        # Fallback to act_full and return the raw text
+        raw, extracted, prompt, format_feedback, logp = self.act_full(observation)
+        return raw
+
+    # Make the shim callable like a function (TextArena does gamemaster(prompt))
+    def __call__(self, observation: str) -> str:
+        return self.act(observation)
+
+    def act_full(self, observation: str):
+        # Our OpenAIAgent exposes act_full already; if not, emulate minimal behavior
+        if hasattr(self._agent, "act_full"):
+            return self._agent.act_full(observation)
+        # Minimal fallback: produce raw=completion, extracted=None, prompt=None, format_feedback=True, logp=[]
+        raw = self._agent.act(observation) if hasattr(self._agent, "act") else ""
+        return raw, None, None, True, []
+
+# Apply the monkey patch early so that subsequent ta.make(...) picks it up
+try:
+    # Only patch if the attribute exists to avoid breaking other versions
+    if hasattr(ta, "agents") and hasattr(ta.agents, "OpenRouterAgent"):
+        ta.agents.OpenRouterAgent = _LocalGM_OpenAIShim  # type: ignore
+except Exception as _patch_exc:
+    logging.warning(f"Failed to monkey-patch OpenRouterAgent: {_patch_exc}")
+
 
 def create_openai_agent_for_opponent(opponent_name: str, openai_config: Dict[str, Any]):
     """Create an OpenAI agent based on the opponent name and configuration."""
