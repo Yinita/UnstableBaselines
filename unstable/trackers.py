@@ -1,4 +1,5 @@
 import os, re, ray, time, wandb, collections, datetime, logging, numpy as np
+import csv
 from collections import defaultdict
 from typing import Dict, Optional, Union, List
 from unstable.utils.logging import setup_logger
@@ -16,7 +17,7 @@ class BaseTracker:
         self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.run_name)
         os.makedirs(self.output_dir)
         self.output_dirs = {}
-        for folder_name in ["training_data", "eval_data", "checkpoints", "logs"]: 
+        for folder_name in ["training_data", "eval_data", "checkpoints", "logs", "early_signals"]: 
             self.output_dirs[folder_name] =  os.path.join(self.output_dir, folder_name); os.makedirs(self.output_dirs[folder_name], exist_ok=True)
 
     def get_checkpoints_dir(self):  return self.output_dirs["checkpoints"]
@@ -41,6 +42,23 @@ class Tracker(BaseTracker):
         self._n = {}
         self._last_flush = time.monotonic()
         self._interface_stats = {"gpu_tok_s": {}, "TS": {}, "exploration": {}, "match_counts": {}, "format_success": None, "inv_move_rate": None, "game_len": None}
+        
+        # Early signals CSV path
+        self._early_signals_csv = os.path.join(self.output_dirs.get("early_signals", self.get_log_dir()), "learner_signals.csv")
+        if not os.path.exists(self._early_signals_csv):
+            try:
+                with open(self._early_signals_csv, mode="w", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        "step", "samples_seen", "lr", "critic_lr",
+                        "policy_loss", "value_loss", "entropy_loss",
+                        "kl_div", "kl_penalty", "clipped_fraction",
+                        "ratio_mean", "ratio_std", "logp_mean", "logp_std",
+                        "value_mae", "value_dir_acc", "grad_norm", "critic_grad_norm",
+                        "avg_train_len", "pct_truncated"
+                    ])
+            except Exception as e:
+                self.logger.warning(f"Failed to create early signals CSV: {e}")
         
         # 胜率统计相关
         self._record_models = self._parse_record_models()
@@ -242,6 +260,22 @@ class Tracker(BaseTracker):
                             self._put(f"{base_key}/{kk}", vv)
                 # Non-scalar and non-dict values are ignored
             self._buffer.update(self._agg("learner")); self._flush_if_due()
+
+            # Write early signals for quick monitoring
+            try:
+                row = [
+                    info.get("step"), info.get("samples_seen"), info.get("lr"), info.get("critic_lr"),
+                    info.get("policy_loss"), info.get("value_loss"), info.get("entropy_loss"),
+                    info.get("kl_div"), info.get("kl_penalty"), info.get("clipped_fraction"),
+                    info.get("ratio_mean"), info.get("ratio_std"), info.get("logp_mean"), info.get("logp_std"),
+                    info.get("value_mae"), info.get("value_dir_acc"), info.get("grad_norm"), info.get("critic_grad_norm"),
+                    info.get("avg_train_len"), info.get("pct_truncated")
+                ]
+                with open(self._early_signals_csv, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(row)
+            except Exception as e:
+                self.logger.warning(f"Failed to write early signals: {e}")
         except Exception as exc:
             self.logger.info(f"Exception in log_learner: {exc}")
 

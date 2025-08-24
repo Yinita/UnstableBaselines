@@ -341,6 +341,18 @@ def build_mixed_play(*,
                     vllm_config: Optional[dict] = None,
                     history_window_size: int = 5,
                     fixed_opponent_weight: float = 0.3,
+                    # PPO-specific exposed params
+                    ppo_infer_mini_batch_size: int = 16,
+                    critic_learning_rate: float = 1e-4,
+                    normalize_adv: bool = True,
+                    ppo_epochs: int = 4,
+                    clip_ratio: float = 0.2,
+                    entropy_coef: float = 0.002,
+                    value_loss_coef: float = 0.5,
+                    kl_target: float = 0.05,
+                    kl_coef: float = 0.1,
+                    gradient_accumulation_steps: int = 1,
+                    max_seq_len: Optional[int] = 4096,
                     wandb_project: str = "UnstableBaselines",
                     wandb_run_name: Optional[str] = None):
     """
@@ -364,6 +376,17 @@ def build_mixed_play(*,
         vllm_config: VLLM配置
         history_window_size: 历史窗口大小
         fixed_opponent_weight: 固定对手权重
+        ppo_infer_mini_batch_size: PPO 推理阶段 mini batch 大小
+        critic_learning_rate: 评论家(价值头)学习率
+        normalize_adv: 是否对优势做标准化
+        ppo_epochs: 每轮PPO更新回合数
+        clip_ratio: PPO裁剪比率
+        entropy_coef: 熵正则化系数
+        value_loss_coef: 值函数损失权重
+        kl_target: KL散度目标值
+        kl_coef: KL散度惩罚系数
+        gradient_accumulation_steps: 梯度累积步数
+        max_seq_len: 训练时的最大序列长度上限
         wandb_project: Wandb项目名称
         wandb_run_name: 自定义WandB运行名（可选）；未提供时自动生成
     
@@ -649,13 +672,20 @@ def build_mixed_play(*,
         ))
     elif algorithm == "ppo":
         ray.get(learner.initialize_algorithm.remote(
-            infer_mini_batch_size=16,
-            learning_rate=5e-5,
-            critic_learning_rate=1e-4,
-            normalize_adv=True,
+            infer_mini_batch_size=ppo_infer_mini_batch_size,
+            learning_rate=learning_rate,
+            critic_learning_rate=critic_learning_rate,
+            normalize_adv=normalize_adv,
             max_train_len=max_train_len,
             max_generation_len=max_generation_len,
-            ppo_epochs=4,
+            ppo_epochs=ppo_epochs,
+            clip_ratio=clip_ratio,
+            entropy_coef=entropy_coef,
+            value_loss_coef=value_loss_coef,
+            kl_target=kl_target,
+            kl_coef=kl_coef,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            max_seq_len=max_seq_len,
         ))
     logger.info("算法初始化成功!")
     
