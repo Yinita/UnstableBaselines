@@ -18,7 +18,7 @@ openai_global_config = {
 model_name = "Qwen/Qwen3-8B"
 # model_name = "yinita/qwen3-8b-v1-lora-0812-3epochs"
 
-fixed_opponents = []  # Example: ["openai-gpt-4o", "openai-gpt-5-chat"]
+fixed_opponents = ["openai-gpt-4o", "openai-gpt-5-chat", "openai-gpt-5"]
 
 lora_config = {
     "lora_rank": 32,
@@ -29,12 +29,12 @@ lora_config = {
 
 # Eval envs (enable as needed)
 eval_envs = [
-    # MixedPlayEvalEnvSpec(
-    #     env_id="Codenames-v0",
-    #     num_players=4,
-    #     prompt_template="qwen3-no-reasoning",
-    #     opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-5-chat", 3: "openai-gpt-5"},
-    # ),
+    MixedPlayEvalEnvSpec(
+        env_id="Codenames-v0",
+        num_players=4,
+        prompt_template="qwen3-no-reasoning",
+        opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-5-chat", 3: "openai-gpt-5"},
+    ),
     # MixedPlayEvalEnvSpec(
     #     env_id="SecretMafia-v0",
     #     num_players=6,
@@ -47,12 +47,12 @@ eval_envs = [
     #     prompt_template="qwen3-no-reasoning",
     #     opponent_mapping={1: "openai-gpt-4o", 2: "openai-gpt-5"},
     # ),
-    MixedPlayEvalEnvSpec(
-        env_id="ColonelBlotto-v0",
-        num_players=2,
-        prompt_template="qwen3-no-reasoning",
-        opponent_mapping={1: "openai-gpt-5"},
-    ),
+    # MixedPlayEvalEnvSpec(
+    #     env_id="ColonelBlotto-v0",
+    #     num_players=2,
+    #     prompt_template="qwen3-no-reasoning",
+    #     opponent_mapping={1: "openai-gpt-5"},
+    # ),
     # MixedPlayEvalEnvSpec(
     #     env_id="TwentyQuestions-v0",
     #     num_players=1,
@@ -66,10 +66,10 @@ if __name__ == "__main__":
     run = build_mixed_play(
         model_name=model_name,
         train_envs=[
-            # unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=4, prompt_template="qwen3-no-reasoning"),
+            unstable.TrainEnvSpec(env_id="Codenames-v0-train", num_players=4, num_actors=4, prompt_template="qwen3-no-reasoning"),
             # unstable.TrainEnvSpec(env_id="SecretMafia-v0-train", num_players=6, num_actors=6, prompt_template="qwen3-no-reasoning"),
             # unstable.TrainEnvSpec(env_id="ThreePlayerIPD-v0-train", num_players=3, num_actors=3, prompt_template="qwen3-no-reasoning"),
-            unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning"),
+            # unstable.TrainEnvSpec(env_id="ColonelBlotto-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-no-reasoning"),
             # unstable.TrainEnvSpec(env_id="TwentyQuestions-v0-train", num_players=1, num_actors=1, prompt_template="qwen3-no-reasoning"),
         ],
         eval_envs=eval_envs,
@@ -87,7 +87,7 @@ if __name__ == "__main__":
             "max_model_len": 6000,
             "gpu_memory_utilization": 0.9,
         },
-        wandb_project="UB-ColonelBlotto",    # or None to disable wandb
+        wandb_project="UB-Codenames",    # or None to disable wandb
         wandb_run_name="ppo-base-0824-v1"  # optional; auto-generated if omitted
     )
 

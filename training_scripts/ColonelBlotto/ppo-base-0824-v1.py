@@ -18,7 +18,7 @@ openai_global_config = {
 model_name = "Qwen/Qwen3-8B"
 # model_name = "yinita/qwen3-8b-v1-lora-0812-3epochs"
 
-fixed_opponents = []  # Example: ["openai-gpt-4o", "openai-gpt-5-chat"]
+fixed_opponents = ["openai-gpt-4o", "openai-gpt-5-chat", "openai-gpt-5"]
 
 lora_config = {
     "lora_rank": 32,
