@@ -1,4 +1,6 @@
-from mixed_play_builder import build_mixed_play, MixedPlayEvalEnvSpec
+import sys
+sys.path.append('/home/aiscuser/mindgames/UnstableBaselines')
+from unstable.mixed_play_builder import build_mixed_play, MixedPlayEvalEnvSpec
 import os
 import unstable
 
