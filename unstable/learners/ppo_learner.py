@@ -147,6 +147,10 @@ def compute_gae(rewards, values, gamma=0.99, gae_lambda=0.95, last_value=0.0, do
     target_device = last_value.device
     rewards = rewards.to(target_device, dtype=torch.float32)
     values = values.to(target_device, dtype=torch.float32)
+    # 数值稳定：移除NaN/Inf，并限制极端值
+    rewards = torch.nan_to_num(rewards, nan=0.0, posinf=0.0, neginf=0.0).clamp_(-1e4, 1e4)
+    values = torch.nan_to_num(values, nan=0.0, posinf=0.0, neginf=0.0).clamp_(-1e4, 1e4)
+    last_value = torch.nan_to_num(last_value, nan=0.0, posinf=0.0, neginf=0.0).clamp_(-1e4, 1e4)
     lastgaelam = 0.0
     
     for t in reversed(range(T)):

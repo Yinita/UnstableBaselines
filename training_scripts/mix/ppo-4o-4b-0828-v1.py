@@ -90,7 +90,7 @@ if __name__ == "__main__":
             "gpu_memory_utilization": 0.9,
         },
         wandb_project="UB-mix",    # or None to disable wandb
-        wandb_run_name="ppo-base-0824-v1"  # optional; auto-generated if omitted
+        wandb_run_name="ppo-4o-4b-0828-v1"  # optional; auto-generated if omitted
     )
 
     # Start training

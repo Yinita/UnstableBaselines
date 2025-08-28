@@ -15,8 +15,11 @@ class ComposeSamplingRewardTransforms:
 class NormalizeRewards(SamplingRewardTransform):
     def __init__(self, z_score: bool=False): self.z_score = z_score
     def __call__(self, steps: List[Step], env_id: Optional[str] = None) -> List[Step]:
-        rewards = [step.reward for step in steps]
-        mean, std = np.mean(rewards), np.std(rewards)+1e-8
+        rewards = np.asarray([step.reward for step in steps], dtype=np.float32)
+        rewards = np.nan_to_num(rewards, copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+        mean, std = np.mean(rewards), np.std(rewards)
+        if self.z_score:
+            std = np.maximum(std, 1e-8)  # avoid division-by-zero
         for step in steps: step.reward = (step.reward-mean)/(std if self.z_score else 1)
         return steps
 
@@ -27,7 +30,11 @@ class NormalizeRewardsByEnv(SamplingRewardTransform):
         for step in steps: env_buckets[step.env_id].append(step) # bucket by env
         for env_steps in env_buckets.values():
             r = np.asarray([s.reward for s in env_steps], dtype=np.float32)
-            normed = ((r-r.mean())/r.std()+1e-8) if self.z_score else r-r.mean()
+            r = np.nan_to_num(r, copy=True, nan=0.0, posinf=0.0, neginf=0.0)
+            if self.z_score:
+                std = np.maximum(np.std(r), 1e-8)  # avoid division-by-zero
+                normed = (r-r.mean())/std
+            else:
+                normed = r-r.mean()
             for s, nr in zip(env_steps, normed): s.reward = float(nr) # write back
         return steps
-
