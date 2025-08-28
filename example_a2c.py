@@ -8,7 +8,7 @@ from patch_collector_for_openai import patch_collector_for_openai
 COLLECTION_WORKERS = 64  # Reduced from 200 to lower memory pressure
 EVALUATION_WORKERS = 8   # Reduced from 16
 ITERATIONS = 200
-MODEL_NAME = "Qwen/Qwen3-8B-Base"
+MODEL_NAME = "Qwen/Qwen3-8B"
 OPENAI_OPPONENT_NAME = "openai-gpt-4o"
 
 # Memory optimization: Reduced batch sizes
