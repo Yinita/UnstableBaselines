@@ -42,6 +42,11 @@ class Tracker(BaseTracker):
         self._n = {}
         self._last_flush = time.monotonic()
         self._interface_stats = {"gpu_tok_s": {}, "TS": {}, "exploration": {}, "match_counts": {}, "format_success": None, "inv_move_rate": None, "game_len": None}
+        # File outputs for detailed traces
+        try:
+            os.makedirs(os.path.join(self.get_log_dir(), "samples"), exist_ok=True)
+        except Exception as _e:
+            self.logger.warning(f"Failed to ensure samples dir: {_e}")
         
         # Early signals CSV path
         self._early_signals_csv = os.path.join(self.output_dirs.get("early_signals", self.get_log_dir()), "learner_signals.csv")
@@ -67,6 +72,16 @@ class Tracker(BaseTracker):
             "eval": {"all": [], "vs_specific": {model: [] for model in self._record_models}}
         }
         self.logger.info(f"胜率统计初始化，记录模型: {self._record_models}")
+
+        # Training reward summary CSV
+        try:
+            self._train_rewards_csv = os.path.join(self.get_train_dir(), "train_rewards.csv")
+            if not os.path.exists(self._train_rewards_csv):
+                with open(self._train_rewards_csv, mode="w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["step", "env_id", "pid", "final_reward", "num_turns"])  # header
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize train_rewards.csv: {e}")
     
     def _parse_record_models(self) -> List[str]:
         """解析环境变量中的记录模型列表"""
@@ -126,8 +141,24 @@ class Tracker(BaseTracker):
             self._n["collection"] = self._n.get("collection", 0) + 1
             self._put("collection/step", self._n["collection"]) 
 
-            # 胜率统计 - 训练阶段
-            self._track_win_rate("train", reward > 0, opponent_info)
+            # 胜率统计 - 训练阶段（含按环境维度）
+            self._track_win_rate("train", reward > 0, opponent_info, env_id)
+
+            # 持久化：按轨迹记录奖励汇总（便于快速定位异常对局）
+            try:
+                with open(self._train_rewards_csv, mode="a", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([self._n.get("collection", 0), env_id, player_id, reward, getattr(traj, "num_turns", None)])
+            except Exception as e:
+                self.logger.warning(f"Failed to append train_rewards.csv: {e}")
+
+            # 持久化：将该条轨迹的逐步样本写入 logs/samples/ 下，包含 obs/act/extracted/logp/step_info
+            try:
+                from unstable.utils.misc import write_samples_to_file
+                fname = os.path.join(self.get_log_dir(), "samples", f"{env_id}-pid{player_id}-t{int(time.time())}-s{self._n.get('collection', 0)}.csv")
+                write_samples_to_file([traj], filename=fname, env_id=env_id)
+            except Exception as e:
+                self.logger.warning(f"Failed to write samples for env={env_id}, pid={player_id}: {e}")
 
             # Aggregate both per-env and global prefixes
             self._buffer.update(self._agg('collection-'))
@@ -154,9 +185,9 @@ class Tracker(BaseTracker):
             self._n["evaluation"] = self._n.get("evaluation", 0) + 1
             self._put("evaluation/step", self._n["evaluation"]) 
 
-            # 胜率统计 - 评估阶段
+            # 胜率统计 - 评估阶段（含按环境维度）
             opponent_info = {"name": game_information.eval_opponent_name} if game_information.eval_opponent_name else None
-            self._track_win_rate("eval", eval_reward > 0, opponent_info)
+            self._track_win_rate("eval", eval_reward > 0, opponent_info, env_id)
 
             # Aggregate both per-env and global prefixes
             self._buffer.update(self._agg('evaluation-'))
@@ -169,7 +200,7 @@ class Tracker(BaseTracker):
         except Exception as exc:
             self.logger.info(f"Exception when adding game_info to tracker: {exc}")
 
-    def _track_win_rate(self, phase: str, is_win: bool, opponent_info: Optional[Dict] = None):
+    def _track_win_rate(self, phase: str, is_win: bool, opponent_info: Optional[Dict] = None, env_id: Optional[str] = None):
         """追踪胜率统计
         
         Args:
@@ -180,19 +211,30 @@ class Tracker(BaseTracker):
         try:
             # 总体胜率统计
             self._put(f"core/{phase}/win_rate_overall", int(is_win))
+            # 按环境的总体胜率统计
+            if env_id is not None:
+                self._put(f"core/{phase}/env/{env_id}/win_rate_overall", int(is_win))
             
             # 对特定对手的胜率统计
             if opponent_info and "name" in opponent_info:
                 opponent_name = opponent_info["name"]
                 if opponent_name in self._record_models:
                     self._put(f"core/{phase}/win_rate_vs_{opponent_name}", int(is_win))
+                    if env_id is not None:
+                        self._put(f"core/{phase}/env/{env_id}/win_rate_vs_{opponent_name}", int(is_win))
             
             # 更新统计计数
             self._n[f"core/{phase}"] = self._n.get(f"core/{phase}", 0) + 1
             self._put(f"core/{phase}/step", self._n[f"core/{phase}"])
+            if env_id is not None:
+                key_env = f"core/{phase}/env/{env_id}"
+                self._n[key_env] = self._n.get(key_env, 0) + 1
+                self._put(f"{key_env}/step", self._n[key_env])
 
-            # 将 core/{phase} 前缀的聚合结果写入缓冲，确保推送到 WandB
+            # 将 core/{phase} 及按环境前缀的聚合结果写入缓冲，确保推送到 WandB
             self._buffer.update(self._agg(f"core/{phase}"))
+            if env_id is not None:
+                self._buffer.update(self._agg(f"core/{phase}/env/{env_id}"))
             self._flush_if_due()
             
         except Exception as exc:
