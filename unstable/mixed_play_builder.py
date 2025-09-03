@@ -290,7 +290,7 @@ class _MixedPlayRun:
         debug_log(f"初始化_MixedPlayRun，collector={collector}, learner={learner}")
         self.collector, self.learner = collector, learner
         
-    def start(self, learning_steps: int = 200, num_collection_workers: int = 64, num_eval_workers: int = 8):
+    def start(self, learning_steps: int = 200, num_collection_workers: int = 64, num_eval_workers: int = 8, save_every: int = 500, hf_repo_id: Optional[str] = None, upload_to_hf: bool = False):
         """开始训练"""
         debug_log(f"开始训练，learning_steps={learning_steps}, num_collection_workers={num_collection_workers}, num_eval_workers={num_eval_workers}")
         try:
@@ -299,7 +299,7 @@ class _MixedPlayRun:
             debug_log(f"收集器启动成功，引用ID: {collect_ref}")
             
             debug_log("启动学习器...")
-            train_ref = self.learner.train.remote(learning_steps)
+            train_ref = self.learner.train.remote(learning_steps, save_every=save_every, hf_repo_id=hf_repo_id, upload_to_hf=upload_to_hf)
             debug_log(f"学习器启动成功，引用ID: {train_ref}")
             
             debug_log("等待学习器完成训练...")

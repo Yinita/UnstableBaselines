@@ -10,3 +10,4 @@ pynvml
 GPUtil
 dm-tree
 azure.identity
+huggingface-hub

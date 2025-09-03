@@ -1,6 +1,7 @@
 
 import ray, torch, time, pathlib, os
 import sys, traceback
+import subprocess
 from typing import List, Dict, Any, Optional
 import GPUtil
 from collections import deque
@@ -127,7 +128,7 @@ class BaseLearner:
 
     def initialize_algorithm(self, cfg):    raise NotImplementedError
     def _update(self, batch):               raise NotImplementedError
-    def train(self, iterations: int):
+    def train(self, iterations: int, save_every: int = 500, hf_repo_id: Optional[str] = None, upload_to_hf: bool = False):
         self.logger.info("Starting training loop")
         
         # 初始GPU状态监控
@@ -170,13 +171,20 @@ class BaseLearner:
                 # 保存检查点前监控
                 self._monitor_gpu_memory("before_checkpoint_save")
                 
-                # save & register the updated checkpoint
-                ckpt_path = self._save_checkpoint()
-                try:
-                    self.model_registry.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step)
-                    self.logger.info(f"Registered new ckpt: {ckpt_path}, ckpt-{self._step}")
-                except Exception as exc: self.logger.info(f"Exception when adding checkpoint: {exc}")
-                self.logger.info(f"registered new ckpt -> {ckpt_path} for iteration{self._step}")
+                if self._step % save_every == 0:
+                    # save & register the updated checkpoint
+                    ckpt_path = self._save_checkpoint()
+                    try:
+                        self.model_registry.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step)
+                        self.logger.info(f"Registered new ckpt: {ckpt_path}, ckpt-{self._step}")
+                        if upload_to_hf and hf_repo_id:
+                            self.logger.info(f"Uploading checkpoint to Hugging Face Hub repo: {hf_repo_id}")
+                            # Here you would call a script or function to upload the checkpoint
+                            # For simplicity, we will add the call to a placeholder function
+                            self._upload_to_hf(str(ckpt_path), hf_repo_id, f"checkpoint_step_{self._step}")
+
+                    except Exception as exc: self.logger.info(f"Exception when adding or uploading checkpoint: {exc}")
+                    self.logger.info(f"registered new ckpt -> {ckpt_path} for iteration{self._step}")
                 
                 # 保存检查点后监控和清理
                 self._monitor_gpu_memory("after_checkpoint_save")
@@ -207,6 +215,21 @@ class BaseLearner:
         # 最终清理
         self._cleanup_memory()
         self.buffer.stop.remote()
+
+    def _upload_to_hf(self, local_path: str, repo_id: str, path_in_repo: str):
+        script_path = os.path.join(os.path.dirname(__file__), "..", "scripts", "upload_to_hf.py")
+        command = [
+            sys.executable, 
+            script_path,
+            "--local_path", local_path,
+            "--repo_id", repo_id,
+            "--path_in_repo", path_in_repo
+        ]
+        try:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            self.logger.info(f"Successfully uploaded {local_path} to {repo_id}")
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Failed to upload checkpoint to Hugging Face Hub. Error: {e.stderr}")
 
     def _save_checkpoint(self):
         ckpt_dir = self.ckpt_dir / f"iteration-{self._step}"
